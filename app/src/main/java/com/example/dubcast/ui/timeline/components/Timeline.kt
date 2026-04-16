@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import com.example.dubcast.ui.theme.PlayheadDark
+import com.example.dubcast.ui.theme.TimeRulerGray
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -54,18 +56,12 @@ fun Timeline(
     val totalWidthPx = (durationSeconds * PX_PER_SECOND)
     val totalWidthDp = with(density) { totalWidthPx.toDp() }
 
-    Column(modifier = modifier.padding(8.dp)) {
-        // Time ruler
-        Text(
-            text = "Timeline",
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(bottom = 4.dp)
-        )
+    Column(modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .fillMaxHeight()
                 .horizontalScroll(scrollState)
         ) {
             Column(
@@ -79,14 +75,14 @@ fun Timeline(
                     totalWidth = totalWidthDp.coerceAtLeast(300.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(24.dp)
+                        .height(18.dp)
                 )
 
                 // Video track
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(30.dp)
+                        .height(24.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .pointerInput(Unit) {
                             detectTapGestures { offset ->
@@ -106,8 +102,8 @@ fun Timeline(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(40.dp)
-                        .padding(vertical = 2.dp)
+                        .height(28.dp)
+                        .padding(vertical = 1.dp)
                 ) {
                     dubClips.forEach { clip ->
                         DubClipItem(
@@ -125,8 +121,8 @@ fun Timeline(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(40.dp)
-                        .padding(vertical = 2.dp)
+                        .height(28.dp)
+                        .padding(vertical = 1.dp)
                 ) {
                     subtitleClips.forEach { clip ->
                         SubtitleClipItem(
@@ -172,7 +168,7 @@ fun Timeline(
                             .fillMaxHeight()
                     ) {
                         drawLine(
-                            color = Color.Red,
+                            color = PlayheadDark,
                             start = Offset(0f, 0f),
                             end = Offset(0f, size.height),
                             strokeWidth = 3f
@@ -202,7 +198,7 @@ private fun TimeRuler(
         for (sec in 0..durationSeconds step intervalSeconds) {
             val x = sec * 1000f * pxPerMs
             drawLine(
-                color = Color.Gray,
+                color = TimeRulerGray,
                 start = Offset(x, size.height * 0.5f),
                 end = Offset(x, size.height),
                 strokeWidth = 1f
@@ -220,7 +216,7 @@ private fun TimeRuler(
                 text = "${sec}s",
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.offset(x = offsetX),
-                color = Color.Gray
+                color = TimeRulerGray
             )
         }
     }

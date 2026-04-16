@@ -1,11 +1,14 @@
 package com.example.dubcast.ui.export
 
+import android.media.MediaPlayer
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +19,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MovieFilter
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -30,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -37,16 +43,25 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.example.dubcast.domain.model.DubClip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,11 +71,81 @@ fun ExportScreen(
     viewModel: ExportViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // Preview player
+    var isPreviewing by remember { mutableStateOf(false) }
+    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+    val activePlayers = remember { mutableStateMapOf<String, MediaPlayer>() }
+
+    LaunchedEffect(state.videoUri) {
+        if (state.videoUri.isNotEmpty()) {
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(state.videoUri)))
+            exoPlayer.prepare()
+        }
+    }
+
+    LaunchedEffect(isPreviewing) {
+        exoPlayer.playWhenReady = isPreviewing
+        if (isPreviewing) {
+            while (true) {
+                val posMs = exoPlayer.currentPosition
+                for (clip in state.dubClips) {
+                    val clipEnd = clip.startMs + clip.durationMs
+                    if (posMs in clip.startMs until clipEnd && clip.id !in activePlayers) {
+                        try {
+                            val mp = MediaPlayer().apply {
+                                setDataSource(clip.audioFilePath)
+                                setVolume(clip.volume, clip.volume)
+                                prepare()
+                                val offset = (posMs - clip.startMs).toInt()
+                                if (offset > 0) seekTo(offset)
+                                start()
+                                setOnCompletionListener {
+                                    it.release()
+                                    activePlayers.remove(clip.id)
+                                }
+                            }
+                            activePlayers[clip.id] = mp
+                        } catch (_: Exception) {}
+                    }
+                }
+                val toRemove = activePlayers.keys.filter { id ->
+                    val clip = state.dubClips.find { it.id == id }
+                    clip == null || posMs < clip.startMs || posMs >= clip.startMs + clip.durationMs
+                }
+                for (id in toRemove) {
+                    activePlayers.remove(id)?.apply {
+                        try { stop() } catch (_: IllegalStateException) {}
+                        release()
+                    }
+                }
+                kotlinx.coroutines.delay(50L)
+            }
+        } else {
+            activePlayers.values.forEach {
+                try { it.stop() } catch (_: IllegalStateException) {}
+                it.release()
+            }
+            activePlayers.clear()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            activePlayers.values.forEach {
+                try { it.stop() } catch (_: IllegalStateException) {}
+                it.release()
+            }
+            activePlayers.clear()
+            exoPlayer.release()
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("영상 내보내기") },
+                title = { Text("Export") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -80,13 +165,69 @@ fun ExportScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             if (!state.isExporting && state.outputPath == null) {
-                // Step 1: Export mode selection
+
+                // Preview player
+                if (state.videoUri.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column {
+                            AndroidView(
+                                factory = { ctx ->
+                                    PlayerView(ctx).apply {
+                                        player = exoPlayer
+                                        useController = false
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(16f / 9f)
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(onClick = {
+                                    if (!isPreviewing) {
+                                        exoPlayer.seekTo(0)
+                                    }
+                                    isPreviewing = !isPreviewing
+                                }) {
+                                    Icon(
+                                        if (isPreviewing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = if (isPreviewing) "Pause" else "Play"
+                                    )
+                                }
+                                Text(
+                                    text = if (isPreviewing) "Playing..." else "Preview",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                if (state.dubClips.isNotEmpty()) {
+                                    Text(
+                                        text = " (${state.dubClips.size} dubs)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // Export mode selection
                 ExportModeSelector(
                     selected = state.exportMode,
                     onSelect = { viewModel.onSelectExportMode(it) }
                 )
 
-                // Step 2: Translation options (only when WITH_TRANSLATION)
                 AnimatedVisibility(visible = state.exportMode == ExportMode.WITH_TRANSLATION) {
                     Column {
                         Spacer(modifier = Modifier.height(16.dp))
@@ -97,10 +238,13 @@ fun ExportScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Button(
-                    onClick = { viewModel.startExport() },
+                    onClick = {
+                        isPreviewing = false
+                        viewModel.startExport()
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("내보내기 시작")
+                    Text("Go!")
                 }
             }
 
@@ -127,7 +271,7 @@ fun ExportScreen(
                 Text(text = error, color = MaterialTheme.colorScheme.error)
                 Spacer(modifier = Modifier.height(12.dp))
                 Button(onClick = { viewModel.startExport() }) {
-                    Text("다시 시도")
+                    Text("Retry")
                 }
             }
 
@@ -135,7 +279,7 @@ fun ExportScreen(
             state.outputPath?.let { path ->
                 Spacer(modifier = Modifier.height(32.dp))
                 Text(
-                    "내보내기 완료!",
+                    "Done!",
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -144,7 +288,7 @@ fun ExportScreen(
                     onClick = { onNavigateToShare(path) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("저장 및 공유")
+                    Text("Save & Share")
                 }
             }
 
@@ -160,15 +304,15 @@ private fun ExportModeSelector(
 ) {
     Column {
         Text(
-            "저장 방식 선택",
+            "Pick a mode",
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(bottom = 12.dp)
         )
 
         Row(modifier = Modifier.fillMaxWidth()) {
             ModeCard(
-                title = "본 영상만 저장",
-                description = "편집한 영상 그대로 저장",
+                title = "Original",
+                description = "Keep it as-is",
                 icon = { Icon(Icons.Default.MovieFilter, contentDescription = null) },
                 isSelected = selected == ExportMode.ORIGINAL_ONLY,
                 onClick = { onSelect(ExportMode.ORIGINAL_ONLY) },
@@ -178,8 +322,8 @@ private fun ExportModeSelector(
             Spacer(modifier = Modifier.width(12.dp))
 
             ModeCard(
-                title = "다국어 번역본",
-                description = "더빙 · 자막 · 립싱크 적용",
+                title = "Translated",
+                description = "Dub + subs + lip-sync",
                 icon = { Icon(Icons.Default.Translate, contentDescription = null) },
                 isSelected = selected == ExportMode.WITH_TRANSLATION,
                 onClick = { onSelect(ExportMode.WITH_TRANSLATION) },
@@ -240,13 +384,12 @@ private fun TranslationOptionsCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("번역 옵션", style = MaterialTheme.typography.titleMedium)
+            Text("Options", style = MaterialTheme.typography.titleMedium)
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Target language selector
             LanguageDropdown(
-                label = "번역 언어",
+                label = "Language",
                 selected = state.targetLanguage,
                 onSelect = { viewModel.onSelectTargetLanguage(it) }
             )
@@ -255,15 +398,13 @@ private fun TranslationOptionsCard(
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Dubbing toggle
             OptionRow(
-                label = "더빙",
-                description = "AI 보이스로 더빙 적용",
+                label = "Dubbing",
+                description = "AI voice overlay",
                 checked = state.enableDubbing,
                 onCheckedChange = { viewModel.onToggleDubbing(it) }
             )
 
-            // Voice language option
             AnimatedVisibility(visible = state.enableDubbing) {
                 Column {
                     Spacer(modifier = Modifier.height(4.dp))
@@ -276,10 +417,9 @@ private fun TranslationOptionsCard(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // Lip Sync toggle
             OptionRow(
-                label = "립싱크",
-                description = "더빙 음성에 맞춰 입 모양 동기화",
+                label = "Lip Sync",
+                description = "Match mouth to voice",
                 checked = state.enableLipSync,
                 enabled = state.enableDubbing,
                 onCheckedChange = { viewModel.onToggleLipSync(it) }
@@ -287,10 +427,9 @@ private fun TranslationOptionsCard(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // Auto Subtitles toggle
             OptionRow(
-                label = "자동 자막",
-                description = "번역 언어로 자막 자동 생성",
+                label = "Auto Subs",
+                description = "Generate translated captions",
                 checked = state.enableAutoSubtitles,
                 onCheckedChange = { viewModel.onToggleAutoSubtitles(it) }
             )
@@ -389,7 +528,7 @@ private fun VoiceLanguageSelector(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                "동영상에 삽입한 더빙",
+                "Dub voice",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

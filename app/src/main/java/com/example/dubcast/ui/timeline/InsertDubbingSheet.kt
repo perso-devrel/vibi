@@ -1,40 +1,41 @@
 package com.example.dubcast.ui.timeline
 
+import android.media.MediaPlayer
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.dubcast.domain.model.Voice
-
-private val LANGUAGES = listOf(
-    "ko" to "한국어",
-    "en" to "English",
-    "ja" to "日本語",
-    "zh" to "中文",
-    "es" to "Español",
-    "fr" to "Français",
-    "de" to "Deutsch"
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,20 +43,24 @@ fun InsertDubbingSheet(
     voices: List<Voice>,
     isLoading: Boolean,
     error: String?,
+    previewClip: PreviewDubClip?,
     onDismiss: () -> Unit,
-    onSynthesize: (text: String, voiceId: String, voiceName: String) -> Unit
+    onSynthesize: (text: String, voiceId: String, voiceName: String) -> Unit,
+    onInsert: () -> Unit
 ) {
     var text by remember { mutableStateOf("") }
     var selectedVoice by remember { mutableStateOf(voices.firstOrNull()) }
-    var voiceExpanded by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
 
-    var selectedLanguage by remember { mutableStateOf(LANGUAGES[0]) }
-    var langExpanded by remember { mutableStateOf(false) }
+    // MediaPlayer for preview playback
+    var isPreviewPlaying by remember { mutableStateOf(false) }
+    val mediaPlayer = remember { MediaPlayer() }
 
-    // Filter voices by selected language
-    val filteredVoices = remember(voices, selectedLanguage) {
-        val filtered = voices.filter { it.language == selectedLanguage.first }
-        if (filtered.isEmpty()) voices else filtered
+    DisposableEffect(Unit) {
+        onDispose {
+            try { mediaPlayer.stop() } catch (_: IllegalStateException) {}
+            mediaPlayer.release()
+        }
     }
 
     ModalBottomSheet(
@@ -68,75 +73,39 @@ fun InsertDubbingSheet(
                 .padding(24.dp)
         ) {
             Text(
-                text = "더빙 삽입",
+                text = "Add Dub",
                 style = MaterialTheme.typography.titleLarge
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Language selector
-            ExposedDropdownMenuBox(
-                expanded = langExpanded,
-                onExpandedChange = { langExpanded = it }
-            ) {
-                OutlinedTextField(
-                    value = selectedLanguage.second,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("언어") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = langExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                )
-                ExposedDropdownMenu(
-                    expanded = langExpanded,
-                    onDismissRequest = { langExpanded = false }
-                ) {
-                    LANGUAGES.forEach { lang ->
-                        DropdownMenuItem(
-                            text = { Text(lang.second) },
-                            onClick = {
-                                selectedLanguage = lang
-                                langExpanded = false
-                                // Reset voice selection when language changes
-                                val newFiltered = voices.filter { it.language == lang.first }
-                                selectedVoice = newFiltered.firstOrNull() ?: voices.firstOrNull()
-                            }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             // Voice selector
             ExposedDropdownMenuBox(
-                expanded = voiceExpanded,
-                onExpandedChange = { voiceExpanded = it }
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
             ) {
                 OutlinedTextField(
-                    value = selectedVoice?.name ?: "보이스 선택",
+                    value = selectedVoice?.name ?: "Pick a voice",
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("보이스") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = voiceExpanded) },
+                    label = { Text("Voice") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 )
                 ExposedDropdownMenu(
-                    expanded = voiceExpanded,
-                    onDismissRequest = { voiceExpanded = false }
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
                 ) {
-                    filteredVoices.forEach { voice ->
+                    voices.forEach { voice ->
                         DropdownMenuItem(
                             text = {
                                 Text("${voice.name}${voice.language?.let { " ($it)" } ?: ""}")
                             },
                             onClick = {
                                 selectedVoice = voice
-                                voiceExpanded = false
+                                expanded = false
                             }
                         )
                     }
@@ -149,7 +118,7 @@ fun InsertDubbingSheet(
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                label = { Text("더빙할 텍스트") },
+                label = { Text("What to say") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 3,
                 maxLines = 5
@@ -166,9 +135,12 @@ fun InsertDubbingSheet(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // Generate button
             Button(
                 onClick = {
                     selectedVoice?.let { voice ->
+                        isPreviewPlaying = false
+                        mediaPlayer.reset()
                         onSynthesize(text, voice.voiceId, voice.name)
                     }
                 },
@@ -181,7 +153,60 @@ fun InsertDubbingSheet(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Text("생성")
+                    Text("Generate")
+                }
+            }
+
+            // Preview + Insert (shown after TTS generation)
+            if (previewClip != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Preview playback
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        if (isPreviewPlaying) {
+                            mediaPlayer.stop()
+                            mediaPlayer.reset()
+                            isPreviewPlaying = false
+                        } else {
+                            mediaPlayer.reset()
+                            mediaPlayer.setDataSource(previewClip.audioFilePath)
+                            mediaPlayer.prepare()
+                            mediaPlayer.start()
+                            isPreviewPlaying = true
+                            mediaPlayer.setOnCompletionListener {
+                                isPreviewPlaying = false
+                            }
+                        }
+                    }) {
+                        Icon(
+                            if (isPreviewPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = if (isPreviewPlaying) "Stop" else "Play"
+                        )
+                    }
+
+                    Text(
+                        text = "Listen (${previewClip.durationMs / 1000}.${(previewClip.durationMs % 1000) / 100}s)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Insert button
+                Button(
+                    onClick = {
+                        mediaPlayer.reset()
+                        isPreviewPlaying = false
+                        onInsert()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Drop it in")
                 }
             }
 

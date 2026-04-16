@@ -4,7 +4,7 @@ import com.example.dubcast.data.repository.AndroidGallerySaver
 import com.example.dubcast.data.repository.AndroidVideoMetadataExtractor
 import com.example.dubcast.data.repository.DubClipRepositoryImpl
 import com.example.dubcast.data.repository.EditProjectRepositoryImpl
-import com.example.dubcast.data.repository.FfmpegExecutorImpl
+import com.example.dubcast.data.repository.RemoteRenderExecutor
 import com.example.dubcast.data.repository.LipSyncRepositoryImpl
 import com.example.dubcast.data.repository.SubtitleClipRepositoryImpl
 import com.example.dubcast.data.repository.TtsRepositoryImpl
@@ -32,7 +32,7 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
-    abstract fun bindFfmpegExecutor(impl: FfmpegExecutorImpl): FfmpegExecutor
+    abstract fun bindFfmpegExecutor(impl: RemoteRenderExecutor): FfmpegExecutor
 
     @Binds
     @Singleton

@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import com.example.dubcast.ui.theme.DubClipGreen
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -56,7 +57,7 @@ fun DubClipItem(
             .width(widthDp.coerceAtLeast(20.dp))
             .fillMaxHeight()
             .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFF4CAF50).copy(alpha = 0.7f))
+            .background(DubClipGreen.copy(alpha = 0.75f))
             .border(2.dp, borderColor, RoundedCornerShape(4.dp))
             .pointerInput(Unit) {
                 detectTapGestures { onClick() }

@@ -4,10 +4,13 @@ import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.usecase.export.ExportWithDubbingUseCase
+import kotlinx.coroutines.flow.combine
+import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,8 +27,8 @@ enum class ExportMode {
 }
 
 enum class VoiceLanguage(val label: String) {
-    KEEP_ORIGINAL("원어 유지"),
-    DUBBING_LANGUAGE("더빙 언어로 변경")
+    KEEP_ORIGINAL("Keep original"),
+    DUBBING_LANGUAGE("Use dub language")
 }
 
 data class TargetLanguage(val code: String, val label: String)
@@ -42,11 +45,13 @@ val AVAILABLE_LANGUAGES = listOf(
 
 data class ExportUiState(
     val exportMode: ExportMode = ExportMode.ORIGINAL_ONLY,
-    val targetLanguage: TargetLanguage = AVAILABLE_LANGUAGES[1], // default English
+    val targetLanguage: TargetLanguage = AVAILABLE_LANGUAGES[1],
     val enableDubbing: Boolean = true,
     val enableLipSync: Boolean = false,
     val enableAutoSubtitles: Boolean = true,
     val voiceLanguage: VoiceLanguage = VoiceLanguage.KEEP_ORIGINAL,
+    val videoUri: String = "",
+    val dubClips: List<DubClip> = emptyList(),
     val isExporting: Boolean = false,
     val progressPercent: Int = 0,
     val statusMessage: String? = null,
@@ -68,6 +73,21 @@ class ExportViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(ExportUiState())
     val uiState: StateFlow<ExportUiState> = _uiState.asStateFlow()
+
+    init {
+        loadPreviewData()
+    }
+
+    private fun loadPreviewData() {
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
+            _uiState.value = _uiState.value.copy(videoUri = project.videoUri)
+
+            dubClipRepository.observeClips(projectId).collect { clips ->
+                _uiState.value = _uiState.value.copy(dubClips = clips)
+            }
+        }
+    }
 
     fun onSelectExportMode(mode: ExportMode) {
         _uiState.value = _uiState.value.copy(exportMode = mode)
@@ -103,7 +123,7 @@ class ExportViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isExporting = true, error = null, statusMessage = "준비 중...")
+            _uiState.value = _uiState.value.copy(isExporting = true, error = null, statusMessage = "Getting ready...")
 
             try {
                 val project = editProjectRepository.getProject(projectId)
@@ -112,24 +132,36 @@ class ExportViewModel @Inject constructor(
                 val options = _uiState.value
                 val isTranslation = options.exportMode == ExportMode.WITH_TRANSLATION
 
-                val dubClips = if (isTranslation && options.enableDubbing) {
-                    _uiState.value = _uiState.value.copy(statusMessage = "더빙 처리 중...")
-                    dubClipRepository.observeClips(projectId).first()
-                } else emptyList()
+                _uiState.value = _uiState.value.copy(statusMessage = "Mixing dubs...")
+                val dubClips = dubClipRepository.observeClips(projectId).first()
 
                 val subtitleClips = if (isTranslation && options.enableAutoSubtitles) {
-                    _uiState.value = _uiState.value.copy(statusMessage = "자막 생성 중...")
+                    _uiState.value = _uiState.value.copy(statusMessage = "Making subs...")
                     subtitleClipRepository.observeClips(projectId).first()
                 } else emptyList()
 
                 if (isTranslation && options.enableLipSync && dubClips.isNotEmpty()) {
-                    _uiState.value = _uiState.value.copy(statusMessage = "립싱크 적용 중...")
+                    _uiState.value = _uiState.value.copy(statusMessage = "Syncing lips...")
                     // TODO: Lip sync processing
                 }
 
-                _uiState.value = _uiState.value.copy(statusMessage = "영상 합성 중...")
+                _uiState.value = _uiState.value.copy(statusMessage = "Rendering...")
 
                 val cacheDir = context.cacheDir
+
+                // Copy content:// URI to a local file for server upload
+                val videoInputPath = if (project.videoUri.startsWith("content://")) {
+                    val tempVideo = File(cacheDir, "input_video.mp4")
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        context.contentResolver.openInputStream(Uri.parse(project.videoUri))?.use { input ->
+                            tempVideo.outputStream().use { output -> input.copyTo(output) }
+                        } ?: throw IllegalStateException("Cannot open video URI")
+                    }
+                    tempVideo.absolutePath
+                } else {
+                    project.videoUri
+                }
+
                 val outputPath = File(cacheDir, "export_${System.currentTimeMillis()}.mp4").absolutePath
 
                 val assFilePath = if (subtitleClips.isNotEmpty()) {
@@ -143,7 +175,7 @@ class ExportViewModel @Inject constructor(
                 } else null
 
                 val result = exportWithDubbingUseCase.execute(
-                    inputVideoPath = project.videoUri,
+                    inputVideoPath = videoInputPath,
                     dubClips = dubClips,
                     subtitleClips = subtitleClips,
                     videoWidth = project.videoWidth,

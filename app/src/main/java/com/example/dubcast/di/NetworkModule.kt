@@ -2,7 +2,6 @@ package com.example.dubcast.di
 
 import com.example.dubcast.BuildConfig
 import com.example.dubcast.data.remote.api.BffApiService
-import com.example.dubcast.data.remote.mock.MockBffInterceptor
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import dagger.Module
@@ -28,17 +27,16 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(mockInterceptor: MockBffInterceptor): OkHttpClient {
+    fun provideOkHttpClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.MINUTES)
+            .writeTimeout(5, TimeUnit.MINUTES)
 
         if (BuildConfig.DEBUG) {
             builder.addInterceptor(HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.BODY
             })
-            builder.addInterceptor(mockInterceptor)
         }
 
         return builder.build()

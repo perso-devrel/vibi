@@ -11,6 +11,7 @@ import com.example.dubcast.domain.model.Voice
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
+import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
@@ -30,6 +31,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class PreviewDubClip(
+    val text: String,
+    val voiceId: String,
+    val voiceName: String,
+    val audioFilePath: String,
+    val durationMs: Long
+)
+
 data class TimelineUiState(
     val projectId: String = "",
     val videoUri: String = "",
@@ -48,6 +57,7 @@ data class TimelineUiState(
     val showSubtitleSheet: Boolean = false,
     val isSynthesizing: Boolean = false,
     val synthError: String? = null,
+    val previewClip: PreviewDubClip? = null,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false
 )
@@ -63,6 +73,7 @@ class TimelineViewModel @Inject constructor(
     private val editProjectRepository: EditProjectRepository,
     private val dubClipRepository: DubClipRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
+    private val ttsRepository: TtsRepository,
     private val synthesizeDubClip: SynthesizeDubClipUseCase,
     private val getVoiceList: GetVoiceListUseCase,
     private val moveDubClip: MoveDubClipUseCase,
@@ -106,11 +117,23 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isVoicesLoading = true)
             val result = getVoiceList()
+            val voices = result.getOrDefault(emptyList()).ifEmpty { DEFAULT_VOICES }
             _uiState.value = _uiState.value.copy(
-                voices = result.getOrDefault(emptyList()),
+                voices = voices,
                 isVoicesLoading = false
             )
         }
+    }
+
+    companion object {
+        private val DEFAULT_VOICES = listOf(
+            Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),
+            Voice("TX3LPaxmHKxFdv7VOQHJ", "Liam", null, "en"),
+            Voice("pFZP5JQG7iQjIQuC4Bku", "Lily", null, "en"),
+            Voice("bIHbv24MWmeRgasZH58o", "Will", null, "en"),
+            Voice("default-ko-1", "Jimin", null, "ko"),
+            Voice("default-ko-2", "Seoyeon", null, "ko"),
+        )
     }
 
     private fun observeClips() {
@@ -156,7 +179,11 @@ class TimelineViewModel @Inject constructor(
     }
 
     fun onDismissDubbingSheet() {
-        _uiState.value = _uiState.value.copy(showDubbingSheet = false, synthError = null)
+        _uiState.value = _uiState.value.copy(
+            showDubbingSheet = false,
+            synthError = null,
+            previewClip = null
+        )
     }
 
     fun onShowSubtitleSheet() {
@@ -169,22 +196,21 @@ class TimelineViewModel @Inject constructor(
 
     fun onSynthesize(text: String, voiceId: String, voiceName: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSynthesizing = true, synthError = null)
-            pushUndoState()
+            _uiState.value = _uiState.value.copy(isSynthesizing = true, synthError = null, previewClip = null)
 
-            val result = synthesizeDubClip(
-                projectId = projectId,
-                text = text,
-                voiceId = voiceId,
-                voiceName = voiceName,
-                startMs = _uiState.value.playbackPositionMs
-            )
+            val result = ttsRepository.synthesize(text, voiceId)
 
             result.fold(
-                onSuccess = {
+                onSuccess = { ttsResult ->
                     _uiState.value = _uiState.value.copy(
                         isSynthesizing = false,
-                        showDubbingSheet = false
+                        previewClip = PreviewDubClip(
+                            text = text,
+                            voiceId = voiceId,
+                            voiceName = voiceName,
+                            audioFilePath = ttsResult.localAudioPath,
+                            durationMs = ttsResult.durationMs
+                        )
                     )
                 },
                 onFailure = { error ->
@@ -193,6 +219,28 @@ class TimelineViewModel @Inject constructor(
                         synthError = error.message
                     )
                 }
+            )
+        }
+    }
+
+    fun onInsertPreviewClip() {
+        val preview = _uiState.value.previewClip ?: return
+        viewModelScope.launch {
+            pushUndoState()
+            val clip = DubClip(
+                id = java.util.UUID.randomUUID().toString(),
+                projectId = projectId,
+                text = preview.text,
+                voiceId = preview.voiceId,
+                voiceName = preview.voiceName,
+                audioFilePath = preview.audioFilePath,
+                startMs = _uiState.value.playbackPositionMs,
+                durationMs = preview.durationMs
+            )
+            dubClipRepository.addClip(clip)
+            _uiState.value = _uiState.value.copy(
+                showDubbingSheet = false,
+                previewClip = null
             )
         }
     }
@@ -225,6 +273,13 @@ class TimelineViewModel @Inject constructor(
             selectedSubtitleClipId = clipId,
             selectedDubClipId = null
         )
+    }
+
+    fun onUpdateDubClipVolume(clipId: String, volume: Float) {
+        viewModelScope.launch {
+            val clip = _uiState.value.dubClips.find { it.id == clipId } ?: return@launch
+            dubClipRepository.updateClip(clip.copy(volume = volume.coerceIn(0f, 2f)))
+        }
     }
 
     fun onDeleteSelectedClip() {

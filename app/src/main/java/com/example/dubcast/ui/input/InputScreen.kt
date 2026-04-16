@@ -2,20 +2,25 @@ package com.example.dubcast.ui.input
 
 import android.net.Uri
 import com.example.dubcast.domain.model.ValidationResult
+import com.example.dubcast.ui.theme.CharcoalPrimary
+import com.example.dubcast.ui.theme.TextSecondary
+import com.example.dubcast.ui.theme.BorderLine
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,9 +28,65 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.dubcast.domain.model.ValidationError
+
+@Composable
+private fun SolidButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val bgColor = if (enabled) CharcoalPrimary else CharcoalPrimary.copy(alpha = 0.35f)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(bgColor)
+            .then(if (enabled) Modifier.clickable { onClick() } else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White
+        )
+    }
+}
+
+@Composable
+private fun OutlineButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, BorderLine, RoundedCornerShape(12.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = CharcoalPrimary
+        )
+    }
+}
 
 @Composable
 fun InputScreen(
@@ -49,74 +110,107 @@ fun InputScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .background(Color(0xFFF2F3F5))
+            .padding(horizontal = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(modifier = Modifier.weight(0.35f))
+
         Text(
             text = "DubCast",
-            style = MaterialTheme.typography.headlineLarge
+            fontSize = 48.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-1).sp,
+            color = CharcoalPrimary
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = "Select a video to edit with AI dubbing",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            text = "AI dubbing, dead simple.",
+            fontSize = 15.sp,
+            color = TextSecondary,
+            textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
-
-        OutlinedButton(
-            onClick = {
-                launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
-            }
-        ) {
-            Text("Select Video")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.weight(0.3f))
 
         state.selectedVideo?.let { video ->
-            Card(
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, BorderLine, RoundedCornerShape(12.dp))
+                    .background(Color.White)
+                    .padding(16.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = video.fileName, style = MaterialTheme.typography.titleMedium)
-                    Text(text = "${video.durationMs / 1000}s | ${video.width}x${video.height}")
-                    Text(text = "Format: ${video.mimeType}")
-                    Text(text = "Size: ${video.sizeBytes / 1024 / 1024}MB")
-                }
+                Text(
+                    text = video.fileName,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    color = CharcoalPrimary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "${video.durationMs / 1000}s  ·  ${video.width}x${video.height}  ·  ${video.sizeBytes / 1024 / 1024}MB",
+                    fontSize = 13.sp,
+                    color = TextSecondary
+                )
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         state.validationResult?.let { result ->
             when (result) {
                 is ValidationResult.Invalid -> {
-                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = when (result.reason) {
-                            ValidationError.UNSUPPORTED_FORMAT -> "Unsupported format. Use MP4, MOV, or WebM."
-                            ValidationError.DURATION_EXCEEDS_LIMIT -> "Video must be 10 minutes or shorter."
-                            ValidationError.RESOLUTION_EXCEEDS_LIMIT -> "Resolution must be 1080p or lower."
-                            ValidationError.METADATA_UNREADABLE -> "Could not read video metadata."
+                            ValidationError.UNSUPPORTED_FORMAT -> "Use MP4, MOV, or WebM."
+                            ValidationError.DURATION_EXCEEDS_LIMIT -> "10 min max."
+                            ValidationError.RESOLUTION_EXCEEDS_LIMIT -> "1080p max."
+                            ValidationError.METADATA_UNREADABLE -> "Can't read this file."
                         },
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
+                        color = Color(0xFFD32F2F),
+                        fontSize = 13.sp
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
                 ValidationResult.Valid -> {}
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        SolidButton(
+            text = if (state.selectedVideo != null) "Let's Go" else "Pick a Video",
+            onClick = {
+                if (state.selectedVideo != null && state.validationResult == ValidationResult.Valid) {
+                    viewModel.onContinue()
+                } else {
+                    launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+                }
+            },
+            enabled = state.selectedVideo == null || state.validationResult == ValidationResult.Valid
+        )
 
-        Button(
-            onClick = { viewModel.onContinue() },
-            enabled = state.validationResult == ValidationResult.Valid
-        ) {
-            Text("Continue")
+        if (state.selectedVideo != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlineButton(
+                text = "Change Video",
+                onClick = {
+                    launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+                }
+            )
         }
+
+        Spacer(modifier = Modifier.weight(0.35f))
+
+        HorizontalDivider(color = BorderLine)
+        Spacer(modifier = Modifier.height(16.dp))
+        Row {
+            Text("from ", fontSize = 12.sp, color = TextSecondary)
+            Text("DubCast", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }

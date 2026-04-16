@@ -1,0 +1,17 @@
+package com.example.dubcast.data.remote.dto
+
+import com.squareup.moshi.JsonClass
+
+@JsonClass(generateAdapter = true)
+data class RenderConfig(
+    val dubClips: List<RenderDubClip>,
+    val videoDurationMs: Long
+)
+
+@JsonClass(generateAdapter = true)
+data class RenderDubClip(
+    val audioFileKey: String,
+    val startMs: Long,
+    val durationMs: Long,
+    val volume: Float
+)

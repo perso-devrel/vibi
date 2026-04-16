@@ -1,11 +1,16 @@
 package com.example.dubcast.ui.timeline
 
+import android.media.MediaPlayer
 import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -19,6 +24,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,10 +38,16 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -69,13 +82,53 @@ fun TimelineScreen(
         exoPlayer.playWhenReady = state.isPlaying
     }
 
-    // Sync ExoPlayer position back to ViewModel while playing
+    // Track active MediaPlayers for dub clip audio overlay
+    val activePlayers = remember { mutableStateMapOf<String, MediaPlayer>() }
+
+    // Sync ExoPlayer position back to ViewModel + play dub clip audio
     LaunchedEffect(state.isPlaying) {
         if (state.isPlaying) {
             while (true) {
-                viewModel.onUpdatePlaybackPosition(exoPlayer.currentPosition)
+                val posMs = exoPlayer.currentPosition
+                viewModel.onUpdatePlaybackPosition(posMs)
+
+                // Start dub clips that should be playing at current position
+                for (clip in state.dubClips) {
+                    val clipEnd = clip.startMs + clip.durationMs
+                    if (posMs in clip.startMs until clipEnd && clip.id !in activePlayers) {
+                        try {
+                            val mp = MediaPlayer().apply {
+                                setDataSource(clip.audioFilePath)
+                                setVolume(clip.volume, clip.volume)
+                                prepare()
+                                val offsetMs = (posMs - clip.startMs).toInt()
+                                if (offsetMs > 0) seekTo(offsetMs)
+                                start()
+                                setOnCompletionListener {
+                                    it.release()
+                                    activePlayers.remove(clip.id)
+                                }
+                            }
+                            activePlayers[clip.id] = mp
+                        } catch (_: Exception) { /* file not found etc. */ }
+                    }
+                }
+
+                // Stop clips that are no longer in range
+                val toRemove = activePlayers.keys.filter { id ->
+                    val clip = state.dubClips.find { it.id == id }
+                    clip == null || posMs < clip.startMs || posMs >= clip.startMs + clip.durationMs
+                }
+                for (id in toRemove) {
+                    activePlayers.remove(id)?.apply { try { stop() } catch (_: IllegalStateException) {}; release() }
+                }
+
                 kotlinx.coroutines.delay(50L)
             }
+        } else {
+            // Playback stopped — release all active players
+            activePlayers.values.forEach { try { it.stop() } catch (_: IllegalStateException) {}; it.release() }
+            activePlayers.clear()
         }
     }
 
@@ -87,6 +140,8 @@ fun TimelineScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            activePlayers.values.forEach { try { it.stop() } catch (_: IllegalStateException) {}; it.release() }
+            activePlayers.clear()
             exoPlayer.release()
         }
     }
@@ -103,8 +158,13 @@ fun TimelineScreen(
             )
         }
     ) { innerPadding ->
+
+    // Drag handle state — declared outside Column so it's not reset
+    val density = LocalDensity.current
+    var timelineHeightDp by remember { mutableStateOf(120f) }
+
     Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-        // Video Preview
+        // Video Preview — fills remaining space after toolbar + timeline
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -114,7 +174,7 @@ fun TimelineScreen(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f)
+                .weight(1f)
         )
 
         // Toolbar
@@ -170,6 +230,52 @@ fun TimelineScreen(
             }
         }
 
+        // Volume control for selected dub clip
+        val selectedClip = state.dubClips.find { it.id == state.selectedDubClipId }
+        if (selectedClip != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
+                Slider(
+                    value = selectedClip.volume,
+                    onValueChange = { viewModel.onUpdateDubClipVolume(selectedClip.id, it) },
+                    valueRange = 0f..2f,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${(selectedClip.volume * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.width(44.dp)
+                )
+            }
+        }
+
+        // Drag handle to resize timeline
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { _, dragAmount ->
+                        val deltaDp = with(density) { dragAmount.toDp().value }
+                        timelineHeightDp = (timelineHeightDp - deltaDp).coerceIn(60f, 300f)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+            )
+        }
+
         // Timeline
         Timeline(
             videoDurationMs = state.videoDurationMs,
@@ -187,7 +293,7 @@ fun TimelineScreen(
                 },
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .height(timelineHeightDp.dp)
         )
     }
     }
@@ -198,10 +304,12 @@ fun TimelineScreen(
             voices = state.voices,
             isLoading = state.isSynthesizing,
             error = state.synthError,
+            previewClip = state.previewClip,
             onDismiss = { viewModel.onDismissDubbingSheet() },
             onSynthesize = { text, voiceId, voiceName ->
                 viewModel.onSynthesize(text, voiceId, voiceName)
-            }
+            },
+            onInsert = { viewModel.onInsertPreviewClip() }
         )
     }
 

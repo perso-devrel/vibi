@@ -18,7 +18,6 @@ moshi = "1.15.1"
 navigationCompose = "2.8.5"
 workmanager = "2.10.0"
 media3 = "1.5.1"
-ffmpegKit = "6.0.1"
 coroutinesTest = "1.9.0"
 turbine = "1.2.0"
 mockk = "1.13.13"
@@ -70,9 +69,6 @@ hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.
 # Media3 ExoPlayer
 media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
-
-# FFmpeg Kit
-ffmpeg-kit = { group = "io.github.maitrungduc1410", name = "ffmpeg-kit-min", version.ref = "ffmpegKit" }
 
 # Test
 coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }

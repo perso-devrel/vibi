@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -47,7 +48,9 @@ class LipSyncRepositoryImpl @Inject constructor(
             )
 
             try {
-                val response = apiService.requestLipSync(videoPart, audioPart, startMs, durationMs)
+                val startMsBody = startMs.toString().toRequestBody("text/plain".toMediaType())
+                val durationMsBody = durationMs.toString().toRequestBody("text/plain".toMediaType())
+                val response = apiService.requestLipSync(videoPart, audioPart, startMsBody, durationMsBody)
                 response.jobId
             } finally {
                 videoTempFile.delete()

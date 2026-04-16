@@ -32,7 +32,7 @@ Single-module app (`app/`) using Clean Architecture (domain/data/ui layers) with
 **Key architectural decisions:**
 - Navigation uses a sealed class `Screen` with type-safe routes: Input → Timeline → Export → Share.
 - `BFF_BASE_URL` is injected from `local.properties` via BuildConfig.
-- `MockBffInterceptor` provides fake v2 API responses in debug builds.
+- All builds connect to the real BFF server. No mock interceptor — `BFF_BASE_URL` in `local.properties` must point to a running BFF instance.
 - Undo/redo uses a generic `UndoRedoManager<T>` with ArrayDeque (max 50 states).
 - Subtitle rendering generates `.ass` (Advanced SubStation Alpha) files with Noto Sans KR font, rendered via ffmpeg-kit (`io.github.maitrungduc1410:ffmpeg-kit-min`).
 - Audio mixing uses ffmpeg adelay+amix filter chain for dubbing overlay.

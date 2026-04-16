@@ -55,7 +55,7 @@
 | 립싱크 상태 | `GET /api/v2/lipsync/{jobId}/status` |
 | 립싱크 다운로드 | `GET /api/v2/lipsync/{jobId}/download` |
 
-디버그 빌드에서는 `MockBffInterceptor`가 모든 v2 엔드포인트에 대해 목 응답을 제공.
+모든 빌드에서 실제 BFF 서버에 연결. `local.properties`의 `BFF_BASE_URL`을 실제 서버 주소로 설정 필요.
 
 ## 6. 아키텍처
 ```

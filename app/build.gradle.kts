@@ -103,9 +103,6 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
 
-    // FFmpeg Kit
-    implementation(libs.ffmpeg.kit)
-
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
