@@ -25,7 +25,7 @@ object DatabaseModule {
             DubCastDatabase::class.java,
             "dubcast.db"
         )
-            .addMigrations(DubCastDatabase.MIGRATION_1_2, DubCastDatabase.MIGRATION_2_3, DubCastDatabase.MIGRATION_3_4)
+            .addMigrations(DubCastDatabase.MIGRATION_1_2, DubCastDatabase.MIGRATION_2_3, DubCastDatabase.MIGRATION_3_4, DubCastDatabase.MIGRATION_4_5, DubCastDatabase.MIGRATION_5_6)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }

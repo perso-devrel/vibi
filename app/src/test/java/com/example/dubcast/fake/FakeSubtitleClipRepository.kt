@@ -32,4 +32,8 @@ class FakeSubtitleClipRepository : SubtitleClipRepository {
     override suspend fun getClip(clipId: String): SubtitleClip? {
         return clips.value.find { it.id == clipId }
     }
+
+    override suspend fun deleteClipsBySourceDubClipId(dubClipId: String) {
+        clips.value = clips.value.filter { it.sourceDubClipId != dubClipId }
+    }
 }

@@ -21,6 +21,8 @@ interface FfmpegExecutor {
         dubClips: List<DubClipMixInput>,
         outputPath: String,
         videoDurationMs: Long,
+        trimStartMs: Long = 0L,
+        trimEndMs: Long = 0L,
         assFilePath: String? = null,
         fontDir: String? = null,
         onProgress: (percent: Int) -> Unit

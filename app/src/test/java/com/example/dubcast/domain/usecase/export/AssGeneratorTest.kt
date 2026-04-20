@@ -4,6 +4,7 @@ import com.example.dubcast.domain.model.Anchor
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -119,5 +120,60 @@ class AssGeneratorTest {
             1920, 1080
         )
         assertTrue(result.contains("안녕하세요 세계"))
+    }
+
+    private fun stickerClip(
+        id: String = "auto-1",
+        startMs: Long = 1000L,
+        endMs: Long = 4000L,
+        text: String = "Auto subtitle",
+        xPct: Float = 50f,
+        yPct: Float = 85f,
+        widthPct: Float = 80f,
+        heightPct: Float = 12f
+    ) = SubtitleClip(
+        id = id, projectId = "proj-1",
+        startMs = startMs, endMs = endMs,
+        text = text,
+        position = SubtitlePosition(Anchor.BOTTOM, 90f),
+        sourceDubClipId = "dub-1",
+        xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct
+    )
+
+    @Test
+    fun `sticker subtitle uses center-anchor an5 and absolute pos`() {
+        // xPct=50 → posX=960, yPct=85 on 1080 → posY=918
+        val result = generator.generateFromClips(listOf(stickerClip()), 1920, 1080)
+        assertTrue(result.contains("\\an5"))
+        assertTrue(result.contains("\\pos(960,918)"))
+    }
+
+    @Test
+    fun `sticker subtitle font size derived from heightPct`() {
+        // heightPct=12, videoHeight=1080 → fontSize = 0.12*1080 = 129
+        val result = generator.generateFromClips(listOf(stickerClip(heightPct = 12f)), 1920, 1080)
+        assertTrue("Expected \\fs129 in output", result.contains("\\fs129"))
+    }
+
+    @Test
+    fun `sticker subtitle does not emit anchor tag`() {
+        val result = generator.generateFromClips(listOf(stickerClip()), 1920, 1080)
+        // Should use \an5 (center), not \an2/\an8
+        assertTrue(result.contains("\\an5"))
+        assertFalse("Sticker should not emit \\an2", result.contains("\\an2"))
+        assertFalse("Sticker should not emit \\an8", result.contains("\\an8"))
+    }
+
+    @Test
+    fun `mixed sticker and manual clips both appear in output`() {
+        val clips = listOf(
+            clip(id = "m1", startMs = 0, endMs = 2000, text = "Manual"),
+            stickerClip(id = "a1", startMs = 2000, endMs = 4000, text = "Auto")
+        )
+        val result = generator.generateFromClips(clips, 1920, 1080)
+        val dialogues = result.lines().count { it.startsWith("Dialogue:") }
+        assertEquals(2, dialogues)
+        assertTrue(result.contains("Manual"))
+        assertTrue(result.contains("Auto"))
     }
 }

@@ -23,8 +23,13 @@ import androidx.compose.material.icons.filled.MicExternalOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -90,6 +95,14 @@ fun TimelineScreen(
         if (state.isPlaying) {
             while (true) {
                 val posMs = exoPlayer.currentPosition
+                // Stop at trim end
+                val trimEnd = state.effectiveTrimEndMs
+                if (posMs >= trimEnd) {
+                    exoPlayer.seekTo(state.trimStartMs)
+                    viewModel.onUpdatePlaybackPosition(state.trimStartMs)
+                    kotlinx.coroutines.delay(50L)
+                    continue
+                }
                 viewModel.onUpdatePlaybackPosition(posMs)
 
                 // Start dub clips that should be playing at current position
@@ -164,93 +177,203 @@ fun TimelineScreen(
     var timelineHeightDp by remember { mutableStateOf(120f) }
 
     Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-        // Video Preview — fills remaining space after toolbar + timeline
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false
-                }
-            },
+        // Video Preview + subtitle overlay
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-        )
-
-        // Toolbar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { viewModel.onTogglePlayback() }) {
-                Icon(
-                    if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (state.isPlaying) "Pause" else "Play"
-                )
-            }
-
-            Text(
-                text = formatTime(state.playbackPositionMs),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.width(60.dp)
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = false
+                    }
+                },
+                modifier = Modifier.matchParentSize()
             )
+            SubtitlePreviewLayer(
+                subtitleClips = state.subtitleClips,
+                playbackPositionMs = state.playbackPositionMs,
+                selectedSubtitleClipId = state.selectedSubtitleClipId,
+                onSelectSubtitle = { viewModel.onSelectSubtitleClip(it) },
+                onUpdatePosition = { id, x, y, w, h ->
+                    viewModel.onUpdateSubtitlePosition(id, x, y, w, h)
+                },
+                modifier = Modifier.matchParentSize()
+            )
+        }
 
-            Spacer(modifier = Modifier.width(8.dp))
+        // Toolbar — switches between normal and trim mode
+        if (state.isTrimming) {
+            // Trim mode toolbar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { viewModel.onCancelTrim() }) {
+                    Icon(Icons.Default.Close, contentDescription = "Cancel")
+                }
 
-            IconButton(onClick = { viewModel.onShowDubbingSheet() }) {
-                Icon(Icons.Default.MicExternalOn, contentDescription = "Insert Dubbing")
-            }
+                Spacer(modifier = Modifier.width(8.dp))
 
-            if (state.selectedDubClipId != null) {
-                IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                Text(
+                    text = "${formatTime(state.pendingTrimStartMs)} — ${formatTime(state.pendingTrimEndMs)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                Text(
+                    text = "Trim",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                IconButton(onClick = { viewModel.onConfirmTrim() }) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Apply Trim",
+                        tint = Color(0xFF34C759)
+                    )
                 }
             }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            IconButton(
-                onClick = { viewModel.onUndo() },
-                enabled = state.canUndo
+        } else {
+            // Normal toolbar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
-            }
+                IconButton(onClick = { viewModel.onTogglePlayback() }) {
+                    Icon(
+                        if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (state.isPlaying) "Pause" else "Play"
+                    )
+                }
 
-            IconButton(
-                onClick = { viewModel.onRedo() },
-                enabled = state.canRedo
-            ) {
-                Icon(Icons.Default.Redo, contentDescription = "Redo")
-            }
+                Text(
+                    text = formatTime(state.playbackPositionMs),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.width(60.dp)
+                )
 
-            IconButton(onClick = { viewModel.onNavigateToExport() }) {
-                Icon(Icons.Default.Save, contentDescription = "Export")
+                Spacer(modifier = Modifier.width(8.dp))
+
+                IconButton(onClick = { viewModel.onShowDubbingSheet() }) {
+                    Icon(Icons.Default.MicExternalOn, contentDescription = "Insert Dubbing")
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                IconButton(
+                    onClick = { viewModel.onUndo() },
+                    enabled = state.canUndo
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
+                }
+
+                IconButton(
+                    onClick = { viewModel.onRedo() },
+                    enabled = state.canRedo
+                ) {
+                    Icon(Icons.Default.Redo, contentDescription = "Redo")
+                }
+
+                IconButton(onClick = { viewModel.onNavigateToExport() }) {
+                    Icon(Icons.Default.Save, contentDescription = "Export")
+                }
             }
         }
 
-        // Volume control for selected dub clip
+        // Dub clip selected action bar
         val selectedClip = state.dubClips.find { it.id == state.selectedDubClipId }
         if (selectedClip != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
-                Slider(
-                    value = selectedClip.volume,
-                    onValueChange = { viewModel.onUpdateDubClipVolume(selectedClip.id, it) },
-                    valueRange = 0f..2f,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = "${(selectedClip.volume * 100).toInt()}%",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.width(44.dp)
-                )
+                IconButton(onClick = { viewModel.onToggleDubVolumeSlider() }) {
+                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume")
+                }
+                IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                }
+                Spacer(modifier = Modifier.weight(1f))
+            }
+
+            if (state.showDubVolumeSlider) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
+                    Slider(
+                        value = selectedClip.volume,
+                        onValueChange = { viewModel.onUpdateDubClipVolume(selectedClip.id, it) },
+                        valueRange = 0f..2f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "${(selectedClip.volume * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.width(44.dp)
+                    )
+                }
+            }
+        }
+
+        // Video selected action bar — small icon buttons above timeline
+        if (state.isVideoSelected && !state.isTrimming) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { viewModel.onEnterTrimMode() }) {
+                    Icon(Icons.Default.ContentCut, contentDescription = "Trim")
+                }
+                IconButton(onClick = { viewModel.onToggleVideoVolumeSlider() }) {
+                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume")
+                }
+                Spacer(modifier = Modifier.weight(1f))
+            }
+
+            if (state.showVideoVolumeSlider) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
+                    Slider(
+                        value = state.videoVolume,
+                        onValueChange = {
+                            viewModel.onUpdateVideoVolume(it)
+                            exoPlayer.volume = it.coerceIn(0f, 1f)
+                        },
+                        valueRange = 0f..2f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "${(state.videoVolume * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.width(44.dp)
+                    )
+                }
             }
         }
 
@@ -277,20 +400,32 @@ fun TimelineScreen(
         }
 
         // Timeline
+        // In trim mode, show pending values; otherwise show saved values
+        val displayTrimStart = if (state.isTrimming) state.pendingTrimStartMs else state.trimStartMs
+        val displayTrimEnd = if (state.isTrimming) state.pendingTrimEndMs else state.effectiveTrimEndMs
+
         Timeline(
             videoDurationMs = state.videoDurationMs,
             dubClips = state.dubClips,
             subtitleClips = state.subtitleClips,
             playbackPositionMs = state.playbackPositionMs,
+            trimStartMs = displayTrimStart,
+            trimEndMs = displayTrimEnd,
+            isTrimming = state.isTrimming,
+            isVideoSelected = state.isVideoSelected,
             selectedDubClipId = state.selectedDubClipId,
             selectedSubtitleClipId = state.selectedSubtitleClipId,
+            onVideoTrackTapped = { viewModel.onVideoTrackTapped() },
             onDubClipSelected = { viewModel.onSelectDubClip(it) },
             onSubtitleClipSelected = { viewModel.onSelectSubtitleClip(it) },
             onDubClipMoved = { clipId, newStartMs -> viewModel.onMoveDubClip(clipId, newStartMs) },
             onSeek = { posMs ->
-                    viewModel.onUpdatePlaybackPosition(posMs)
-                    exoPlayer.seekTo(posMs)
+                    val clampedMs = posMs.coerceIn(state.trimStartMs, state.effectiveTrimEndMs)
+                    viewModel.onUpdatePlaybackPosition(clampedMs)
+                    exoPlayer.seekTo(clampedMs)
                 },
+            onTrimStartChanged = { viewModel.onSetPendingTrimStart(it) },
+            onTrimEndChanged = { viewModel.onSetPendingTrimEnd(it) },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(timelineHeightDp.dp)
@@ -309,7 +444,7 @@ fun TimelineScreen(
             onSynthesize = { text, voiceId, voiceName ->
                 viewModel.onSynthesize(text, voiceId, voiceName)
             },
-            onInsert = { viewModel.onInsertPreviewClip() }
+            onInsert = { showOnScreen -> viewModel.onInsertPreviewClip(showOnScreen) }
         )
     }
 

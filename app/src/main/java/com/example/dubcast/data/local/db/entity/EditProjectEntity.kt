@@ -10,6 +10,8 @@ data class EditProjectEntity(
     val videoDurationMs: Long,
     val videoWidth: Int,
     val videoHeight: Int,
+    val trimStartMs: Long = 0L,
+    val trimEndMs: Long = 0L,
     val createdAt: Long,
     val updatedAt: Long
 )

@@ -40,6 +40,8 @@ class RemoteRenderExecutor @Inject constructor(
             dubClips = emptyList(),
             outputPath = outputPath,
             videoDurationMs = durationMs,
+            trimStartMs = 0L,
+            trimEndMs = 0L,
             assFilePath = assFilePath,
             fontDir = fontDir,
             onProgress = onProgress
@@ -51,6 +53,8 @@ class RemoteRenderExecutor @Inject constructor(
         dubClips: List<DubClipMixInput>,
         outputPath: String,
         videoDurationMs: Long,
+        trimStartMs: Long,
+        trimEndMs: Long,
         assFilePath: String?,
         fontDir: String?,
         onProgress: (percent: Int) -> Unit
@@ -100,7 +104,9 @@ class RemoteRenderExecutor @Inject constructor(
 
             val config = RenderConfig(
                 dubClips = renderClips,
-                videoDurationMs = videoDurationMs
+                videoDurationMs = videoDurationMs,
+                trimStartMs = trimStartMs,
+                trimEndMs = trimEndMs
             )
             val configJson = moshi.adapter(RenderConfig::class.java).toJson(config)
             val configBody = configJson.toRequestBody("application/json".toMediaType())

@@ -16,15 +16,26 @@ class AssGenerator @Inject constructor() {
         for (clip in clips) {
             val start = formatTimestamp(clip.startMs)
             val end = formatTimestamp(clip.endMs)
-            val alignment = when (clip.position.anchor) {
-                Anchor.TOP -> "\\an8"
-                Anchor.MIDDLE -> "\\an5"
-                Anchor.BOTTOM -> "\\an2"
-            }
-            val posX = videoWidth / 2
-            val posY = (clip.position.yOffsetPct / 100f * videoHeight).toInt()
             val text = clip.text.replace("\n", "\\N")
-            sb.appendLine("Dialogue: 0,$start,$end,Default,,0,0,0,,{$alignment\\pos($posX,$posY)}$text")
+            if (clip.isSticker &&
+                clip.xPct != null && clip.yPct != null && clip.heightPct != null
+            ) {
+                // Auto/sticker subtitle — center-anchored absolute position with scaled font
+                val posX = (clip.xPct!! / 100f * videoWidth).toInt()
+                val posY = (clip.yPct!! / 100f * videoHeight).toInt()
+                val fontSize = (clip.heightPct!! / 100f * videoHeight).toInt().coerceAtLeast(12)
+                sb.appendLine("Dialogue: 0,$start,$end,Default,,0,0,0,,{\\an5\\pos($posX,$posY)\\fs$fontSize}$text")
+            } else {
+                // Manual subtitle — anchor-based position
+                val alignment = when (clip.position.anchor) {
+                    Anchor.TOP -> "\\an8"
+                    Anchor.MIDDLE -> "\\an5"
+                    Anchor.BOTTOM -> "\\an2"
+                }
+                val posX = videoWidth / 2
+                val posY = (clip.position.yOffsetPct / 100f * videoHeight).toInt()
+                sb.appendLine("Dialogue: 0,$start,$end,Default,,0,0,0,,{$alignment\\pos($posX,$posY)}$text")
+            }
         }
 
         return sb.toString()

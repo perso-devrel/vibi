@@ -31,4 +31,7 @@ interface SubtitleClipDao {
 
     @Query("DELETE FROM subtitle_clips WHERE projectId = :projectId")
     suspend fun deleteByProjectId(projectId: String)
+
+    @Query("DELETE FROM subtitle_clips WHERE sourceDubClipId = :dubClipId")
+    suspend fun deleteBySourceDubClipId(dubClipId: String)
 }

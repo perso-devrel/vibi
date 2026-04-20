@@ -16,6 +16,8 @@ class ExportWithDubbingUseCase @Inject constructor(
         videoWidth: Int,
         videoHeight: Int,
         videoDurationMs: Long,
+        trimStartMs: Long = 0L,
+        trimEndMs: Long = 0L,
         outputPath: String,
         assFilePath: String?,
         fontDir: String?,
@@ -42,6 +44,8 @@ class ExportWithDubbingUseCase @Inject constructor(
             dubClips = mixInputs,
             outputPath = outputPath,
             videoDurationMs = videoDurationMs,
+            trimStartMs = trimStartMs,
+            trimEndMs = trimEndMs,
             assFilePath = assPath,
             fontDir = fontDir,
             onProgress = onProgress
