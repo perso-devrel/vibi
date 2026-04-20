@@ -52,11 +52,11 @@ class RemoteRenderExecutor @Inject constructor(
             val segmentImageParts = mutableListOf<MultipartBody.Part>()
             val renderSegments = mutableListOf<RenderSegment>()
 
-            for ((index, seg) in sortedSegments.withIndex()) {
+            for (seg in sortedSegments) {
                 val file = File(seg.sourceFilePath)
                 when (seg.type) {
                     SegmentType.VIDEO -> {
-                        val key = "video_$index"
+                        val key = "video_${seg.order}"
                         videoParts.add(
                             MultipartBody.Part.createFormData(
                                 key, file.name,
@@ -77,7 +77,7 @@ class RemoteRenderExecutor @Inject constructor(
                         )
                     }
                     SegmentType.IMAGE -> {
-                        val key = "segment_image_$index"
+                        val key = "segment_image_${seg.order}"
                         segmentImageParts.add(
                             MultipartBody.Part.createFormData(
                                 key, file.name,
