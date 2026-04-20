@@ -87,12 +87,10 @@ class SplitDubTextToSubtitlesUseCaseTest {
     }
 
     @Test
-    fun `all whitespace lines fallback to single subtitle`() {
+    fun `all whitespace lines produces empty list`() {
         val result = invoke("   \n   ", startMs = 0L, durationMs = 3000L)
 
-        assertEquals(1, result.size)
-        assertEquals(0L, result[0].startMs)
-        assertEquals(3000L, result[0].endMs)
+        assertEquals(0, result.size)
     }
 
     @Test

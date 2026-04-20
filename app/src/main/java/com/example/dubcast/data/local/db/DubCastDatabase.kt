@@ -88,11 +88,11 @@ abstract class DubCastDatabase : RoomDatabase() {
 
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN sourceDubClipId TEXT")
-                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN xPct REAL")
-                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN yPct REAL")
-                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN widthPct REAL")
-                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN heightPct REAL")
+                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN sourceDubClipId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN xPct REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN yPct REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN widthPct REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN heightPct REAL DEFAULT NULL")
             }
         }
     }

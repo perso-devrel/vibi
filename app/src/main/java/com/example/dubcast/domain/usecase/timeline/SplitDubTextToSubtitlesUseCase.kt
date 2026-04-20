@@ -18,7 +18,7 @@ class SplitDubTextToSubtitlesUseCase @Inject constructor() {
         val lines = text.split("\n").map { it.trim() }.filter { it.isNotBlank() }
 
         if (lines.isEmpty()) {
-            return listOf(singleSubtitle(text.trim().ifEmpty { " " }, startMs, startMs + durationMs, dubClipId, projectId))
+            return emptyList()
         }
 
         val weights = lines.map { line -> line.count { !it.isWhitespace() } }

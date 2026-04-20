@@ -110,17 +110,16 @@ private fun StickerSubtitleBox(
                 color = if (isSelected) Color.White else Color.Transparent,
                 shape = RoundedCornerShape(4.dp)
             )
-            .pointerInput(Unit) {
+            .pointerInput(clip.id) {
                 detectTapGestures { onTap() }
             }
             .pointerInput(clip.id, containerW, containerH) {
                 detectDragGestures(
                     onDragEnd = {
+                        // Only commit position delta; width/height unchanged by a drag
                         val finalX = (clip.xPct!! + dragX / containerW * 100f).coerceIn(0f, 100f)
                         val finalY = (clip.yPct!! + dragY / containerH * 100f).coerceIn(0f, 100f)
-                        val finalW = (clip.widthPct!! + resizeDW / containerW * 200f).coerceIn(10f, 100f)
-                        val finalH = (clip.heightPct!! + resizeDH / containerH * 200f).coerceIn(5f, 60f)
-                        onPositionChanged(finalX, finalY, finalW, finalH)
+                        onPositionChanged(finalX, finalY, clip.widthPct!!, clip.heightPct!!)
                         dragX = 0f
                         dragY = 0f
                     },
@@ -153,11 +152,10 @@ private fun StickerSubtitleBox(
                     .pointerInput(clip.id, containerW, containerH) {
                         detectDragGestures(
                             onDragEnd = {
-                                val finalX = (clip.xPct!! + dragX / containerW * 100f).coerceIn(0f, 100f)
-                                val finalY = (clip.yPct!! + dragY / containerH * 100f).coerceIn(0f, 100f)
+                                // Only commit size delta; position unchanged by a resize
                                 val finalW = (clip.widthPct!! + resizeDW / containerW * 200f).coerceIn(10f, 100f)
                                 val finalH = (clip.heightPct!! + resizeDH / containerH * 200f).coerceIn(5f, 60f)
-                                onPositionChanged(finalX, finalY, finalW, finalH)
+                                onPositionChanged(clip.xPct!!, clip.yPct!!, finalW, finalH)
                                 resizeDW = 0f
                                 resizeDH = 0f
                             },
