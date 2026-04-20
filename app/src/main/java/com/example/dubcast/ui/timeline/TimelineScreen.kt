@@ -2,44 +2,41 @@ package com.example.dubcast.ui.timeline
 
 import android.media.MediaPlayer
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MicExternalOn
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MicExternalOn
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -51,18 +48,24 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import com.example.dubcast.domain.model.Segment
+import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.ui.timeline.components.ImageOverlayLayer
 import com.example.dubcast.ui.timeline.components.Timeline
 
@@ -80,89 +83,154 @@ fun TimelineScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            try {
+            runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
-            } catch (_: SecurityException) {
-                // PickVisualMedia may not grant persistable permissions; safe to ignore
             }
             viewModel.onInsertImage(uri.toString())
         }
     }
 
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build()
+    var appendMode by remember { mutableStateOf<AppendPickerTarget?>(null) }
+
+    val videoAppendLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            viewModel.onAppendVideoSegment(uri.toString())
+        }
+        appendMode = null
     }
 
-    LaunchedEffect(state.videoUri) {
-        if (state.videoUri.isNotEmpty()) {
-            val mediaItem = MediaItem.fromUri(Uri.parse(state.videoUri))
-            exoPlayer.setMediaItem(mediaItem)
+    val photoAppendLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            viewModel.onAppendImageSegment(uri.toString())
+        }
+        appendMode = null
+    }
+
+    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+
+    val currentSegment = currentSegmentAt(state.segments, state.playbackPositionMs)
+    val currentSegmentId = currentSegment?.id
+    val currentSegmentStart = remember(state.segments, currentSegmentId) {
+        segmentStartOffset(state.segments, currentSegmentId)
+    }
+
+    // Load ExoPlayer with current VIDEO segment's media whenever the active
+    // segment changes (swap uri + seek to current local offset).
+    LaunchedEffect(currentSegmentId, currentSegment?.sourceUri) {
+        val seg = currentSegment ?: run {
+            exoPlayer.clearMediaItems()
+            return@LaunchedEffect
+        }
+        if (seg.type == SegmentType.VIDEO) {
+            val localMs = (state.playbackPositionMs - currentSegmentStart + seg.trimStartMs)
+                .coerceAtLeast(0L)
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(seg.sourceUri)))
             exoPlayer.prepare()
+            exoPlayer.seekTo(localMs)
+        } else {
+            exoPlayer.pause()
         }
     }
 
-    LaunchedEffect(state.isPlaying) {
-        exoPlayer.playWhenReady = state.isPlaying
+    LaunchedEffect(state.isPlaying, currentSegmentId) {
+        val seg = currentSegment
+        if (state.isPlaying && seg?.type == SegmentType.VIDEO) {
+            exoPlayer.playWhenReady = true
+        } else {
+            exoPlayer.playWhenReady = false
+        }
     }
 
-    // Track active MediaPlayers for dub clip audio overlay
     val activePlayers = remember { mutableStateMapOf<String, MediaPlayer>() }
 
-    // Sync ExoPlayer position back to ViewModel + play dub clip audio
-    LaunchedEffect(state.isPlaying) {
-        if (state.isPlaying) {
-            while (true) {
-                val posMs = exoPlayer.currentPosition
-                // Stop at trim end
-                val trimEnd = state.effectiveTrimEndMs
-                if (posMs >= trimEnd) {
-                    exoPlayer.seekTo(state.trimStartMs)
-                    viewModel.onUpdatePlaybackPosition(state.trimStartMs)
-                    kotlinx.coroutines.delay(50L)
-                    continue
-                }
-                viewModel.onUpdatePlaybackPosition(posMs)
+    // Global playback loop. Emits position updates, drives dub audio, and
+    // advances through image segments via a manual timer.
+    LaunchedEffect(state.isPlaying, state.segments) {
+        if (!state.isPlaying) {
+            activePlayers.values.forEach {
+                try { it.stop() } catch (_: IllegalStateException) {}
+                it.release()
+            }
+            activePlayers.clear()
+            return@LaunchedEffect
+        }
+        if (state.segments.isEmpty()) return@LaunchedEffect
 
-                // Start dub clips that should be playing at current position
-                for (clip in state.dubClips) {
-                    val clipEnd = clip.startMs + clip.durationMs
-                    if (posMs in clip.startMs until clipEnd && clip.id !in activePlayers) {
-                        try {
-                            val mp = MediaPlayer().apply {
-                                setDataSource(clip.audioFilePath)
-                                setVolume(clip.volume, clip.volume)
-                                prepare()
-                                val offsetMs = (posMs - clip.startMs).toInt()
-                                if (offsetMs > 0) seekTo(offsetMs)
-                                start()
-                                setOnCompletionListener {
-                                    it.release()
-                                    activePlayers.remove(clip.id)
-                                }
-                            }
-                            activePlayers[clip.id] = mp
-                        } catch (_: Exception) { /* file not found etc. */ }
+        val total = state.videoDurationMs
+        while (true) {
+            val existingPos = viewModel.uiState.value.playbackPositionMs
+            val seg = currentSegmentAt(state.segments, existingPos)
+            val segStart = segmentStartOffset(state.segments, seg?.id)
+            val nextPos = when (seg?.type) {
+                SegmentType.VIDEO -> {
+                    val localPos = exoPlayer.currentPosition
+                    val trimStart = seg.trimStartMs
+                    val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
+                    val globalPos = segStart + (localPos - trimStart).coerceAtLeast(0L)
+                    when {
+                        localPos >= trimEnd -> segStart + (trimEnd - trimStart)
+                        else -> globalPos
                     }
                 }
-
-                // Stop clips that are no longer in range
-                val toRemove = activePlayers.keys.filter { id ->
-                    val clip = state.dubClips.find { it.id == id }
-                    clip == null || posMs < clip.startMs || posMs >= clip.startMs + clip.durationMs
-                }
-                for (id in toRemove) {
-                    activePlayers.remove(id)?.apply { try { stop() } catch (_: IllegalStateException) {}; release() }
-                }
-
-                kotlinx.coroutines.delay(50L)
+                SegmentType.IMAGE -> (existingPos + 50L)
+                else -> existingPos
             }
-        } else {
-            // Playback stopped — release all active players
-            activePlayers.values.forEach { try { it.stop() } catch (_: IllegalStateException) {}; it.release() }
-            activePlayers.clear()
+
+            val looped = if (nextPos >= total && total > 0L) 0L else nextPos
+            viewModel.onUpdatePlaybackPosition(looped)
+
+            val dubs = viewModel.uiState.value.dubClips
+            for (clip in dubs) {
+                val clipEnd = clip.startMs + clip.durationMs
+                if (looped in clip.startMs until clipEnd && clip.id !in activePlayers) {
+                    try {
+                        val mp = MediaPlayer().apply {
+                            setDataSource(clip.audioFilePath)
+                            setVolume(clip.volume, clip.volume)
+                            prepare()
+                            val offsetMs = (looped - clip.startMs).toInt()
+                            if (offsetMs > 0) seekTo(offsetMs)
+                            start()
+                            setOnCompletionListener {
+                                it.release()
+                                activePlayers.remove(clip.id)
+                            }
+                        }
+                        activePlayers[clip.id] = mp
+                    } catch (_: Exception) {}
+                }
+            }
+            val toRemove = activePlayers.keys.filter { id ->
+                val clip = dubs.find { it.id == id }
+                clip == null || looped < clip.startMs || looped >= clip.startMs + clip.durationMs
+            }
+            for (id in toRemove) {
+                activePlayers.remove(id)?.apply {
+                    try { stop() } catch (_: IllegalStateException) {}
+                    release()
+                }
+            }
+
+            kotlinx.coroutines.delay(50L)
         }
     }
 
@@ -172,9 +240,28 @@ fun TimelineScreen(
         }
     }
 
+    LaunchedEffect(appendMode) {
+        when (appendMode) {
+            AppendPickerTarget.VIDEO -> {
+                videoAppendLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                )
+            }
+            AppendPickerTarget.PHOTO -> {
+                photoAppendLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            }
+            null -> {}
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
-            activePlayers.values.forEach { try { it.stop() } catch (_: IllegalStateException) {}; it.release() }
+            activePlayers.values.forEach {
+                try { it.stop() } catch (_: IllegalStateException) {}
+                it.release()
+            }
             activePlayers.clear()
             exoPlayer.release()
         }
@@ -193,307 +280,274 @@ fun TimelineScreen(
         }
     ) { innerPadding ->
 
-    // Drag handle state — declared outside Column so it's not reset
-    val density = LocalDensity.current
-    var timelineHeightDp by remember { mutableStateOf(120f) }
+        val density = LocalDensity.current
+        var timelineHeightDp by remember { mutableStateOf(120f) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-        // Video Preview + subtitle overlay
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-        ) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        player = exoPlayer
-                        useController = false
-                    }
-                },
-                modifier = Modifier.matchParentSize()
-            )
-            SubtitlePreviewLayer(
-                subtitleClips = state.subtitleClips,
-                playbackPositionMs = state.playbackPositionMs,
-                selectedSubtitleClipId = state.selectedSubtitleClipId,
-                onSelectSubtitle = { viewModel.onSelectSubtitleClip(it) },
-                onUpdatePosition = { id, x, y, w, h ->
-                    viewModel.onUpdateSubtitlePosition(id, x, y, w, h)
-                },
-                modifier = Modifier.matchParentSize()
-            )
-            ImageOverlayLayer(
-                imageClips = state.imageClips,
-                playbackPositionMs = state.playbackPositionMs,
-                selectedImageClipId = state.selectedImageClipId,
-                onSelect = { viewModel.onSelectImageClip(it) },
-                onUpdate = { id, x, y, w, h ->
-                    viewModel.onUpdateImageClipPosition(id, x, y, w, h)
-                },
-                modifier = Modifier.matchParentSize()
-            )
-        }
-
-        // Toolbar — switches between normal and trim mode
-        if (state.isTrimming) {
-            // Trim mode toolbar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { viewModel.onCancelTrim() }) {
-                    Icon(Icons.Default.Close, contentDescription = "Cancel")
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Text(
-                    text = "${formatTime(state.pendingTrimStartMs)} — ${formatTime(state.pendingTrimEndMs)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                Text(
-                    text = "Trim",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                IconButton(onClick = { viewModel.onConfirmTrim() }) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = "Apply Trim",
-                        tint = Color(0xFF34C759)
-                    )
-                }
-            }
-        } else {
-            // Normal toolbar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { viewModel.onTogglePlayback() }) {
-                    Icon(
-                        if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (state.isPlaying) "Pause" else "Play"
-                    )
-                }
-
-                Text(
-                    text = formatTime(state.playbackPositionMs),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.width(60.dp)
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                IconButton(onClick = { viewModel.onShowDubbingSheet() }) {
-                    Icon(Icons.Default.MicExternalOn, contentDescription = "Insert Dubbing")
-                }
-
-                IconButton(onClick = {
-                    imagePickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                }) {
-                    Icon(Icons.Default.Image, contentDescription = "Insert Image")
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                IconButton(
-                    onClick = { viewModel.onUndo() },
-                    enabled = state.canUndo
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
-                }
-
-                IconButton(
-                    onClick = { viewModel.onRedo() },
-                    enabled = state.canRedo
-                ) {
-                    Icon(Icons.Default.Redo, contentDescription = "Redo")
-                }
-
-                IconButton(onClick = { viewModel.onNavigateToExport() }) {
-                    Icon(Icons.Default.Save, contentDescription = "Export")
-                }
-            }
-        }
-
-        // Dub clip selected action bar
-        val selectedClip = state.dubClips.find { it.id == state.selectedDubClipId }
-        if (selectedClip != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { viewModel.onToggleDubVolumeSlider() }) {
-                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume")
-                }
-                IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete")
-                }
-                Spacer(modifier = Modifier.weight(1f))
-            }
-
-            if (state.showDubVolumeSlider) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
-                    Slider(
-                        value = selectedClip.volume,
-                        onValueChange = { viewModel.onUpdateDubClipVolume(selectedClip.id, it) },
-                        valueRange = 0f..2f,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${(selectedClip.volume * 100).toInt()}%",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.width(44.dp)
-                    )
-                }
-            }
-        }
-
-        // Image clip selected action bar
-        val selectedImageClip = state.imageClips.find { it.id == state.selectedImageClipId }
-        if (selectedImageClip != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete")
-                }
-                Spacer(modifier = Modifier.weight(1f))
-            }
-        }
-
-        // Video selected action bar — small icon buttons above timeline
-        if (state.isVideoSelected && !state.isTrimming) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { viewModel.onEnterTrimMode() }) {
-                    Icon(Icons.Default.ContentCut, contentDescription = "Trim")
-                }
-                IconButton(onClick = { viewModel.onToggleVideoVolumeSlider() }) {
-                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume")
-                }
-                Spacer(modifier = Modifier.weight(1f))
-            }
-
-            if (state.showVideoVolumeSlider) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
-                    Slider(
-                        value = state.videoVolume,
-                        onValueChange = {
-                            viewModel.onUpdateVideoVolume(it)
-                            exoPlayer.volume = it.coerceIn(0f, 1f)
-                        },
-                        valueRange = 0f..2f,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${(state.videoVolume * 100).toInt()}%",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.width(44.dp)
-                    )
-                }
-            }
-        }
-
-        // Drag handle to resize timeline
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(14.dp)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures { _, dragAmount ->
-                        val deltaDp = with(density) { dragAmount.toDp().value }
-                        timelineHeightDp = (timelineHeightDp - deltaDp).coerceIn(60f, 300f)
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             Box(
                 modifier = Modifier
-                    .width(40.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                if (currentSegment?.type == SegmentType.IMAGE) {
+                    AsyncImage(
+                        model = currentSegment.sourceUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(Color.Black)
+                    )
+                } else {
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                player = exoPlayer
+                                useController = false
+                            }
+                        },
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
+                SubtitlePreviewLayer(
+                    subtitleClips = state.subtitleClips,
+                    playbackPositionMs = state.playbackPositionMs,
+                    selectedSubtitleClipId = state.selectedSubtitleClipId,
+                    onSelectSubtitle = { viewModel.onSelectSubtitleClip(it) },
+                    onUpdatePosition = { id, x, y, w, h ->
+                        viewModel.onUpdateSubtitlePosition(id, x, y, w, h)
+                    },
+                    modifier = Modifier.matchParentSize()
+                )
+                if (currentSegment?.type != SegmentType.IMAGE) {
+                    ImageOverlayLayer(
+                        imageClips = state.imageClips,
+                        playbackPositionMs = state.playbackPositionMs,
+                        selectedImageClipId = state.selectedImageClipId,
+                        onSelect = { viewModel.onSelectImageClip(it) },
+                        onUpdate = { id, x, y, w, h ->
+                            viewModel.onUpdateImageClipPosition(id, x, y, w, h)
+                        },
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
+            }
+
+            if (state.isTrimming) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { viewModel.onCancelTrim() }) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${formatTime(state.pendingTrimStartMs)} — ${formatTime(state.pendingTrimEndMs)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "Trim",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(onClick = { viewModel.onConfirmTrim() }) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "Apply Trim",
+                            tint = Color(0xFF34C759)
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { viewModel.onTogglePlayback() }) {
+                        Icon(
+                            if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (state.isPlaying) "Pause" else "Play"
+                        )
+                    }
+                    Text(
+                        text = formatTime(state.playbackPositionMs),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.width(60.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(onClick = { viewModel.onShowDubbingSheet() }) {
+                        Icon(Icons.Default.MicExternalOn, contentDescription = "Insert Dubbing")
+                    }
+                    IconButton(onClick = {
+                        imagePickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }) {
+                        Icon(Icons.Default.Image, contentDescription = "Insert Image")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = { viewModel.onUndo() },
+                        enabled = state.canUndo
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
+                    }
+                    IconButton(
+                        onClick = { viewModel.onRedo() },
+                        enabled = state.canRedo
+                    ) {
+                        Icon(Icons.Default.Redo, contentDescription = "Redo")
+                    }
+                    IconButton(onClick = { viewModel.onNavigateToExport() }) {
+                        Icon(Icons.Default.Save, contentDescription = "Export")
+                    }
+                }
+            }
+
+            val selectedDubClip = state.dubClips.find { it.id == state.selectedDubClipId }
+            if (selectedDubClip != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { viewModel.onToggleDubVolumeSlider() }) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = "Volume")
+                    }
+                    IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
+                if (state.showDubVolumeSlider) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = "Volume", modifier = Modifier.padding(end = 8.dp))
+                        Slider(
+                            value = selectedDubClip.volume,
+                            onValueChange = { viewModel.onUpdateDubClipVolume(selectedDubClip.id, it) },
+                            valueRange = 0f..2f,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "${(selectedDubClip.volume * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.width(44.dp)
+                        )
+                    }
+                }
+            }
+
+            val selectedImageClip = state.imageClips.find { it.id == state.selectedImageClipId }
+            if (selectedImageClip != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+
+            val selectedSegment = state.segments.find { it.id == state.selectedSegmentId }
+            if (selectedSegment != null && !state.isTrimming) {
+                SelectedSegmentActionBar(
+                    segment = selectedSegment,
+                    canDelete = state.segments.size > 1,
+                    onEnterTrim = { viewModel.onEnterTrimMode() },
+                    onUpdateDuration = { ms ->
+                        viewModel.onUpdateImageSegmentDuration(selectedSegment.id, ms)
+                    },
+                    onDelete = { viewModel.onDeleteSelectedSegment() }
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(14.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            val deltaDp = with(density) { dragAmount.toDp().value }
+                            timelineHeightDp = (timelineHeightDp - deltaDp).coerceIn(60f, 300f)
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                )
+            }
+
+            val displayTrimStart = if (state.isTrimming) state.pendingTrimStartMs else state.trimStartMs
+            val displayTrimEnd = if (state.isTrimming) state.pendingTrimEndMs else {
+                if (state.trimEndMs <= 0L) state.videoDurationMs else state.trimEndMs
+            }
+
+            Timeline(
+                totalDurationMs = state.videoDurationMs,
+                segments = state.segments,
+                dubClips = state.dubClips,
+                subtitleClips = state.subtitleClips,
+                imageClips = state.imageClips,
+                playbackPositionMs = state.playbackPositionMs,
+                trimStartMs = displayTrimStart,
+                trimEndMs = displayTrimEnd,
+                isTrimming = state.isTrimming,
+                selectedSegmentId = state.selectedSegmentId,
+                selectedDubClipId = state.selectedDubClipId,
+                selectedSubtitleClipId = state.selectedSubtitleClipId,
+                selectedImageClipId = state.selectedImageClipId,
+                onSegmentSelected = { viewModel.onSelectSegment(it) },
+                onDubClipSelected = { viewModel.onSelectDubClip(it) },
+                onSubtitleClipSelected = { viewModel.onSelectSubtitleClip(it) },
+                onImageClipSelected = { viewModel.onSelectImageClip(it) },
+                onDubClipMoved = { clipId, newStartMs -> viewModel.onMoveDubClip(clipId, newStartMs) },
+                onImageClipMoved = { clipId, newStartMs -> viewModel.onMoveImageClip(clipId, newStartMs) },
+                onImageClipResized = { clipId, newEndMs -> viewModel.onResizeImageClipDuration(clipId, newEndMs) },
+                onAppendRequested = { viewModel.onShowAppendSheet() },
+                onSeek = { posMs ->
+                    val clamped = posMs.coerceIn(0L, state.videoDurationMs)
+                    viewModel.onUpdatePlaybackPosition(clamped)
+                    val seg = currentSegmentAt(state.segments, clamped)
+                    if (seg?.type == SegmentType.VIDEO) {
+                        val segStart = segmentStartOffset(state.segments, seg.id)
+                        val localMs = (clamped - segStart + seg.trimStartMs).coerceAtLeast(0L)
+                        exoPlayer.seekTo(localMs)
+                    }
+                },
+                onTrimStartChanged = { viewModel.onSetPendingTrimStart(it) },
+                onTrimEndChanged = { viewModel.onSetPendingTrimEnd(it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(timelineHeightDp.dp)
             )
         }
-
-        // Timeline
-        // In trim mode, show pending values; otherwise show saved values
-        val displayTrimStart = if (state.isTrimming) state.pendingTrimStartMs else state.trimStartMs
-        val displayTrimEnd = if (state.isTrimming) state.pendingTrimEndMs else state.effectiveTrimEndMs
-
-        Timeline(
-            videoDurationMs = state.videoDurationMs,
-            dubClips = state.dubClips,
-            subtitleClips = state.subtitleClips,
-            imageClips = state.imageClips,
-            playbackPositionMs = state.playbackPositionMs,
-            trimStartMs = displayTrimStart,
-            trimEndMs = displayTrimEnd,
-            isTrimming = state.isTrimming,
-            isVideoSelected = state.isVideoSelected,
-            selectedDubClipId = state.selectedDubClipId,
-            selectedSubtitleClipId = state.selectedSubtitleClipId,
-            selectedImageClipId = state.selectedImageClipId,
-            onVideoTrackTapped = { viewModel.onVideoTrackTapped() },
-            onDubClipSelected = { viewModel.onSelectDubClip(it) },
-            onSubtitleClipSelected = { viewModel.onSelectSubtitleClip(it) },
-            onImageClipSelected = { viewModel.onSelectImageClip(it) },
-            onDubClipMoved = { clipId, newStartMs -> viewModel.onMoveDubClip(clipId, newStartMs) },
-            onImageClipMoved = { clipId, newStartMs -> viewModel.onMoveImageClip(clipId, newStartMs) },
-            onImageClipResized = { clipId, newEndMs -> viewModel.onResizeImageClipDuration(clipId, newEndMs) },
-            onSeek = { posMs ->
-                    val clampedMs = posMs.coerceIn(state.trimStartMs, state.effectiveTrimEndMs)
-                    viewModel.onUpdatePlaybackPosition(clampedMs)
-                    exoPlayer.seekTo(clampedMs)
-                },
-            onTrimStartChanged = { viewModel.onSetPendingTrimStart(it) },
-            onTrimEndChanged = { viewModel.onSetPendingTrimEnd(it) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(timelineHeightDp.dp)
-        )
-    }
     }
 
-    // Bottom Sheets
     if (state.showDubbingSheet) {
         InsertDubbingSheet(
             voices = state.voices,
@@ -508,6 +562,96 @@ fun TimelineScreen(
         )
     }
 
+    if (state.showAppendSheet) {
+        AppendSegmentSheet(
+            onDismiss = { viewModel.onDismissAppendSheet() },
+            onPickVideo = {
+                viewModel.onDismissAppendSheet()
+                appendMode = AppendPickerTarget.VIDEO
+            },
+            onPickPhoto = {
+                viewModel.onDismissAppendSheet()
+                appendMode = AppendPickerTarget.PHOTO
+            }
+        )
+    }
+}
+
+@Composable
+private fun SelectedSegmentActionBar(
+    segment: Segment,
+    canDelete: Boolean,
+    onEnterTrim: () -> Unit,
+    onUpdateDuration: (Long) -> Unit,
+    onDelete: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (segment.type == SegmentType.VIDEO) {
+                IconButton(onClick = onEnterTrim) {
+                    Icon(Icons.Default.ContentCut, contentDescription = "Trim")
+                }
+            }
+            if (canDelete) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                }
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = "${segment.type.name} · ${formatTime(segment.effectiveDurationMs)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (segment.type == SegmentType.IMAGE) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+            ) {
+                Text(
+                    text = "Duration",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.width(64.dp)
+                )
+                Slider(
+                    value = segment.durationMs.toFloat(),
+                    onValueChange = { onUpdateDuration(it.toLong()) },
+                    valueRange = 500f..30_000f,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = formatTime(segment.durationMs),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.width(56.dp)
+                )
+            }
+        }
+    }
+}
+
+private enum class AppendPickerTarget { VIDEO, PHOTO }
+
+private fun currentSegmentAt(segments: List<Segment>, positionMs: Long): Segment? {
+    if (segments.isEmpty()) return null
+    var acc = 0L
+    for (seg in segments) {
+        val next = acc + seg.effectiveDurationMs
+        if (positionMs < next) return seg
+        acc = next
+    }
+    return segments.last()
+}
+
+private fun segmentStartOffset(segments: List<Segment>, segmentId: String?): Long {
+    if (segmentId == null) return 0L
+    var acc = 0L
+    for (seg in segments) {
+        if (seg.id == segmentId) return acc
+        acc += seg.effectiveDurationMs
+    }
+    return acc
 }
 
 private fun formatTime(ms: Long): String {

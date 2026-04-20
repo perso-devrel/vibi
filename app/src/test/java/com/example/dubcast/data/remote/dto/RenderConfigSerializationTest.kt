@@ -35,6 +35,41 @@ class RenderConfigSerializationTest {
     }
 
     @Test
+    fun `config with mixed VIDEO and IMAGE segments roundtrips`() {
+        val config = RenderConfig(
+            dubClips = emptyList(),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 10_000L,
+                    trimStartMs = 2_000L,
+                    trimEndMs = 8_000L,
+                    width = 1920,
+                    height = 1080
+                ),
+                RenderSegment(
+                    sourceFileKey = "segment_image_1",
+                    type = "IMAGE",
+                    order = 1,
+                    durationMs = 3_000L,
+                    width = 1024,
+                    height = 768,
+                    imageXPct = 40f,
+                    imageYPct = 60f,
+                    imageWidthPct = 70f,
+                    imageHeightPct = 55f
+                )
+            )
+        )
+        val json = adapter.toJson(config)
+        assertTrue(json.contains("segment_image_1"))
+        assertTrue(json.contains("\"IMAGE\""))
+        assertEquals(config, adapter.fromJson(json)!!)
+    }
+
+    @Test
     fun `config with image clips and segments roundtrips`() {
         val config = RenderConfig(
             dubClips = listOf(

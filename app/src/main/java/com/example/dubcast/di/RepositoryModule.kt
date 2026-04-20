@@ -1,6 +1,7 @@
 package com.example.dubcast.di
 
 import com.example.dubcast.data.repository.AndroidGallerySaver
+import com.example.dubcast.data.repository.AndroidImageMetadataExtractor
 import com.example.dubcast.data.repository.AndroidVideoMetadataExtractor
 import com.example.dubcast.data.repository.DubClipRepositoryImpl
 import com.example.dubcast.data.repository.EditProjectRepositoryImpl
@@ -18,6 +19,7 @@ import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
+import com.example.dubcast.domain.usecase.input.ImageMetadataExtractor
 import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
 import com.example.dubcast.domain.usecase.share.GallerySaver
 import dagger.Binds
@@ -33,6 +35,10 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindVideoMetadataExtractor(impl: AndroidVideoMetadataExtractor): VideoMetadataExtractor
+
+    @Binds
+    @Singleton
+    abstract fun bindImageMetadataExtractor(impl: AndroidImageMetadataExtractor): ImageMetadataExtractor
 
     @Binds
     @Singleton

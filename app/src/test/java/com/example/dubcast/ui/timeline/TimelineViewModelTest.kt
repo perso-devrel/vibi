@@ -2,27 +2,36 @@ package com.example.dubcast.ui.timeline
 
 import androidx.lifecycle.SavedStateHandle
 import com.example.dubcast.domain.model.Anchor
+import com.example.dubcast.domain.model.ImageInfo
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
+import com.example.dubcast.domain.model.VideoInfo
 import com.example.dubcast.domain.repository.TtsResult
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
+import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
+import com.example.dubcast.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.RemoveSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import com.example.dubcast.fake.FakeDubClipRepository
 import com.example.dubcast.fake.FakeImageClipRepository
+import com.example.dubcast.fake.FakeImageMetadataExtractor
 import com.example.dubcast.fake.FakeSegmentRepository
 import com.example.dubcast.fake.FakeSubtitleClipRepository
 import com.example.dubcast.fake.FakeTtsRepository
+import com.example.dubcast.fake.FakeVideoMetadataExtractor
 import com.example.dubcast.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -46,6 +55,8 @@ class TimelineViewModelTest {
     private lateinit var imageRepo: FakeImageClipRepository
     private lateinit var segmentRepo: FakeSegmentRepository
     private lateinit var ttsRepo: FakeTtsRepository
+    private lateinit var videoExtractor: FakeVideoMetadataExtractor
+    private lateinit var imageExtractor: FakeImageMetadataExtractor
     private lateinit var vm: TimelineViewModel
 
     private val projectId = "proj-1"
@@ -57,6 +68,8 @@ class TimelineViewModelTest {
         imageRepo = FakeImageClipRepository()
         segmentRepo = FakeSegmentRepository()
         ttsRepo = FakeTtsRepository()
+        videoExtractor = FakeVideoMetadataExtractor()
+        imageExtractor = FakeImageMetadataExtractor()
         vm = TimelineViewModel(
             savedStateHandle = SavedStateHandle(mapOf("projectId" to projectId)),
             segmentRepository = segmentRepo,
@@ -74,7 +87,14 @@ class TimelineViewModelTest {
             addImageClip = AddImageClipUseCase(imageRepo),
             updateImageClip = UpdateImageClipUseCase(imageRepo),
             deleteImageClip = DeleteImageClipUseCase(imageRepo),
-            updateSegmentTrim = UpdateSegmentTrimUseCase(segmentRepo)
+            updateSegmentTrim = UpdateSegmentTrimUseCase(segmentRepo),
+            addVideoSegment = AddVideoSegmentUseCase(segmentRepo),
+            addImageSegment = AddImageSegmentUseCase(segmentRepo),
+            removeSegment = RemoveSegmentUseCase(segmentRepo),
+            updateImageSegmentDuration = UpdateImageSegmentDurationUseCase(segmentRepo),
+            updateImageSegmentPosition = UpdateImageSegmentPositionUseCase(segmentRepo),
+            videoMetadataExtractor = videoExtractor,
+            imageMetadataExtractor = imageExtractor
         )
     }
 
@@ -126,6 +146,84 @@ class TimelineViewModelTest {
 
         val subs = subRepo.observeClips(projectId).first()
         assertEquals(0, subs.size)
+    }
+
+    @Test
+    fun `appending a video segment extends total duration`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        videoExtractor.result = VideoInfo(
+            uri = "content://new.mp4",
+            fileName = "new.mp4",
+            mimeType = "video/mp4",
+            durationMs = 5_000L,
+            width = 1280,
+            height = 720,
+            sizeBytes = 0L
+        )
+        vm.onAppendVideoSegment("content://new.mp4")
+        advanceUntilIdle()
+
+        val segments = segmentRepo.getByProjectId(projectId)
+        assertEquals(2, segments.size)
+        assertEquals(SegmentType.VIDEO, segments[1].type)
+        assertEquals(1, segments[1].order)
+        assertEquals(15_000L, vm.uiState.value.videoDurationMs)
+    }
+
+    @Test
+    fun `appending an image segment adds a 3-second clip`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        imageExtractor.result = ImageInfo(uri = "content://pic.jpg", width = 800, height = 600)
+        vm.onAppendImageSegment("content://pic.jpg")
+        advanceUntilIdle()
+
+        val segments = segmentRepo.getByProjectId(projectId)
+        assertEquals(2, segments.size)
+        assertEquals(SegmentType.IMAGE, segments[1].type)
+        assertEquals(3_000L, segments[1].durationMs)
+        assertEquals(13_000L, vm.uiState.value.videoDurationMs)
+    }
+
+    @Test
+    fun `onDeleteSelectedSegment removes selected segment and compacts order`() = runTest {
+        seedSegment(id = "seg-1", durationMs = 10_000L)
+        segmentRepo.addSegment(
+            Segment(
+                id = "seg-2",
+                projectId = projectId,
+                type = SegmentType.VIDEO,
+                order = 1,
+                sourceUri = "content://b.mp4",
+                durationMs = 5_000L,
+                width = 1280,
+                height = 720
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onSelectSegment("seg-2")
+        vm.onDeleteSelectedSegment()
+        advanceUntilIdle()
+
+        val segments = segmentRepo.getByProjectId(projectId)
+        assertEquals(1, segments.size)
+        assertEquals("seg-1", segments[0].id)
+    }
+
+    @Test
+    fun `onDeleteSelectedSegment refuses to delete the only remaining segment`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onSelectSegment("seg-1")
+        vm.onDeleteSelectedSegment()
+        advanceUntilIdle()
+
+        assertEquals(1, segmentRepo.getByProjectId(projectId).size)
     }
 
     @Test
