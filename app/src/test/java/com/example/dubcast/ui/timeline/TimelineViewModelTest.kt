@@ -466,4 +466,66 @@ class TimelineViewModelTest {
         vm.onCancelRangeMode()
         assertTrue(!vm.uiState.value.isRangeSelecting)
     }
+
+    private suspend fun seedImageSegment(
+        id: String = "img-1",
+        durationMs: Long = 3_000L
+    ): Segment {
+        val segment = Segment(
+            id = id,
+            projectId = projectId,
+            type = SegmentType.IMAGE,
+            order = 0,
+            sourceUri = "content://photo.jpg",
+            durationMs = durationMs,
+            width = 1024,
+            height = 768
+        )
+        segmentRepo.addSegment(segment)
+        return segment
+    }
+
+    @Test
+    fun `onResizeImageSegmentByDrag clamps below 500ms to 500ms`() = runTest {
+        seedImageSegment()
+        advanceUntilIdle()
+
+        vm.onResizeImageSegmentByDrag("img-1", 100L)
+        advanceUntilIdle()
+
+        assertEquals(500L, segmentRepo.getSegment("img-1")!!.durationMs)
+    }
+
+    @Test
+    fun `onResizeImageSegmentByDrag clamps above 30000ms to 30000ms`() = runTest {
+        seedImageSegment()
+        advanceUntilIdle()
+
+        vm.onResizeImageSegmentByDrag("img-1", 50_000L)
+        advanceUntilIdle()
+
+        assertEquals(30_000L, segmentRepo.getSegment("img-1")!!.durationMs)
+    }
+
+    @Test
+    fun `onResizeImageSegmentByDrag updates within range`() = runTest {
+        seedImageSegment()
+        advanceUntilIdle()
+
+        vm.onResizeImageSegmentByDrag("img-1", 4_500L)
+        advanceUntilIdle()
+
+        assertEquals(4_500L, segmentRepo.getSegment("img-1")!!.durationMs)
+    }
+
+    @Test
+    fun `onResizeImageSegmentByDrag is a no-op for VIDEO segment`() = runTest {
+        seedSegment(id = "vid-1", durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onResizeImageSegmentByDrag("vid-1", 5_000L)
+        advanceUntilIdle()
+
+        assertEquals(10_000L, segmentRepo.getSegment("vid-1")!!.durationMs)
+    }
 }

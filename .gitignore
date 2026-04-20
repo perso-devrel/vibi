@@ -17,4 +17,5 @@ local.properties
 .claude/ralph-work/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+.claude/feature-pipeline-state.json
 /.idea/
