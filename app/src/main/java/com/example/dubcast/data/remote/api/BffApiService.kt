@@ -46,10 +46,11 @@ interface BffApiService {
     @Multipart
     @POST("api/v2/render")
     suspend fun submitRenderJob(
-        @Part video: MultipartBody.Part,
+        @Part videoFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part audioFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part subtitles: MultipartBody.Part?,
         @Part imageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
+        @Part segmentImageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part("config") config: RequestBody
     ): RenderJobResponse
 

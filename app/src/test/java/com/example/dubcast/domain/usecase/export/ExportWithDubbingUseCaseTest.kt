@@ -2,6 +2,7 @@ package com.example.dubcast.domain.usecase.export
 
 import com.example.dubcast.domain.model.Anchor
 import com.example.dubcast.domain.model.DubClip
+import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.fake.FakeFfmpegExecutor
@@ -18,6 +19,17 @@ class ExportWithDubbingUseCaseTest {
     private lateinit var assGenerator: AssGenerator
     private lateinit var useCase: ExportWithDubbingUseCase
 
+    private val videoSegment = SegmentInput(
+        sourceFilePath = "/input.mp4",
+        type = SegmentType.VIDEO,
+        order = 0,
+        durationMs = 30_000L,
+        trimStartMs = 0L,
+        trimEndMs = 0L,
+        width = 1920,
+        height = 1080
+    )
+
     @Before
     fun setup() {
         ffmpegExecutor = FakeFfmpegExecutor()
@@ -33,12 +45,9 @@ class ExportWithDubbingUseCaseTest {
         )
 
         val result = useCase.execute(
-            inputVideoPath = "/input.mp4",
+            segments = listOf(videoSegment),
             dubClips = clips,
             subtitleClips = emptyList(),
-            videoWidth = 1920,
-            videoHeight = 1080,
-            videoDurationMs = 30000L,
             outputPath = "/output.mp4",
             assFilePath = null,
             fontDir = null,
@@ -50,6 +59,8 @@ class ExportWithDubbingUseCaseTest {
         assertEquals(2, ffmpegExecutor.lastMixInputs!!.size)
         assertEquals(1000L, ffmpegExecutor.lastMixInputs!![0].startMs)
         assertEquals(5000L, ffmpegExecutor.lastMixInputs!![1].startMs)
+        assertEquals(1, ffmpegExecutor.lastSegments!!.size)
+        assertEquals(SegmentType.VIDEO, ffmpegExecutor.lastSegments!![0].type)
     }
 
     @Test
@@ -59,12 +70,9 @@ class ExportWithDubbingUseCaseTest {
         )
 
         val result = useCase.execute(
-            inputVideoPath = "/input.mp4",
+            segments = listOf(videoSegment),
             dubClips = emptyList(),
             subtitleClips = subtitles,
-            videoWidth = 1920,
-            videoHeight = 1080,
-            videoDurationMs = 30000L,
             outputPath = "/output.mp4",
             assFilePath = System.getProperty("java.io.tmpdir") + "/test.ass",
             fontDir = "/fonts",
@@ -83,12 +91,9 @@ class ExportWithDubbingUseCaseTest {
         )
 
         val result = useCase.execute(
-            inputVideoPath = "/input.mp4",
+            segments = listOf(videoSegment),
             dubClips = clips,
             subtitleClips = emptyList(),
-            videoWidth = 1920,
-            videoHeight = 1080,
-            videoDurationMs = 30000L,
             outputPath = "/output.mp4",
             assFilePath = null,
             fontDir = null,
@@ -96,5 +101,18 @@ class ExportWithDubbingUseCaseTest {
         )
 
         assertTrue(result.isFailure)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `rejects empty segments`() = runTest {
+        useCase.execute(
+            segments = emptyList(),
+            dubClips = emptyList(),
+            subtitleClips = emptyList(),
+            outputPath = "/output.mp4",
+            assFilePath = null,
+            fontDir = null,
+            onProgress = {}
+        )
     }
 }

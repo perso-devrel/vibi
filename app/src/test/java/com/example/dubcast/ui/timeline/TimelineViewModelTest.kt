@@ -2,6 +2,8 @@ package com.example.dubcast.ui.timeline
 
 import androidx.lifecycle.SavedStateHandle
 import com.example.dubcast.domain.model.Anchor
+import com.example.dubcast.domain.model.Segment
+import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.repository.TtsResult
@@ -13,11 +15,12 @@ import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import com.example.dubcast.fake.FakeDubClipRepository
-import com.example.dubcast.fake.FakeEditProjectRepository
 import com.example.dubcast.fake.FakeImageClipRepository
+import com.example.dubcast.fake.FakeSegmentRepository
 import com.example.dubcast.fake.FakeSubtitleClipRepository
 import com.example.dubcast.fake.FakeTtsRepository
 import com.example.dubcast.util.MainDispatcherRule
@@ -41,6 +44,7 @@ class TimelineViewModelTest {
     private lateinit var dubRepo: FakeDubClipRepository
     private lateinit var subRepo: FakeSubtitleClipRepository
     private lateinit var imageRepo: FakeImageClipRepository
+    private lateinit var segmentRepo: FakeSegmentRepository
     private lateinit var ttsRepo: FakeTtsRepository
     private lateinit var vm: TimelineViewModel
 
@@ -51,10 +55,11 @@ class TimelineViewModelTest {
         dubRepo = FakeDubClipRepository()
         subRepo = FakeSubtitleClipRepository()
         imageRepo = FakeImageClipRepository()
+        segmentRepo = FakeSegmentRepository()
         ttsRepo = FakeTtsRepository()
         vm = TimelineViewModel(
             savedStateHandle = SavedStateHandle(mapOf("projectId" to projectId)),
-            editProjectRepository = FakeEditProjectRepository(),
+            segmentRepository = segmentRepo,
             dubClipRepository = dubRepo,
             subtitleClipRepository = subRepo,
             imageClipRepository = imageRepo,
@@ -68,8 +73,27 @@ class TimelineViewModelTest {
             splitDubTextToSubtitles = SplitDubTextToSubtitlesUseCase(),
             addImageClip = AddImageClipUseCase(imageRepo),
             updateImageClip = UpdateImageClipUseCase(imageRepo),
-            deleteImageClip = DeleteImageClipUseCase(imageRepo)
+            deleteImageClip = DeleteImageClipUseCase(imageRepo),
+            updateSegmentTrim = UpdateSegmentTrimUseCase(segmentRepo)
         )
+    }
+
+    private suspend fun seedSegment(
+        id: String = "seg-1",
+        durationMs: Long = 60_000L
+    ): Segment {
+        val segment = Segment(
+            id = id,
+            projectId = projectId,
+            type = SegmentType.VIDEO,
+            order = 0,
+            sourceUri = "content://video.mp4",
+            durationMs = durationMs,
+            width = 1920,
+            height = 1080
+        )
+        segmentRepo.addSegment(segment)
+        return segment
     }
 
     @Test
@@ -102,6 +126,35 @@ class TimelineViewModelTest {
 
         val subs = subRepo.observeClips(projectId).first()
         assertEquals(0, subs.size)
+    }
+
+    @Test
+    fun `segment-driven video metadata populates UI state`() = runTest {
+        seedSegment(durationMs = 45_000L)
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals(45_000L, state.videoDurationMs)
+        assertEquals(1920, state.videoWidth)
+        assertEquals(1080, state.videoHeight)
+        assertEquals("content://video.mp4", state.videoUri)
+        assertEquals("seg-1", state.selectedSegmentId)
+    }
+
+    @Test
+    fun `onConfirmTrim persists trim to the selected segment`() = runTest {
+        seedSegment(durationMs = 20_000L)
+        advanceUntilIdle()
+
+        vm.onEnterTrimMode()
+        vm.onSetPendingTrimStart(2_000L)
+        vm.onSetPendingTrimEnd(15_000L)
+        vm.onConfirmTrim()
+        advanceUntilIdle()
+
+        val updated = segmentRepo.getSegment("seg-1")!!
+        assertEquals(2_000L, updated.trimStartMs)
+        assertEquals(15_000L, updated.trimEndMs)
     }
 
     @Test

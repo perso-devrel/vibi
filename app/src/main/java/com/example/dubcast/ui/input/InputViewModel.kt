@@ -2,11 +2,10 @@ package com.example.dubcast.ui.input
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.dubcast.domain.model.EditProject
 import com.example.dubcast.domain.model.ValidationError
 import com.example.dubcast.domain.model.ValidationResult
 import com.example.dubcast.domain.model.VideoInfo
-import com.example.dubcast.domain.repository.EditProjectRepository
+import com.example.dubcast.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.input.ValidateVideoUseCase
 import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,7 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.UUID
 import javax.inject.Inject
 
 data class InputUiState(
@@ -30,7 +28,7 @@ data class InputUiState(
 class InputViewModel @Inject constructor(
     private val extractor: VideoMetadataExtractor,
     private val validateVideo: ValidateVideoUseCase,
-    private val editProjectRepository: EditProjectRepository
+    private val createProjectWithInitialVideoSegment: CreateProjectWithInitialVideoSegmentUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InputUiState())
@@ -62,18 +60,7 @@ class InputViewModel @Inject constructor(
     fun onContinue() {
         val video = _uiState.value.selectedVideo ?: return
         viewModelScope.launch {
-            val projectId = UUID.randomUUID().toString()
-            val now = System.currentTimeMillis()
-            val project = EditProject(
-                projectId = projectId,
-                videoUri = video.uri,
-                videoDurationMs = video.durationMs,
-                videoWidth = video.width,
-                videoHeight = video.height,
-                createdAt = now,
-                updatedAt = now
-            )
-            editProjectRepository.createProject(project)
+            val projectId = createProjectWithInitialVideoSegment(video)
             _navigateToTimeline.emit(projectId)
         }
     }

@@ -6,6 +6,7 @@ import com.example.dubcast.data.local.db.DubCastDatabase
 import com.example.dubcast.data.local.db.dao.DubClipDao
 import com.example.dubcast.data.local.db.dao.EditProjectDao
 import com.example.dubcast.data.local.db.dao.ImageClipDao
+import com.example.dubcast.data.local.db.dao.SegmentDao
 import com.example.dubcast.data.local.db.dao.SubtitleClipDao
 import dagger.Module
 import dagger.Provides
@@ -32,7 +33,8 @@ object DatabaseModule {
                 DubCastDatabase.MIGRATION_3_4,
                 DubCastDatabase.MIGRATION_4_5,
                 DubCastDatabase.MIGRATION_5_6,
-                DubCastDatabase.MIGRATION_6_7
+                DubCastDatabase.MIGRATION_6_7,
+                DubCastDatabase.MIGRATION_7_8
             )
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
@@ -49,4 +51,7 @@ object DatabaseModule {
 
     @Provides
     fun provideImageClipDao(db: DubCastDatabase): ImageClipDao = db.imageClipDao()
+
+    @Provides
+    fun provideSegmentDao(db: DubCastDatabase): SegmentDao = db.segmentDao()
 }

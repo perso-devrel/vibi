@@ -111,6 +111,7 @@ dependencies {
     testImplementation(libs.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.mockk)
+    testImplementation(libs.sqlite.jdbc)
     testImplementation(libs.retrofit)
     testImplementation(libs.retrofit.converter.moshi)
     testImplementation(libs.okhttp)

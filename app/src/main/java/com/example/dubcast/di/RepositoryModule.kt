@@ -7,12 +7,14 @@ import com.example.dubcast.data.repository.EditProjectRepositoryImpl
 import com.example.dubcast.data.repository.ImageClipRepositoryImpl
 import com.example.dubcast.data.repository.RemoteRenderExecutor
 import com.example.dubcast.data.repository.LipSyncRepositoryImpl
+import com.example.dubcast.data.repository.SegmentRepositoryImpl
 import com.example.dubcast.data.repository.SubtitleClipRepositoryImpl
 import com.example.dubcast.data.repository.TtsRepositoryImpl
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.LipSyncRepository
+import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
@@ -63,4 +65,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindImageClipRepository(impl: ImageClipRepositoryImpl): ImageClipRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSegmentRepository(impl: SegmentRepositoryImpl): SegmentRepository
 }

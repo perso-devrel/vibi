@@ -3,8 +3,10 @@ package com.example.dubcast.ui.input
 import com.example.dubcast.domain.model.ValidationError
 import com.example.dubcast.domain.model.ValidationResult
 import com.example.dubcast.domain.model.VideoInfo
+import com.example.dubcast.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.input.ValidateVideoUseCase
 import com.example.dubcast.fake.FakeEditProjectRepository
+import com.example.dubcast.fake.FakeSegmentRepository
 import com.example.dubcast.fake.FakeVideoMetadataExtractor
 import com.example.dubcast.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -39,7 +41,13 @@ class InputViewModelTest {
     @Before
     fun setup() {
         extractor = FakeVideoMetadataExtractor()
-        viewModel = InputViewModel(extractor, ValidateVideoUseCase(), FakeEditProjectRepository())
+        val segmentRepo = FakeSegmentRepository()
+        val projectRepo = FakeEditProjectRepository(segmentRepo)
+        viewModel = InputViewModel(
+            extractor,
+            ValidateVideoUseCase(),
+            CreateProjectWithInitialVideoSegmentUseCase(projectRepo)
+        )
     }
 
     @Test
