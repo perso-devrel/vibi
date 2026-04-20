@@ -22,12 +22,10 @@ import androidx.compose.material.icons.filled.MovieFilter
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -296,30 +294,6 @@ fun ExportScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
         }
-    }
-
-    if (state.showImageBffNotReadyDialog) {
-        AlertDialog(
-            onDismissRequest = { viewModel.onDismissImageBffDialog() },
-            title = { Text("Image overlay not fully supported") },
-            text = {
-                Text(
-                    "The render server does not yet process image overlays. " +
-                        "Your ${state.imageClipCount} image clip(s) may be skipped in the exported video. " +
-                        "Continue anyway?"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.onConfirmExportWithImages() }) {
-                    Text("Continue")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.onDismissImageBffDialog() }) {
-                    Text("Cancel")
-                }
-            }
-        )
     }
 }
 

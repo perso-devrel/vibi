@@ -53,8 +53,6 @@ data class ExportUiState(
     val voiceLanguage: VoiceLanguage = VoiceLanguage.KEEP_ORIGINAL,
     val videoUri: String = "",
     val dubClips: List<DubClip> = emptyList(),
-    val imageClipCount: Int = 0,
-    val showImageBffNotReadyDialog: Boolean = false,
     val isExporting: Boolean = false,
     val progressPercent: Int = 0,
     val statusMessage: String? = null,
@@ -91,20 +89,6 @@ class ExportViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(dubClips = clips)
             }
         }
-        viewModelScope.launch {
-            imageClipRepository.observeClips(projectId).collect { clips ->
-                _uiState.value = _uiState.value.copy(imageClipCount = clips.size)
-            }
-        }
-    }
-
-    fun onDismissImageBffDialog() {
-        _uiState.value = _uiState.value.copy(showImageBffNotReadyDialog = false)
-    }
-
-    fun onConfirmExportWithImages() {
-        _uiState.value = _uiState.value.copy(showImageBffNotReadyDialog = false)
-        runExport()
     }
 
     fun onSelectExportMode(mode: ExportMode) {
@@ -139,14 +123,6 @@ class ExportViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(error = "No project ID provided")
             return
         }
-        if (_uiState.value.imageClipCount > 0) {
-            _uiState.value = _uiState.value.copy(showImageBffNotReadyDialog = true)
-            return
-        }
-        runExport()
-    }
-
-    private fun runExport() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isExporting = true, error = null, statusMessage = "Getting ready...")
 
