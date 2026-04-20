@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import com.example.dubcast.ui.theme.AutoSubtitlePurple
 import com.example.dubcast.ui.theme.SubtitleClipBlue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,7 +49,10 @@ fun SubtitleClipItem(
             .width(widthDp.coerceAtLeast(20.dp))
             .fillMaxHeight()
             .clip(RoundedCornerShape(4.dp))
-            .background(SubtitleClipBlue.copy(alpha = 0.75f))
+            .background(
+                if (clip.isAuto) AutoSubtitlePurple.copy(alpha = 0.75f)
+                else SubtitleClipBlue.copy(alpha = 0.75f)
+            )
             .border(2.dp, borderColor, RoundedCornerShape(4.dp))
             .pointerInput(Unit) {
                 detectTapGestures { onClick() }

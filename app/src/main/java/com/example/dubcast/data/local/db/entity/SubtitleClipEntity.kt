@@ -11,5 +11,10 @@ data class SubtitleClipEntity(
     val startMs: Long,
     val endMs: Long,
     val anchor: String = "bottom",
-    val yOffsetPct: Float = 90f
+    val yOffsetPct: Float = 90f,
+    val sourceDubClipId: String? = null,
+    val xPct: Float? = null,
+    val yPct: Float? = null,
+    val widthPct: Float? = null,
+    val heightPct: Float? = null
 )

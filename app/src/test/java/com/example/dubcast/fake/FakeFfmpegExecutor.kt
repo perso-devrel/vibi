@@ -26,6 +26,8 @@ class FakeFfmpegExecutor : FfmpegExecutor {
         dubClips: List<DubClipMixInput>,
         outputPath: String,
         videoDurationMs: Long,
+        trimStartMs: Long,
+        trimEndMs: Long,
         assFilePath: String?,
         fontDir: String?,
         onProgress: (percent: Int) -> Unit

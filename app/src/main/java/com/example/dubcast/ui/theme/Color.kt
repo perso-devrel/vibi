@@ -39,6 +39,7 @@ val BorderLine = Color(0xFFD0D2D8)
 // Timeline-specific
 val DubClipGreen = Color(0xFF34C759)
 val SubtitleClipBlue = Color(0xFF3478F6)
+val AutoSubtitlePurple = Color(0xFF7C3AED)
 val PlayheadDark = Color(0xFF2D2D2D)
 val TimeRulerGray = Color(0xFF9DA0A8)
 val OutlineVariantLight = Color(0xFFD0D2D8)

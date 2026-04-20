@@ -17,6 +17,7 @@ import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,6 +46,8 @@ data class TimelineUiState(
     val videoDurationMs: Long = 0L,
     val videoWidth: Int = 0,
     val videoHeight: Int = 0,
+    val trimStartMs: Long = 0L,
+    val trimEndMs: Long = 0L,
     val dubClips: List<DubClip> = emptyList(),
     val subtitleClips: List<SubtitleClip> = emptyList(),
     val playbackPositionMs: Long = 0L,
@@ -59,8 +62,17 @@ data class TimelineUiState(
     val synthError: String? = null,
     val previewClip: PreviewDubClip? = null,
     val canUndo: Boolean = false,
-    val canRedo: Boolean = false
-)
+    val canRedo: Boolean = false,
+    val isVideoSelected: Boolean = false,
+    val videoVolume: Float = 1.0f,
+    val showVideoVolumeSlider: Boolean = false,
+    val showDubVolumeSlider: Boolean = false,
+    val isTrimming: Boolean = false,
+    val pendingTrimStartMs: Long = 0L,
+    val pendingTrimEndMs: Long = 0L
+) {
+    val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
+}
 
 data class TimelineSnapshot(
     val dubClips: List<DubClip>,
@@ -79,7 +91,8 @@ class TimelineViewModel @Inject constructor(
     private val moveDubClip: MoveDubClipUseCase,
     private val deleteDubClip: DeleteDubClipUseCase,
     private val addSubtitleClip: AddSubtitleClipUseCase,
-    private val deleteSubtitleClip: DeleteSubtitleClipUseCase
+    private val deleteSubtitleClip: DeleteSubtitleClipUseCase,
+    private val splitDubTextToSubtitles: SplitDubTextToSubtitlesUseCase
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -106,7 +119,9 @@ class TimelineViewModel @Inject constructor(
                         videoUri = project.videoUri,
                         videoDurationMs = project.videoDurationMs,
                         videoWidth = project.videoWidth,
-                        videoHeight = project.videoHeight
+                        videoHeight = project.videoHeight,
+                        trimStartMs = project.trimStartMs,
+                        trimEndMs = project.trimEndMs
                     )
                 }
             }
@@ -223,21 +238,37 @@ class TimelineViewModel @Inject constructor(
         }
     }
 
-    fun onInsertPreviewClip() {
+    fun onInsertPreviewClip(showOnScreen: Boolean = false) {
         val preview = _uiState.value.previewClip ?: return
         viewModelScope.launch {
             pushUndoState()
+            val dubClipId = java.util.UUID.randomUUID().toString()
+            val startMs = _uiState.value.playbackPositionMs
             val clip = DubClip(
-                id = java.util.UUID.randomUUID().toString(),
+                id = dubClipId,
                 projectId = projectId,
                 text = preview.text,
                 voiceId = preview.voiceId,
                 voiceName = preview.voiceName,
                 audioFilePath = preview.audioFilePath,
-                startMs = _uiState.value.playbackPositionMs,
+                startMs = startMs,
                 durationMs = preview.durationMs
             )
             dubClipRepository.addClip(clip)
+
+            if (showOnScreen) {
+                val autoSubtitles = splitDubTextToSubtitles(
+                    text = preview.text,
+                    startMs = startMs,
+                    durationMs = preview.durationMs,
+                    dubClipId = dubClipId,
+                    projectId = projectId
+                )
+                for (subtitle in autoSubtitles) {
+                    subtitleClipRepository.addClip(subtitle)
+                }
+            }
+
             _uiState.value = _uiState.value.copy(
                 showDubbingSheet = false,
                 previewClip = null
@@ -262,16 +293,24 @@ class TimelineViewModel @Inject constructor(
     }
 
     fun onSelectDubClip(clipId: String?) {
+        val currentSelected = _uiState.value.selectedDubClipId
+        val newSelected = if (currentSelected == clipId) null else clipId
         _uiState.value = _uiState.value.copy(
-            selectedDubClipId = clipId,
-            selectedSubtitleClipId = null
+            selectedDubClipId = newSelected,
+            selectedSubtitleClipId = null,
+            isVideoSelected = false,
+            showVideoVolumeSlider = false,
+            showDubVolumeSlider = false
         )
     }
 
     fun onSelectSubtitleClip(clipId: String?) {
         _uiState.value = _uiState.value.copy(
             selectedSubtitleClipId = clipId,
-            selectedDubClipId = null
+            selectedDubClipId = null,
+            isVideoSelected = false,
+            showVideoVolumeSlider = false,
+            showDubVolumeSlider = false
         )
     }
 
@@ -286,11 +325,29 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             val state = _uiState.value
             pushUndoState()
-            state.selectedDubClipId?.let { deleteDubClip(it) }
+            state.selectedDubClipId?.let { dubClipId ->
+                deleteDubClip(dubClipId)
+                subtitleClipRepository.deleteClipsBySourceDubClipId(dubClipId)
+            }
             state.selectedSubtitleClipId?.let { deleteSubtitleClip(it) }
             _uiState.value = _uiState.value.copy(
                 selectedDubClipId = null,
                 selectedSubtitleClipId = null
+            )
+        }
+    }
+
+    fun onUpdateSubtitlePosition(
+        clipId: String,
+        xPct: Float,
+        yPct: Float,
+        widthPct: Float,
+        heightPct: Float
+    ) {
+        viewModelScope.launch {
+            val clip = subtitleClipRepository.getClip(clipId) ?: return@launch
+            subtitleClipRepository.updateClip(
+                clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
             )
         }
     }
@@ -320,6 +377,81 @@ class TimelineViewModel @Inject constructor(
         for (clip in snapshot.subtitleClips) {
             subtitleClipRepository.addClip(clip)
         }
+    }
+
+    fun onVideoTrackTapped() {
+        if (_uiState.value.isVideoSelected) {
+            onDeselectVideo()
+        } else {
+            _uiState.value = _uiState.value.copy(
+                isVideoSelected = true,
+                selectedDubClipId = null,
+                selectedSubtitleClipId = null
+            )
+        }
+    }
+
+    fun onDeselectVideo() {
+        _uiState.value = _uiState.value.copy(isVideoSelected = false, showVideoVolumeSlider = false)
+    }
+
+    fun onToggleVideoVolumeSlider() {
+        _uiState.value = _uiState.value.copy(showVideoVolumeSlider = !_uiState.value.showVideoVolumeSlider)
+    }
+
+    fun onToggleDubVolumeSlider() {
+        _uiState.value = _uiState.value.copy(showDubVolumeSlider = !_uiState.value.showDubVolumeSlider)
+    }
+
+    fun onUpdateVideoVolume(volume: Float) {
+        _uiState.value = _uiState.value.copy(videoVolume = volume.coerceIn(0f, 2f))
+    }
+
+    fun onEnterTrimMode() {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            isTrimming = true,
+            pendingTrimStartMs = state.trimStartMs,
+            pendingTrimEndMs = state.effectiveTrimEndMs,
+            isPlaying = false
+        )
+    }
+
+    fun onSetPendingTrimStart(ms: Long) {
+        val state = _uiState.value
+        val pendingEnd = state.pendingTrimEndMs
+        val newStart = ms.coerceIn(0L, pendingEnd - 500L)
+        _uiState.value = state.copy(pendingTrimStartMs = newStart)
+    }
+
+    fun onSetPendingTrimEnd(ms: Long) {
+        val state = _uiState.value
+        val newEnd = ms.coerceIn(state.pendingTrimStartMs + 500L, state.videoDurationMs)
+        _uiState.value = state.copy(pendingTrimEndMs = newEnd)
+    }
+
+    fun onConfirmTrim() {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            trimStartMs = state.pendingTrimStartMs,
+            trimEndMs = state.pendingTrimEndMs,
+            isTrimming = false,
+            isVideoSelected = false
+        )
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
+            editProjectRepository.updateProject(
+                project.copy(
+                    trimStartMs = state.pendingTrimStartMs,
+                    trimEndMs = state.pendingTrimEndMs,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun onCancelTrim() {
+        _uiState.value = _uiState.value.copy(isTrimming = false, isVideoSelected = false)
     }
 
     fun onNavigateToExport() {

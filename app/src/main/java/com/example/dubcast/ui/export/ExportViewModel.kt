@@ -181,6 +181,8 @@ class ExportViewModel @Inject constructor(
                     videoWidth = project.videoWidth,
                     videoHeight = project.videoHeight,
                     videoDurationMs = project.videoDurationMs,
+                    trimStartMs = project.trimStartMs,
+                    trimEndMs = project.effectiveTrimEndMs,
                     outputPath = outputPath,
                     assFilePath = assFilePath,
                     fontDir = fontDir,

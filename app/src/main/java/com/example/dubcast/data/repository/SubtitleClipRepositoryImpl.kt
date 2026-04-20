@@ -37,6 +37,10 @@ class SubtitleClipRepositoryImpl @Inject constructor(
         return dao.getById(clipId)?.toDomain()
     }
 
+    override suspend fun deleteClipsBySourceDubClipId(dubClipId: String) {
+        dao.deleteBySourceDubClipId(dubClipId)
+    }
+
     private fun SubtitleClipEntity.toDomain() = SubtitleClip(
         id = id,
         projectId = projectId,
@@ -46,7 +50,12 @@ class SubtitleClipRepositoryImpl @Inject constructor(
         position = SubtitlePosition(
             anchor = Anchor.fromString(anchor),
             yOffsetPct = yOffsetPct
-        )
+        ),
+        sourceDubClipId = sourceDubClipId,
+        xPct = xPct,
+        yPct = yPct,
+        widthPct = widthPct,
+        heightPct = heightPct
     )
 
     private fun SubtitleClip.toEntity() = SubtitleClipEntity(
@@ -56,6 +65,11 @@ class SubtitleClipRepositoryImpl @Inject constructor(
         startMs = startMs,
         endMs = endMs,
         anchor = position.anchor.name.lowercase(),
-        yOffsetPct = position.yOffsetPct
+        yOffsetPct = position.yOffsetPct,
+        sourceDubClipId = sourceDubClipId,
+        xPct = xPct,
+        yPct = yPct,
+        widthPct = widthPct,
+        heightPct = heightPct
     )
 }

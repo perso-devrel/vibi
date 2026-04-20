@@ -10,4 +10,5 @@ interface SubtitleClipRepository {
     suspend fun deleteClip(clipId: String)
     suspend fun deleteAllClips(projectId: String)
     suspend fun getClip(clipId: String): SubtitleClip?
+    suspend fun deleteClipsBySourceDubClipId(dubClipId: String)
 }

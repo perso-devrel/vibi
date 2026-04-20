@@ -5,7 +5,9 @@ import com.squareup.moshi.JsonClass
 @JsonClass(generateAdapter = true)
 data class RenderConfig(
     val dubClips: List<RenderDubClip>,
-    val videoDurationMs: Long
+    val videoDurationMs: Long,
+    val trimStartMs: Long = 0L,
+    val trimEndMs: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)

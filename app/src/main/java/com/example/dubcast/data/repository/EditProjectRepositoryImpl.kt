@@ -37,6 +37,8 @@ class EditProjectRepositoryImpl @Inject constructor(
         videoDurationMs = videoDurationMs,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
+        trimStartMs = trimStartMs,
+        trimEndMs = trimEndMs,
         createdAt = createdAt,
         updatedAt = updatedAt
     )
@@ -47,6 +49,8 @@ class EditProjectRepositoryImpl @Inject constructor(
         videoDurationMs = videoDurationMs,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
+        trimStartMs = trimStartMs,
+        trimEndMs = trimEndMs,
         createdAt = createdAt,
         updatedAt = updatedAt
     )
