@@ -18,7 +18,7 @@ trigger: 아키텍처
 ## 핵심 설계 결정
 
 - 네비게이션: sealed class `Screen` 타입 세이프 라우트. Input → Timeline → Export → Share.
-- `BFF_BASE_URL`: `local.properties` → BuildConfig 주입. 모든 빌드가 실제 BFF 서버에 연결 (mock 인터셉터 없음).
+- `BFF_BASE_URL`: `local.properties` → BuildConfig 주입. 모든 빌드가 실제 BFF 서버에 연결 (mock 인터셉터 없음). BFF 서버 코드는 별도 레포 https://github.com/perso-devrel/dubcast-bff.git 참조.
 - Undo/Redo: 제네릭 `UndoRedoManager<T>` + ArrayDeque (최대 50 상태).
 - 자막 렌더링: `.ass` (Advanced SubStation Alpha) 파일, Noto Sans KR 폰트, ffmpeg-kit (`io.github.maitrungduc1410:ffmpeg-kit-min`).
 - 오디오 믹싱: ffmpeg `adelay` + `amix` 필터 체인으로 더빙 오버레이.

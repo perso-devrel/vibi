@@ -1,11 +1,13 @@
 ---
-name: testing
-description: DubCast 테스트 작성 패턴. MockK, Turbine, MainDispatcherRule, Fake 리포지토리 사용법. 유닛 테스트 또는 ViewModel 테스트를 작성/수정할 때 참조.
+name: test-patterns
+description: DubCast 테스트 작성 패턴 레퍼런스. MockK, Turbine, MainDispatcherRule, Fake 리포지토리 사용법. 유닛 테스트 또는 ViewModel 테스트를 작성/수정할 때 참조.
 user_invocable: true
-trigger: 테스트작성
+trigger: 테스트패턴
 ---
 
-# DubCast 테스트 패턴
+# DubCast 테스트 작성 패턴
+
+> 테스트 *실행* 은 `test` 스킬 사용. 이 문서는 테스트 *작성* 레퍼런스.
 
 ## 도구
 

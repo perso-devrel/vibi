@@ -27,20 +27,20 @@ API 비용(ElevenLabs)을 최소화하면서 테스트를 실행합니다.
 ### 1. Determine test scope
 
 ```!
-cd C:/Users/EST/AndroidStudioProjects/DubCast && git diff --name-only HEAD 2>/dev/null; git diff --name-only --cached 2>/dev/null
+cd C:/Users/EST-INFRA/AndroidStudioProjects/DubCast && git diff --name-only HEAD 2>/dev/null; git diff --name-only --cached 2>/dev/null
 ```
 
 ### 2. Run tests based on scope
 
 **"전체 테스트"** — 유닛 테스트 전체 (API 테스트 자동 제외):
 ```!
-cd C:/Users/EST/AndroidStudioProjects/DubCast && ./gradlew testDebugUnitTest --quiet 2>&1 | tail -50
+cd C:/Users/EST-INFRA/AndroidStudioProjects/DubCast && ./gradlew testDebugUnitTest --quiet 2>&1 | tail -50
 ```
 
 **"API 테스트"** — 실제 API 호출 통합 테스트 (비용 발생 경고 필수):
 > ⚠️ 실행 전 반드시 사용자에게 "실제 API를 호출합니다. ElevenLabs 크레딧이 소모됩니다. 진행할까요?" 확인
 ```!
-cd C:/Users/EST/AndroidStudioProjects/DubCast && BFF_BASE_URL=https://api.dubcast.example.com BFF_TEST_JOB_ID=<job-id> ./gradlew testDebugUnitTest -Pinclude.api.tests --tests "com.example.dubcast.integration.*" --quiet 2>&1 | tail -50
+cd C:/Users/EST-INFRA/AndroidStudioProjects/DubCast && BFF_BASE_URL=https://api.dubcast.example.com BFF_TEST_JOB_ID=<job-id> ./gradlew testDebugUnitTest -Pinclude.api.tests --tests "com.example.dubcast.integration.*" --quiet 2>&1 | tail -50
 ```
 
 **기본 (선택적)** — 변경된 소스 파일의 관련 테스트만:
@@ -51,13 +51,13 @@ cd C:/Users/EST/AndroidStudioProjects/DubCast && BFF_BASE_URL=https://api.dubcas
 ### 3. On failure, read report:
 
 ```!
-cat C:/Users/EST/AndroidStudioProjects/DubCast/app/build/reports/tests/testDebugUnitTest/index.html 2>/dev/null | grep -oE '(tests|failures|ignored|duration)[^<]*' | head -10
+cat C:/Users/EST-INFRA/AndroidStudioProjects/DubCast/app/build/reports/tests/testDebugUnitTest/index.html 2>/dev/null | grep -oE '(tests|failures|ignored|duration)[^<]*' | head -10
 ```
 
 ### 4. On failure, find details:
 
 ```!
-find C:/Users/EST/AndroidStudioProjects/DubCast/app/build/test-results/testDebugUnitTest -name "*.xml" -exec grep -l 'failures="[^0]' {} \; 2>/dev/null | while read f; do grep -A5 '<testcase' "$f" | grep -B1 'failure'; done
+find C:/Users/EST-INFRA/AndroidStudioProjects/DubCast/app/build/test-results/testDebugUnitTest -name "*.xml" -exec grep -l 'failures="[^0]' {} \; 2>/dev/null | while read f; do grep -A5 '<testcase' "$f" | grep -B1 'failure'; done
 ```
 
 ## Reporting Rules
