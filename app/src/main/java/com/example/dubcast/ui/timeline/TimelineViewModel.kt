@@ -18,12 +18,19 @@ import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
+import com.example.dubcast.domain.usecase.input.ImageMetadataExtractor
+import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
+import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
+import com.example.dubcast.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.RemoveSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
@@ -57,6 +64,7 @@ data class TimelineUiState(
     val videoHeight: Int = 0,
     val trimStartMs: Long = 0L,
     val trimEndMs: Long = 0L,
+    val showAppendSheet: Boolean = false,
     val dubClips: List<DubClip> = emptyList(),
     val subtitleClips: List<SubtitleClip> = emptyList(),
     val imageClips: List<ImageClip> = emptyList(),
@@ -109,7 +117,14 @@ class TimelineViewModel @Inject constructor(
     private val addImageClip: AddImageClipUseCase,
     private val updateImageClip: UpdateImageClipUseCase,
     private val deleteImageClip: DeleteImageClipUseCase,
-    private val updateSegmentTrim: UpdateSegmentTrimUseCase
+    private val updateSegmentTrim: UpdateSegmentTrimUseCase,
+    private val addVideoSegment: AddVideoSegmentUseCase,
+    private val addImageSegment: AddImageSegmentUseCase,
+    private val removeSegment: RemoveSegmentUseCase,
+    private val updateImageSegmentDuration: UpdateImageSegmentDurationUseCase,
+    private val updateImageSegmentPosition: UpdateImageSegmentPositionUseCase,
+    private val videoMetadataExtractor: VideoMetadataExtractor,
+    private val imageMetadataExtractor: ImageMetadataExtractor
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -132,19 +147,49 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             segmentRepository.observeByProjectId(projectId).collect { segments ->
                 val first = segments.firstOrNull()
+                val total = segments.sumOf { it.effectiveDurationMs }
+                val currentSelectedId = _uiState.value.selectedSegmentId
+                val selectedId = currentSelectedId?.takeIf { id -> segments.any { it.id == id } }
+                    ?: first?.id
+                val selected = segments.firstOrNull { it.id == selectedId }
+                val (globalTrimStart, globalTrimEnd) = selectedSegmentGlobalTrim(segments, selected)
                 _uiState.value = _uiState.value.copy(
                     segments = segments,
-                    selectedSegmentId = _uiState.value.selectedSegmentId
-                        ?: first?.id,
+                    selectedSegmentId = selectedId,
                     videoUri = first?.sourceUri.orEmpty(),
-                    videoDurationMs = first?.durationMs ?: 0L,
+                    videoDurationMs = total,
                     videoWidth = first?.width ?: 0,
                     videoHeight = first?.height ?: 0,
-                    trimStartMs = first?.trimStartMs ?: 0L,
-                    trimEndMs = first?.trimEndMs ?: 0L
+                    trimStartMs = globalTrimStart,
+                    trimEndMs = globalTrimEnd
                 )
             }
         }
+    }
+
+    private fun selectedSegmentGlobalTrim(
+        segments: List<Segment>,
+        selected: Segment?
+    ): Pair<Long, Long> {
+        if (selected == null || selected.type != SegmentType.VIDEO) return 0L to 0L
+        val segStart = segmentStartOffsetMs(segments, selected.id)
+        val trimStart = selected.trimStartMs
+        val trimEnd = if (selected.trimEndMs <= 0L) selected.durationMs else selected.trimEndMs
+        val hasTrim = trimStart > 0L || trimEnd < selected.durationMs
+        return if (hasTrim) {
+            (segStart + trimStart) to (segStart + trimEnd)
+        } else {
+            0L to 0L
+        }
+    }
+
+    private fun segmentStartOffsetMs(segments: List<Segment>, segmentId: String): Long {
+        var acc = 0L
+        for (seg in segments) {
+            if (seg.id == segmentId) return acc
+            acc += seg.effectiveDurationMs
+        }
+        return acc
     }
 
     private fun loadVoices() {
@@ -509,29 +554,51 @@ class TimelineViewModel @Inject constructor(
 
     fun onEnterTrimMode() {
         val state = _uiState.value
+        val selected = state.segments.firstOrNull { it.id == state.selectedSegmentId }
+            ?: state.segments.firstOrNull { it.type == SegmentType.VIDEO }
+            ?: return
+        if (selected.type != SegmentType.VIDEO) return
+        val segStart = segmentStartOffsetMs(state.segments, selected.id)
+        val trimEndLocal = if (selected.trimEndMs <= 0L) selected.durationMs else selected.trimEndMs
         _uiState.value = state.copy(
             isTrimming = true,
-            pendingTrimStartMs = state.trimStartMs,
-            pendingTrimEndMs = state.effectiveTrimEndMs,
+            selectedSegmentId = selected.id,
+            pendingTrimStartMs = segStart + selected.trimStartMs,
+            pendingTrimEndMs = segStart + trimEndLocal,
             isPlaying = false
         )
     }
 
     fun onSetPendingTrimStart(ms: Long) {
         val state = _uiState.value
-        val pendingEnd = state.pendingTrimEndMs
-        val newStart = ms.coerceIn(0L, pendingEnd - 500L)
+        val selected = state.segments.firstOrNull { it.id == state.selectedSegmentId } ?: return
+        if (selected.type != SegmentType.VIDEO) return
+        val segStart = segmentStartOffsetMs(state.segments, selected.id)
+        val segEnd = segStart + selected.durationMs
+        val upperBound = (state.pendingTrimEndMs - 500L).coerceAtMost(segEnd - 500L)
+        val newStart = ms.coerceIn(segStart, upperBound.coerceAtLeast(segStart))
         _uiState.value = state.copy(pendingTrimStartMs = newStart)
     }
 
     fun onSetPendingTrimEnd(ms: Long) {
         val state = _uiState.value
-        val newEnd = ms.coerceIn(state.pendingTrimStartMs + 500L, state.videoDurationMs)
+        val selected = state.segments.firstOrNull { it.id == state.selectedSegmentId } ?: return
+        if (selected.type != SegmentType.VIDEO) return
+        val segStart = segmentStartOffsetMs(state.segments, selected.id)
+        val segEnd = segStart + selected.durationMs
+        val lowerBound = (state.pendingTrimStartMs + 500L).coerceAtLeast(segStart + 500L)
+        val newEnd = ms.coerceIn(lowerBound.coerceAtMost(segEnd), segEnd)
         _uiState.value = state.copy(pendingTrimEndMs = newEnd)
     }
 
     fun onConfirmTrim() {
         val state = _uiState.value
+        val segmentId = state.selectedSegmentId
+            ?: state.segments.firstOrNull { it.type == SegmentType.VIDEO }?.id
+            ?: return
+        val segStart = segmentStartOffsetMs(state.segments, segmentId)
+        val localTrimStart = (state.pendingTrimStartMs - segStart).coerceAtLeast(0L)
+        val localTrimEnd = (state.pendingTrimEndMs - segStart).coerceAtLeast(localTrimStart + 500L)
         _uiState.value = state.copy(
             trimStartMs = state.pendingTrimStartMs,
             trimEndMs = state.pendingTrimEndMs,
@@ -539,13 +606,10 @@ class TimelineViewModel @Inject constructor(
             isVideoSelected = false
         )
         viewModelScope.launch {
-            val segmentId = state.selectedSegmentId
-                ?: state.segments.firstOrNull { it.type == SegmentType.VIDEO }?.id
-                ?: return@launch
             updateSegmentTrim(
                 segmentId = segmentId,
-                trimStartMs = state.pendingTrimStartMs,
-                trimEndMs = state.pendingTrimEndMs
+                trimStartMs = localTrimStart,
+                trimEndMs = localTrimEnd
             )
         }
     }
@@ -558,5 +622,97 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             _navigateToExport.emit(projectId)
         }
+    }
+
+    fun onShowAppendSheet() {
+        _uiState.value = _uiState.value.copy(showAppendSheet = true)
+    }
+
+    fun onDismissAppendSheet() {
+        _uiState.value = _uiState.value.copy(showAppendSheet = false)
+    }
+
+    fun onAppendVideoSegment(uri: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(showAppendSheet = false, isPlaying = false)
+            val info = videoMetadataExtractor.extract(uri) ?: return@launch
+            addVideoSegment(projectId = projectId, videoInfo = info)
+        }
+    }
+
+    fun onAppendImageSegment(uri: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(showAppendSheet = false, isPlaying = false)
+            val info = imageMetadataExtractor.extract(uri) ?: return@launch
+            addImageSegment(projectId = projectId, imageInfo = info)
+        }
+    }
+
+    fun onSelectSegment(segmentId: String?) {
+        val current = _uiState.value.selectedSegmentId
+        val next = if (current == segmentId) null else segmentId
+        val selected = _uiState.value.segments.firstOrNull { it.id == next }
+        _uiState.value = _uiState.value.copy(
+            selectedSegmentId = next,
+            selectedDubClipId = null,
+            selectedSubtitleClipId = null,
+            selectedImageClipId = null,
+            isVideoSelected = false,
+            trimStartMs = selected?.trimStartMs ?: 0L,
+            trimEndMs = selected?.trimEndMs ?: 0L
+        )
+    }
+
+    fun onDeleteSelectedSegment() {
+        val segmentId = _uiState.value.selectedSegmentId ?: return
+        val segments = _uiState.value.segments
+        if (segments.size <= 1) return
+        viewModelScope.launch {
+            removeSegment(segmentId)
+            _uiState.value = _uiState.value.copy(
+                selectedSegmentId = null,
+                isPlaying = false,
+                playbackPositionMs = 0L
+            )
+        }
+    }
+
+    fun onUpdateImageSegmentDuration(segmentId: String, durationMs: Long) {
+        viewModelScope.launch {
+            updateImageSegmentDuration(segmentId, durationMs)
+        }
+    }
+
+    fun onUpdateImageSegmentPosition(
+        segmentId: String,
+        xPct: Float,
+        yPct: Float,
+        widthPct: Float,
+        heightPct: Float
+    ) {
+        viewModelScope.launch {
+            updateImageSegmentPosition(segmentId, xPct, yPct, widthPct, heightPct)
+        }
+    }
+
+    fun segmentStartMs(segmentId: String): Long {
+        val segments = _uiState.value.segments
+        var acc = 0L
+        for (seg in segments) {
+            if (seg.id == segmentId) return acc
+            acc += seg.effectiveDurationMs
+        }
+        return acc
+    }
+
+    fun currentSegmentAt(positionMs: Long): Segment? {
+        val segments = _uiState.value.segments
+        var acc = 0L
+        for (seg in segments) {
+            val next = acc + seg.effectiveDurationMs
+            if (positionMs < next) return seg
+            acc = next
+        }
+        return segments.lastOrNull()
     }
 }

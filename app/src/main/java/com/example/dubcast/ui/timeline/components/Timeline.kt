@@ -2,26 +2,31 @@ package com.example.dubcast.ui.timeline.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,25 +36,30 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import com.example.dubcast.ui.theme.PlayheadDark
-import com.example.dubcast.ui.theme.TimeRulerGray
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.ImageClip
+import com.example.dubcast.domain.model.Segment
+import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
+import com.example.dubcast.ui.theme.PlayheadDark
+import com.example.dubcast.ui.theme.TimeRulerGray
 
 private const val PX_PER_SECOND = 50f
 private val VIDEO_TRACK_HEIGHT = 28.dp
 private val TRIM_HANDLE_WIDTH = 14.dp
 private val TRIM_HANDLE_HIT_WIDTH = 32.dp
+private val APPEND_BUTTON_SIZE = 28.dp
+private val VideoSegmentColor = Color(0xFF4A4A4A)
+private val ImageSegmentColor = Color(0xFF5B5BD6)
 
 @Composable
 fun Timeline(
-    videoDurationMs: Long,
+    totalDurationMs: Long,
+    segments: List<Segment>,
     dubClips: List<DubClip>,
     subtitleClips: List<SubtitleClip>,
     imageClips: List<ImageClip>,
@@ -57,17 +67,18 @@ fun Timeline(
     trimStartMs: Long,
     trimEndMs: Long,
     isTrimming: Boolean,
-    isVideoSelected: Boolean,
+    selectedSegmentId: String?,
     selectedDubClipId: String?,
     selectedSubtitleClipId: String?,
     selectedImageClipId: String?,
-    onVideoTrackTapped: () -> Unit,
+    onSegmentSelected: (String?) -> Unit,
     onDubClipSelected: (String?) -> Unit,
     onSubtitleClipSelected: (String?) -> Unit,
     onImageClipSelected: (String?) -> Unit,
     onDubClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipResized: (clipId: String, newEndMs: Long) -> Unit,
+    onAppendRequested: () -> Unit,
     onSeek: (Long) -> Unit,
     onTrimStartChanged: (Long) -> Unit,
     onTrimEndChanged: (Long) -> Unit,
@@ -75,14 +86,15 @@ fun Timeline(
 ) {
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
-    val durationSeconds = videoDurationMs / 1000f
-    val totalWidthPx = (durationSeconds * PX_PER_SECOND)
-    val totalWidthDp = with(density) { totalWidthPx.toDp() }
-    val effectiveTrimEnd = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
-    val hasTrim = trimStartMs > 0L || (trimEndMs > 0L && trimEndMs < videoDurationMs)
+    if (totalDurationMs <= 0L || segments.isEmpty()) return
+
+    val durationSeconds = totalDurationMs / 1000f
+    val totalWidthPx = durationSeconds * PX_PER_SECOND
+    val totalWidthDp = with(density) { totalWidthPx.toDp() }.coerceAtLeast(300.dp)
+    val effectiveTrimEnd = if (trimEndMs <= 0L) totalDurationMs else trimEndMs
+    val hasTrim = trimStartMs > 0L || (trimEndMs > 0L && trimEndMs < totalDurationMs)
 
     Column(modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -91,103 +103,117 @@ fun Timeline(
         ) {
             Column(
                 modifier = Modifier
-                    .width(totalWidthDp.coerceAtLeast(300.dp))
+                    .width(totalWidthDp + APPEND_BUTTON_SIZE + 8.dp)
                     .fillMaxHeight()
             ) {
-                // Time ruler
                 TimeRuler(
-                    durationMs = videoDurationMs,
-                    totalWidth = totalWidthDp.coerceAtLeast(300.dp),
+                    durationMs = totalDurationMs,
+                    totalWidth = totalWidthDp,
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .width(totalWidthDp)
                         .height(18.dp)
                 )
 
-                // Video track — tappable to select, shows trim handles when trimming
-                Box(
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .width(totalWidthDp + APPEND_BUTTON_SIZE + 8.dp)
                         .height(VIDEO_TRACK_HEIGHT)
                 ) {
-                    // Track background
+                    // Per-segment boxes
                     Box(
                         modifier = Modifier
-                            .matchParentSize()
-                            .background(
-                                if (isVideoSelected || isTrimming)
-                                    Color(0xFFE4E7EC)
-                                else
-                                    MaterialTheme.colorScheme.surfaceVariant
-                            )
-                            .pointerInput(Unit) {
-                                detectTapGestures { offset ->
-                                    if (isTrimming) {
-                                        val ms = (offset.x / size.width * videoDurationMs).toLong()
-                                        onSeek(ms.coerceIn(trimStartMs, effectiveTrimEnd))
-                                    } else {
-                                        onVideoTrackTapped()
-                                    }
+                            .width(totalWidthDp)
+                            .fillMaxHeight()
+                    ) {
+                        RenderSegments(
+                            segments = segments,
+                            totalDurationMs = totalDurationMs,
+                            totalWidthDp = totalWidthDp,
+                            selectedSegmentId = selectedSegmentId,
+                            isTrimming = isTrimming,
+                            onSegmentSelected = onSegmentSelected,
+                            onTrackTappedForSeek = { globalMs ->
+                                if (isTrimming) {
+                                    onSeek(globalMs.coerceIn(trimStartMs, effectiveTrimEnd))
                                 }
                             }
-                    ) {
-                        Text(
-                            "Video",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(4.dp)
                         )
-                    }
 
-                    // Dim overlay outside trim range
-                    if (isTrimming || hasTrim) {
-                        Canvas(modifier = Modifier.matchParentSize()) {
-                            val pxPerMs = size.width / videoDurationMs.toFloat()
-                            val trimStartPx = trimStartMs * pxPerMs
-                            val trimEndPx = effectiveTrimEnd * pxPerMs
-                            val dimColor = Color.Black.copy(alpha = 0.35f)
+                        if (isTrimming || hasTrim) {
+                            Canvas(modifier = Modifier.matchParentSize()) {
+                                val pxPerMs = size.width / totalDurationMs.toFloat()
+                                val trimStartPx = trimStartMs * pxPerMs
+                                val trimEndPx = effectiveTrimEnd * pxPerMs
+                                val dimColor = Color.Black.copy(alpha = 0.35f)
+                                if (trimStartPx > 0f) {
+                                    drawRect(dimColor, Offset.Zero, Size(trimStartPx, size.height))
+                                }
+                                if (trimEndPx < size.width) {
+                                    drawRect(
+                                        dimColor,
+                                        Offset(trimEndPx, 0f),
+                                        Size(size.width - trimEndPx, size.height)
+                                    )
+                                }
+                            }
+                        }
 
-                            if (trimStartPx > 0f) {
-                                drawRect(dimColor, Offset.Zero, Size(trimStartPx, size.height))
-                            }
-                            if (trimEndPx < size.width) {
-                                drawRect(dimColor, Offset(trimEndPx, 0f), Size(size.width - trimEndPx, size.height))
-                            }
+                        if (isTrimming) {
+                            TrimHandle(
+                                positionMs = trimStartMs,
+                                totalDurationMs = totalDurationMs,
+                                totalWidthPx = totalWidthPx,
+                                isStart = true,
+                                onDrag = { newMs -> onTrimStartChanged(newMs) }
+                            )
+                            TrimHandle(
+                                positionMs = effectiveTrimEnd,
+                                totalDurationMs = totalDurationMs,
+                                totalWidthPx = totalWidthPx,
+                                isStart = false,
+                                onDrag = { newMs -> onTrimEndChanged(newMs) }
+                            )
                         }
                     }
 
-                    // Trim handles — only in trim mode, aligned to video track height
-                    if (isTrimming && videoDurationMs > 0) {
-                        TrimHandle(
-                            positionMs = trimStartMs,
-                            videoDurationMs = videoDurationMs,
-                            totalWidthPx = totalWidthPx,
-                            isStart = true,
-                            onDrag = { newMs -> onTrimStartChanged(newMs) }
-                        )
-                        TrimHandle(
-                            positionMs = effectiveTrimEnd,
-                            videoDurationMs = videoDurationMs,
-                            totalWidthPx = totalWidthPx,
-                            isStart = false,
-                            onDrag = { newMs -> onTrimEndChanged(newMs) }
-                        )
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    if (!isTrimming) {
+                        Box(
+                            modifier = Modifier
+                                .size(APPEND_BUTTON_SIZE)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .pointerInput(Unit) {
+                                    detectTapGestures { onAppendRequested() }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Add next clip",
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
                     }
                 }
 
-                // Dubbing track
+                // Dub track
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .width(totalWidthDp)
                         .height(28.dp)
                         .padding(vertical = 1.dp)
                 ) {
                     dubClips.forEach { clip ->
                         DubClipItem(
                             clip = clip,
-                            videoDurationMs = videoDurationMs,
+                            videoDurationMs = totalDurationMs,
                             isSelected = clip.id == selectedDubClipId,
                             onClick = { onDubClipSelected(clip.id) },
                             onMoved = { newStartMs -> onDubClipMoved(clip.id, newStartMs) },
-                            totalWidthDp = totalWidthDp.coerceAtLeast(300.dp)
+                            totalWidthDp = totalWidthDp
                         )
                     }
                 }
@@ -195,98 +221,174 @@ fun Timeline(
                 // Subtitle track
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .width(totalWidthDp)
                         .height(28.dp)
                         .padding(vertical = 1.dp)
                 ) {
                     subtitleClips.forEach { clip ->
                         SubtitleClipItem(
                             clip = clip,
-                            videoDurationMs = videoDurationMs,
+                            videoDurationMs = totalDurationMs,
                             isSelected = clip.id == selectedSubtitleClipId,
                             onClick = { onSubtitleClipSelected(clip.id) },
-                            totalWidthDp = totalWidthDp.coerceAtLeast(300.dp)
+                            totalWidthDp = totalWidthDp
                         )
                     }
                 }
 
-                // Image track
+                // Sticker image track
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .width(totalWidthDp)
                         .height(28.dp)
                         .padding(vertical = 1.dp)
                 ) {
                     imageClips.forEach { clip ->
                         ImageClipItem(
                             clip = clip,
-                            videoDurationMs = videoDurationMs,
+                            videoDurationMs = totalDurationMs,
                             isSelected = clip.id == selectedImageClipId,
                             onClick = { onImageClipSelected(clip.id) },
                             onMoved = { newStartMs -> onImageClipMoved(clip.id, newStartMs) },
                             onResized = { newEndMs -> onImageClipResized(clip.id, newEndMs) },
-                            totalWidthDp = totalWidthDp.coerceAtLeast(300.dp)
+                            totalWidthDp = totalWidthDp
                         )
                     }
                 }
             }
 
-            // Playhead (draggable)
-            if (videoDurationMs > 0) {
-                val playheadXPx = playbackPositionMs.toFloat() / videoDurationMs * totalWidthPx
-                val hitAreaWidth = 32.dp
-                val hitAreaWidthPx = with(density) { hitAreaWidth.toPx() }
-                val playheadOffsetDp = with(density) { playheadXPx.toDp() } - hitAreaWidth / 2
+            // Playhead
+            val playheadXPx = playbackPositionMs.toFloat() / totalDurationMs * totalWidthPx
+            val hitAreaWidth = 32.dp
+            val hitAreaWidthPx = with(density) { hitAreaWidth.toPx() }
+            val playheadOffsetDp = with(density) { playheadXPx.toDp() } - hitAreaWidth / 2
 
-                Box(
-                    modifier = Modifier
-                        .offset(x = playheadOffsetDp)
-                        .width(hitAreaWidth)
-                        .fillMaxHeight()
-                        .pointerInput(videoDurationMs, totalWidthPx) {
-                            detectHorizontalDragGestures { change, _ ->
-                                change.consume()
-                                val newPx = playheadXPx + (change.position.x - hitAreaWidthPx / 2f)
-                                val newMs = (newPx / totalWidthPx * videoDurationMs)
-                                    .toLong()
-                                    .coerceIn(trimStartMs, effectiveTrimEnd)
-                                onSeek(newMs)
-                            }
+            Box(
+                modifier = Modifier
+                    .offset(x = playheadOffsetDp)
+                    .width(hitAreaWidth)
+                    .fillMaxHeight()
+                    .pointerInput(totalDurationMs, totalWidthPx) {
+                        detectHorizontalDragGestures { change, _ ->
+                            change.consume()
+                            val newPx = playheadXPx + (change.position.x - hitAreaWidthPx / 2f)
+                            val newMs = (newPx / totalWidthPx * totalDurationMs)
+                                .toLong()
+                                .coerceIn(0L, totalDurationMs)
+                            onSeek(newMs)
                         }
-                ) {
-                    Canvas(
-                        modifier = Modifier
-                            .offset(x = hitAreaWidth / 2 - 1.dp)
-                            .width(2.dp)
-                            .fillMaxHeight()
-                    ) {
-                        drawLine(
-                            color = PlayheadDark,
-                            start = Offset(0f, 0f),
-                            end = Offset(0f, size.height),
-                            strokeWidth = 3f
-                        )
                     }
+            ) {
+                Canvas(
+                    modifier = Modifier
+                        .offset(x = hitAreaWidth / 2 - 1.dp)
+                        .width(2.dp)
+                        .fillMaxHeight()
+                ) {
+                    drawLine(
+                        color = PlayheadDark,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 3f
+                    )
                 }
             }
         }
     }
 }
 
-/**
- * Trim handle — orange bar matching video track height, wide hit area for easy dragging.
- * Rendered inside the video track Box so it's constrained to that height.
- */
+@Composable
+private fun RenderSegments(
+    segments: List<Segment>,
+    totalDurationMs: Long,
+    totalWidthDp: Dp,
+    selectedSegmentId: String?,
+    isTrimming: Boolean,
+    onSegmentSelected: (String?) -> Unit,
+    onTrackTappedForSeek: (Long) -> Unit
+) {
+    val density = LocalDensity.current
+    val totalWidthPx = with(density) { totalWidthDp.toPx() }
+    var runningOffsetMs = 0L
+    for (segment in segments) {
+        val segStart = runningOffsetMs
+        val segDuration = segment.effectiveDurationMs
+        runningOffsetMs += segDuration
+        val leftDp = with(density) {
+            (segStart.toFloat() / totalDurationMs * totalWidthPx).toDp()
+        }
+        val widthDp = with(density) {
+            (segDuration.toFloat() / totalDurationMs * totalWidthPx).toDp()
+        }
+        val color = when (segment.type) {
+            SegmentType.VIDEO -> VideoSegmentColor
+            SegmentType.IMAGE -> ImageSegmentColor
+        }
+        val borderColor = if (segment.id == selectedSegmentId) {
+            MaterialTheme.colorScheme.primary
+        } else Color.Transparent
+
+        Box(
+            modifier = Modifier
+                .offset(x = leftDp)
+                .width(widthDp)
+                .fillMaxHeight()
+                .background(color)
+                .clip(RoundedCornerShape(4.dp))
+                .pointerInput(segment.id, isTrimming) {
+                    detectTapGestures { tapOffset ->
+                        if (isTrimming) {
+                            val pxPerMs = size.width.toFloat() / segDuration.toFloat()
+                            val localMs = (tapOffset.x / pxPerMs).toLong()
+                            onTrackTappedForSeek(segStart + localMs)
+                        } else {
+                            onSegmentSelected(segment.id)
+                        }
+                    }
+                }
+        ) {
+            if (borderColor != Color.Transparent) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(1.dp)
+                        .background(Color.Transparent)
+                ) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        drawRect(
+                            color = borderColor,
+                            topLeft = Offset.Zero,
+                            size = Size(size.width, size.height),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)
+                        )
+                    }
+                }
+            }
+            Text(
+                text = when (segment.type) {
+                    SegmentType.VIDEO -> "Video"
+                    SegmentType.IMAGE -> "Photo"
+                },
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(4.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun TrimHandle(
     positionMs: Long,
-    videoDurationMs: Long,
+    totalDurationMs: Long,
     totalWidthPx: Float,
     isStart: Boolean,
     onDrag: (Long) -> Unit
 ) {
     val density = LocalDensity.current
-    val handleXPx = positionMs.toFloat() / videoDurationMs * totalWidthPx
+    val handleXPx = positionMs.toFloat() / totalDurationMs * totalWidthPx
     val handleOffsetDp = with(density) { handleXPx.toDp() } - TRIM_HANDLE_HIT_WIDTH / 2
     val hitWidthPx = with(density) { TRIM_HANDLE_HIT_WIDTH.toPx() }
 
@@ -295,19 +397,18 @@ private fun TrimHandle(
             .offset(x = handleOffsetDp)
             .width(TRIM_HANDLE_HIT_WIDTH)
             .fillMaxHeight()
-            .pointerInput(videoDurationMs, totalWidthPx) {
+            .pointerInput(totalDurationMs, totalWidthPx) {
                 detectHorizontalDragGestures { change, _ ->
                     change.consume()
                     val newPx = handleXPx + (change.position.x - hitWidthPx / 2f)
-                    val newMs = (newPx / totalWidthPx * videoDurationMs)
+                    val newMs = (newPx / totalWidthPx * totalDurationMs)
                         .toLong()
-                        .coerceIn(0L, videoDurationMs)
+                        .coerceIn(0L, totalDurationMs)
                     onDrag(newMs)
                 }
             },
         contentAlignment = Alignment.Center
     ) {
-        // Visible bar — thicker for visibility
         Box(
             modifier = Modifier
                 .width(TRIM_HANDLE_WIDTH)
