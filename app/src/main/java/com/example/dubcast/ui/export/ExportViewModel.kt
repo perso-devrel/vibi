@@ -5,11 +5,12 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dubcast.domain.model.DubClip
+import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
+import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.usecase.export.ExportWithDubbingUseCase
-import kotlinx.coroutines.flow.combine
 import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -52,6 +53,8 @@ data class ExportUiState(
     val voiceLanguage: VoiceLanguage = VoiceLanguage.KEEP_ORIGINAL,
     val videoUri: String = "",
     val dubClips: List<DubClip> = emptyList(),
+    val imageClipCount: Int = 0,
+    val showImageBffNotReadyDialog: Boolean = false,
     val isExporting: Boolean = false,
     val progressPercent: Int = 0,
     val statusMessage: String? = null,
@@ -66,7 +69,8 @@ class ExportViewModel @Inject constructor(
     private val exportWithDubbingUseCase: ExportWithDubbingUseCase,
     private val editProjectRepository: EditProjectRepository,
     private val dubClipRepository: DubClipRepository,
-    private val subtitleClipRepository: SubtitleClipRepository
+    private val subtitleClipRepository: SubtitleClipRepository,
+    private val imageClipRepository: ImageClipRepository
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle.get<String>("projectId") ?: ""
@@ -87,6 +91,20 @@ class ExportViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(dubClips = clips)
             }
         }
+        viewModelScope.launch {
+            imageClipRepository.observeClips(projectId).collect { clips ->
+                _uiState.value = _uiState.value.copy(imageClipCount = clips.size)
+            }
+        }
+    }
+
+    fun onDismissImageBffDialog() {
+        _uiState.value = _uiState.value.copy(showImageBffNotReadyDialog = false)
+    }
+
+    fun onConfirmExportWithImages() {
+        _uiState.value = _uiState.value.copy(showImageBffNotReadyDialog = false)
+        runExport()
     }
 
     fun onSelectExportMode(mode: ExportMode) {
@@ -121,7 +139,14 @@ class ExportViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(error = "No project ID provided")
             return
         }
+        if (_uiState.value.imageClipCount > 0) {
+            _uiState.value = _uiState.value.copy(showImageBffNotReadyDialog = true)
+            return
+        }
+        runExport()
+    }
 
+    private fun runExport() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isExporting = true, error = null, statusMessage = "Getting ready...")
 
@@ -174,6 +199,8 @@ class ExportViewModel @Inject constructor(
                     }
                 } else null
 
+                val imageClips = imageClipRepository.observeClips(projectId).first()
+
                 val result = exportWithDubbingUseCase.execute(
                     inputVideoPath = videoInputPath,
                     dubClips = dubClips,
@@ -186,6 +213,8 @@ class ExportViewModel @Inject constructor(
                     outputPath = outputPath,
                     assFilePath = assFilePath,
                     fontDir = fontDir,
+                    imageClips = imageClips,
+                    resolveImagePath = { uri -> copyImageToCache(uri, cacheDir) },
                     onProgress = { percent ->
                         _uiState.value = _uiState.value.copy(progressPercent = percent)
                     }
@@ -213,6 +242,24 @@ class ExportViewModel @Inject constructor(
                     error = e.message ?: "Export failed",
                     statusMessage = null
                 )
+            }
+        }
+    }
+
+    private suspend fun copyImageToCache(imageUri: String, cacheDir: File): String? {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (!imageUri.startsWith("content://")) return@withContext imageUri
+                val safeName = "image_${imageUri.hashCode().toUInt()}.bin"
+                val dest = File(cacheDir, safeName)
+                if (!dest.exists()) {
+                    context.contentResolver.openInputStream(Uri.parse(imageUri))?.use { input ->
+                        dest.outputStream().use { output -> input.copyTo(output) }
+                    } ?: return@withContext null
+                }
+                dest.absolutePath
+            } catch (e: Exception) {
+                null
             }
         }
     }

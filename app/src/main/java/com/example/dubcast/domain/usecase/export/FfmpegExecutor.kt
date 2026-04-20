@@ -6,6 +6,16 @@ data class DubClipMixInput(
     val volume: Float = 1.0f
 )
 
+data class ImageClipMixInput(
+    val imageFilePath: String,
+    val startMs: Long,
+    val endMs: Long,
+    val xPct: Float,
+    val yPct: Float,
+    val widthPct: Float,
+    val heightPct: Float
+)
+
 interface FfmpegExecutor {
     suspend fun burnSubtitles(
         inputVideoPath: String,
@@ -25,6 +35,7 @@ interface FfmpegExecutor {
         trimEndMs: Long = 0L,
         assFilePath: String? = null,
         fontDir: String? = null,
+        imageClips: List<ImageClipMixInput> = emptyList(),
         onProgress: (percent: Int) -> Unit
     ): Result<String>
 }

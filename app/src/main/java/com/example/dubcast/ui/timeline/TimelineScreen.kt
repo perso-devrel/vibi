@@ -26,8 +26,12 @@ import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Slider
@@ -59,6 +63,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.example.dubcast.ui.timeline.components.ImageOverlayLayer
 import com.example.dubcast.ui.timeline.components.Timeline
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,6 +75,22 @@ fun TimelineScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+                // PickVisualMedia may not grant persistable permissions; safe to ignore
+            }
+            viewModel.onInsertImage(uri.toString())
+        }
+    }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build()
@@ -202,6 +223,16 @@ fun TimelineScreen(
                 },
                 modifier = Modifier.matchParentSize()
             )
+            ImageOverlayLayer(
+                imageClips = state.imageClips,
+                playbackPositionMs = state.playbackPositionMs,
+                selectedImageClipId = state.selectedImageClipId,
+                onSelect = { viewModel.onSelectImageClip(it) },
+                onUpdate = { id, x, y, w, h ->
+                    viewModel.onUpdateImageClipPosition(id, x, y, w, h)
+                },
+                modifier = Modifier.matchParentSize()
+            )
         }
 
         // Toolbar — switches between normal and trim mode
@@ -271,6 +302,14 @@ fun TimelineScreen(
                     Icon(Icons.Default.MicExternalOn, contentDescription = "Insert Dubbing")
                 }
 
+                IconButton(onClick = {
+                    imagePickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }) {
+                    Icon(Icons.Default.Image, contentDescription = "Insert Image")
+                }
+
                 Spacer(modifier = Modifier.weight(1f))
 
                 IconButton(
@@ -331,6 +370,22 @@ fun TimelineScreen(
                         modifier = Modifier.width(44.dp)
                     )
                 }
+            }
+        }
+
+        // Image clip selected action bar
+        val selectedImageClip = state.imageClips.find { it.id == state.selectedImageClipId }
+        if (selectedImageClip != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                }
+                Spacer(modifier = Modifier.weight(1f))
             }
         }
 
@@ -408,6 +463,7 @@ fun TimelineScreen(
             videoDurationMs = state.videoDurationMs,
             dubClips = state.dubClips,
             subtitleClips = state.subtitleClips,
+            imageClips = state.imageClips,
             playbackPositionMs = state.playbackPositionMs,
             trimStartMs = displayTrimStart,
             trimEndMs = displayTrimEnd,
@@ -415,10 +471,14 @@ fun TimelineScreen(
             isVideoSelected = state.isVideoSelected,
             selectedDubClipId = state.selectedDubClipId,
             selectedSubtitleClipId = state.selectedSubtitleClipId,
+            selectedImageClipId = state.selectedImageClipId,
             onVideoTrackTapped = { viewModel.onVideoTrackTapped() },
             onDubClipSelected = { viewModel.onSelectDubClip(it) },
             onSubtitleClipSelected = { viewModel.onSelectSubtitleClip(it) },
+            onImageClipSelected = { viewModel.onSelectImageClip(it) },
             onDubClipMoved = { clipId, newStartMs -> viewModel.onMoveDubClip(clipId, newStartMs) },
+            onImageClipMoved = { clipId, newStartMs -> viewModel.onMoveImageClip(clipId, newStartMs) },
+            onImageClipResized = { clipId, newEndMs -> viewModel.onResizeImageClipDuration(clipId, newEndMs) },
             onSeek = { posMs ->
                     val clampedMs = posMs.coerceIn(state.trimStartMs, state.effectiveTrimEndMs)
                     viewModel.onUpdatePlaybackPosition(clampedMs)

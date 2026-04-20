@@ -5,6 +5,9 @@ import com.example.dubcast.domain.model.Anchor
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.repository.TtsResult
+import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
+import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
+import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
@@ -14,6 +17,7 @@ import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import com.example.dubcast.fake.FakeDubClipRepository
 import com.example.dubcast.fake.FakeEditProjectRepository
+import com.example.dubcast.fake.FakeImageClipRepository
 import com.example.dubcast.fake.FakeSubtitleClipRepository
 import com.example.dubcast.fake.FakeTtsRepository
 import com.example.dubcast.util.MainDispatcherRule
@@ -36,6 +40,7 @@ class TimelineViewModelTest {
 
     private lateinit var dubRepo: FakeDubClipRepository
     private lateinit var subRepo: FakeSubtitleClipRepository
+    private lateinit var imageRepo: FakeImageClipRepository
     private lateinit var ttsRepo: FakeTtsRepository
     private lateinit var vm: TimelineViewModel
 
@@ -45,12 +50,14 @@ class TimelineViewModelTest {
     fun setup() {
         dubRepo = FakeDubClipRepository()
         subRepo = FakeSubtitleClipRepository()
+        imageRepo = FakeImageClipRepository()
         ttsRepo = FakeTtsRepository()
         vm = TimelineViewModel(
             savedStateHandle = SavedStateHandle(mapOf("projectId" to projectId)),
             editProjectRepository = FakeEditProjectRepository(),
             dubClipRepository = dubRepo,
             subtitleClipRepository = subRepo,
+            imageClipRepository = imageRepo,
             ttsRepository = ttsRepo,
             synthesizeDubClip = SynthesizeDubClipUseCase(ttsRepo, dubRepo),
             getVoiceList = GetVoiceListUseCase(ttsRepo),
@@ -58,7 +65,10 @@ class TimelineViewModelTest {
             deleteDubClip = DeleteDubClipUseCase(dubRepo),
             addSubtitleClip = AddSubtitleClipUseCase(subRepo),
             deleteSubtitleClip = DeleteSubtitleClipUseCase(subRepo),
-            splitDubTextToSubtitles = SplitDubTextToSubtitlesUseCase()
+            splitDubTextToSubtitles = SplitDubTextToSubtitlesUseCase(),
+            addImageClip = AddImageClipUseCase(imageRepo),
+            updateImageClip = UpdateImageClipUseCase(imageRepo),
+            deleteImageClip = DeleteImageClipUseCase(imageRepo)
         )
     }
 
@@ -92,6 +102,46 @@ class TimelineViewModelTest {
 
         val subs = subRepo.observeClips(projectId).first()
         assertEquals(0, subs.size)
+    }
+
+    @Test
+    fun `onInsertImage persists clip with default 3 second duration`() = runTest {
+        vm.onUpdatePlaybackPosition(2000L)
+        vm.onInsertImage("content://sample.jpg")
+        advanceUntilIdle()
+
+        val clips = imageRepo.observeClips(projectId).first()
+        assertEquals(1, clips.size)
+        assertEquals(2000L, clips.first().startMs)
+        assertEquals(5000L, clips.first().endMs)
+    }
+
+    @Test
+    fun `onUpdateImageClipPosition updates coordinates`() = runTest {
+        vm.onInsertImage("content://sample.jpg")
+        advanceUntilIdle()
+
+        val clip = imageRepo.observeClips(projectId).first().first()
+        vm.onUpdateImageClipPosition(clip.id, xPct = 25f, yPct = 75f, widthPct = 40f, heightPct = 40f)
+        advanceUntilIdle()
+
+        val updated = imageRepo.observeClips(projectId).first().first()
+        assertEquals(25f, updated.xPct)
+        assertEquals(75f, updated.yPct)
+        assertEquals(40f, updated.widthPct)
+    }
+
+    @Test
+    fun `onDeleteSelectedClip deletes selected image clip`() = runTest {
+        vm.onInsertImage("content://sample.jpg")
+        advanceUntilIdle()
+        val clip = imageRepo.observeClips(projectId).first().first()
+
+        vm.onSelectImageClip(clip.id)
+        vm.onDeleteSelectedClip()
+        advanceUntilIdle()
+
+        assertEquals(0, imageRepo.observeClips(projectId).first().size)
     }
 
     @Test

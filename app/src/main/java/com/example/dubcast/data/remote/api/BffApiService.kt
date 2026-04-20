@@ -49,6 +49,7 @@ interface BffApiService {
         @Part video: MultipartBody.Part,
         @Part audioFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part subtitles: MultipartBody.Part?,
+        @Part imageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part("config") config: RequestBody
     ): RenderJobResponse
 

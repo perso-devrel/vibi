@@ -4,8 +4,10 @@ import android.content.Context
 import com.example.dubcast.data.remote.api.BffApiService
 import com.example.dubcast.data.remote.dto.RenderConfig
 import com.example.dubcast.data.remote.dto.RenderDubClip
+import com.example.dubcast.data.remote.dto.RenderImageClip
 import com.example.dubcast.domain.usecase.export.DubClipMixInput
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
+import com.example.dubcast.domain.usecase.export.ImageClipMixInput
 import com.squareup.moshi.Moshi
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -44,6 +46,7 @@ class RemoteRenderExecutor @Inject constructor(
             trimEndMs = 0L,
             assFilePath = assFilePath,
             fontDir = fontDir,
+            imageClips = emptyList(),
             onProgress = onProgress
         )
     }
@@ -57,6 +60,7 @@ class RemoteRenderExecutor @Inject constructor(
         trimEndMs: Long,
         assFilePath: String?,
         fontDir: String?,
+        imageClips: List<ImageClipMixInput>,
         onProgress: (percent: Int) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
@@ -102,18 +106,50 @@ class RemoteRenderExecutor @Inject constructor(
                 } else null
             } else null
 
+            // Image sticker parts
+            val imageParts = mutableListOf<MultipartBody.Part>()
+            val renderImageClips = mutableListOf<RenderImageClip>()
+            for ((index, clip) in imageClips.withIndex()) {
+                val key = "image_$index"
+                val imageFile = File(clip.imageFilePath)
+                imageParts.add(
+                    MultipartBody.Part.createFormData(
+                        key, imageFile.name,
+                        imageFile.asRequestBody("image/*".toMediaType())
+                    )
+                )
+                renderImageClips.add(
+                    RenderImageClip(
+                        imageFileKey = key,
+                        startMs = clip.startMs,
+                        endMs = clip.endMs,
+                        xPct = clip.xPct,
+                        yPct = clip.yPct,
+                        widthPct = clip.widthPct,
+                        heightPct = clip.heightPct
+                    )
+                )
+            }
+
             val config = RenderConfig(
                 dubClips = renderClips,
                 videoDurationMs = videoDurationMs,
                 trimStartMs = trimStartMs,
-                trimEndMs = trimEndMs
+                trimEndMs = trimEndMs,
+                imageClips = renderImageClips
             )
             val configJson = moshi.adapter(RenderConfig::class.java).toJson(config)
             val configBody = configJson.toRequestBody("application/json".toMediaType())
 
             // 2. Submit render job
             onProgress(5)
-            val response = apiService.submitRenderJob(videoPart, audioParts, subtitlePart, configBody)
+            val response = apiService.submitRenderJob(
+                videoPart,
+                audioParts,
+                subtitlePart,
+                imageParts,
+                configBody
+            )
             val jobId = response.jobId
 
             onProgress(10)

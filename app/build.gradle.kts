@@ -103,6 +103,9 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
 
+    // Coil
+    implementation(libs.coil.compose)
+
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
