@@ -70,6 +70,31 @@ class RenderConfigSerializationTest {
     }
 
     @Test
+    fun `video segment with volumeScale and speedScale roundtrips`() {
+        val config = RenderConfig(
+            dubClips = emptyList(),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 10_000L,
+                    trimStartMs = 0L,
+                    trimEndMs = 10_000L,
+                    width = 1920,
+                    height = 1080,
+                    volumeScale = 1.5f,
+                    speedScale = 0.5f
+                )
+            )
+        )
+        val json = adapter.toJson(config)
+        assertTrue(json.contains("\"volumeScale\":1.5"))
+        assertTrue(json.contains("\"speedScale\":0.5"))
+        assertEquals(config, adapter.fromJson(json)!!)
+    }
+
+    @Test
     fun `config with image clips and segments roundtrips`() {
         val config = RenderConfig(
             dubClips = listOf(

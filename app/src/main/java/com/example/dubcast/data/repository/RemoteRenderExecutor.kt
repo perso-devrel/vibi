@@ -72,7 +72,9 @@ class RemoteRenderExecutor @Inject constructor(
                                 trimStartMs = seg.trimStartMs,
                                 trimEndMs = seg.effectiveTrimEndMs,
                                 width = seg.width,
-                                height = seg.height
+                                height = seg.height,
+                                volumeScale = seg.volumeScale,
+                                speedScale = seg.speedScale
                             )
                         )
                     }

@@ -41,5 +41,7 @@ data class RenderSegment(
     val imageXPct: Float = 50f,
     val imageYPct: Float = 50f,
     val imageWidthPct: Float = 50f,
-    val imageHeightPct: Float = 50f
+    val imageHeightPct: Float = 50f,
+    val volumeScale: Float = 1.0f,
+    val speedScale: Float = 1.0f
 )

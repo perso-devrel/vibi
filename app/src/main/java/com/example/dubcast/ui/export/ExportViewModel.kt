@@ -263,7 +263,9 @@ class ExportViewModel @Inject constructor(
         imageXPct = imageXPct,
         imageYPct = imageYPct,
         imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct
+        imageHeightPct = imageHeightPct,
+        volumeScale = volumeScale,
+        speedScale = speedScale
     )
 
     private fun copyFontFromAssets(fontDir: String) {

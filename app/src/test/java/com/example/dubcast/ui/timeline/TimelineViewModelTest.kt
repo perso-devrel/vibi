@@ -17,12 +17,17 @@ import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.DuplicateSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.RemoveSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
+import com.example.dubcast.domain.usecase.timeline.SplitSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateSegmentSpeedUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import com.example.dubcast.fake.FakeDubClipRepository
@@ -93,6 +98,11 @@ class TimelineViewModelTest {
             removeSegment = RemoveSegmentUseCase(segmentRepo),
             updateImageSegmentDuration = UpdateImageSegmentDurationUseCase(segmentRepo),
             updateImageSegmentPosition = UpdateImageSegmentPositionUseCase(segmentRepo),
+            splitSegment = SplitSegmentUseCase(segmentRepo),
+            duplicateSegmentRange = DuplicateSegmentRangeUseCase(segmentRepo, SplitSegmentUseCase(segmentRepo)),
+            removeSegmentRange = RemoveSegmentRangeUseCase(segmentRepo, SplitSegmentUseCase(segmentRepo), RemoveSegmentUseCase(segmentRepo)),
+            updateSegmentVolume = UpdateSegmentVolumeUseCase(segmentRepo),
+            updateSegmentSpeed = UpdateSegmentSpeedUseCase(segmentRepo),
             videoMetadataExtractor = videoExtractor,
             imageMetadataExtractor = imageExtractor
         )
@@ -334,5 +344,126 @@ class TimelineViewModelTest {
         val subsAfterDelete = subRepo.observeClips(projectId).first()
         assertEquals(1, subsAfterDelete.size)
         assertEquals("manual-1", subsAfterDelete.first().id)
+    }
+
+    @Test
+    fun `onEnterRangeMode activates range state for VIDEO segment`() = runTest {
+        seedSegment(id = "seg-1", durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        val s = vm.uiState.value
+        assertTrue(s.isRangeSelecting)
+        assertEquals("seg-1", s.rangeTargetSegmentId)
+        assertEquals(0L, s.pendingRangeStartMs)
+        assertEquals(1_000L, s.pendingRangeEndMs)
+    }
+
+    @Test
+    fun `onEnterRangeMode is a no-op for IMAGE segment`() = runTest {
+        segmentRepo.addSegment(
+            Segment(
+                id = "img-1",
+                projectId = projectId,
+                type = SegmentType.IMAGE,
+                order = 0,
+                sourceUri = "content://x",
+                durationMs = 3_000L,
+                width = 100,
+                height = 100
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("img-1")
+        assertTrue(!vm.uiState.value.isRangeSelecting)
+    }
+
+    @Test
+    fun `onSetPendingRangeStart clamps to trim bounds and keeps 100ms gap`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        vm.onSetPendingRangeEnd(5_000L)
+        vm.onSetPendingRangeStart(-2_000L) // below trimStart
+        assertEquals(0L, vm.uiState.value.pendingRangeStartMs)
+
+        vm.onSetPendingRangeStart(4_950L) // closer than 100ms to end
+        assertEquals(4_900L, vm.uiState.value.pendingRangeStartMs)
+    }
+
+    @Test
+    fun `onDuplicateRange creates a duplicate middle segment`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        vm.onSetPendingRangeEnd(7_000L)
+        vm.onSetPendingRangeStart(3_000L)
+        vm.onDuplicateRange()
+        advanceUntilIdle()
+
+        val segs = segmentRepo.getByProjectId(projectId)
+        assertEquals(4, segs.size) // pre, middle, duplicate, post
+        assertTrue(!vm.uiState.value.isRangeSelecting)
+    }
+
+    @Test
+    fun `onDeleteRange removes middle piece`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        vm.onSetPendingRangeEnd(7_000L)
+        vm.onSetPendingRangeStart(3_000L)
+        vm.onDeleteRange()
+        advanceUntilIdle()
+
+        val segs = segmentRepo.getByProjectId(projectId)
+        assertEquals(2, segs.size) // pre + post
+    }
+
+    @Test
+    fun `onApplyRangeVolume sets volumeScale on middle split piece`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        vm.onSetPendingRangeEnd(6_000L)
+        vm.onSetPendingRangeStart(2_000L)
+        vm.onApplyRangeVolume(0.5f)
+        advanceUntilIdle()
+
+        val segs = segmentRepo.getByProjectId(projectId)
+        val middle = segs.first { it.trimStartMs == 2_000L && it.trimEndMs == 6_000L }
+        assertEquals(0.5f, middle.volumeScale)
+    }
+
+    @Test
+    fun `onApplyRangeSpeed sets speedScale on middle split piece`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        vm.onSetPendingRangeEnd(6_000L)
+        vm.onSetPendingRangeStart(2_000L)
+        vm.onApplyRangeSpeed(2f)
+        advanceUntilIdle()
+
+        val segs = segmentRepo.getByProjectId(projectId)
+        val middle = segs.first { it.trimStartMs == 2_000L && it.trimEndMs == 6_000L }
+        assertEquals(2f, middle.speedScale)
+    }
+
+    @Test
+    fun `onCancelRangeMode clears range state`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-1")
+        assertTrue(vm.uiState.value.isRangeSelecting)
+        vm.onCancelRangeMode()
+        assertTrue(!vm.uiState.value.isRangeSelecting)
     }
 }

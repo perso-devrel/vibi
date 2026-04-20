@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -468,6 +469,7 @@ fun TimelineScreen(
                     segment = selectedSegment,
                     canDelete = state.segments.size > 1,
                     onEnterTrim = { viewModel.onEnterTrimMode() },
+                    onEnterRange = { viewModel.onEnterRangeMode(selectedSegment.id) },
                     onUpdateDuration = { ms ->
                         viewModel.onUpdateImageSegmentDuration(selectedSegment.id, ms)
                     },
@@ -569,6 +571,30 @@ fun TimelineScreen(
             }
         )
     }
+
+    if (state.isRangeSelecting) {
+        val rangeSeg = state.segments.find { it.id == state.rangeTargetSegmentId }
+        if (rangeSeg != null) {
+            RangeActionSheet(
+                segment = rangeSeg,
+                pendingStartMs = state.pendingRangeStartMs,
+                pendingEndMs = state.pendingRangeEndMs,
+                pendingVolume = state.pendingRangeVolume,
+                pendingSpeed = state.pendingRangeSpeed,
+                onRangeChange = { s, e ->
+                    viewModel.onSetPendingRangeEnd(e)
+                    viewModel.onSetPendingRangeStart(s)
+                },
+                onDuplicate = { viewModel.onDuplicateRange() },
+                onDelete = { viewModel.onDeleteRange() },
+                onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                onApplyVolume = { viewModel.onApplyRangeVolume(it) },
+                onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
+                onDismiss = { viewModel.onCancelRangeMode() }
+            )
+        }
+    }
 }
 
 @Composable
@@ -576,6 +602,7 @@ private fun SelectedSegmentActionBar(
     segment: Segment,
     canDelete: Boolean,
     onEnterTrim: () -> Unit,
+    onEnterRange: () -> Unit,
     onUpdateDuration: (Long) -> Unit,
     onDelete: () -> Unit
 ) {
@@ -585,6 +612,9 @@ private fun SelectedSegmentActionBar(
                 IconButton(onClick = onEnterTrim) {
                     Icon(Icons.Default.ContentCut, contentDescription = "Trim")
                 }
+                IconButton(onClick = onEnterRange) {
+                    Icon(Icons.Default.Tune, contentDescription = "Range edit")
+                }
             }
             if (canDelete) {
                 IconButton(onClick = onDelete) {
@@ -592,8 +622,12 @@ private fun SelectedSegmentActionBar(
                 }
             }
             Spacer(modifier = Modifier.weight(1f))
+            val extras = buildString {
+                if (segment.speedScale != 1f) append(" · ${"%.2f".format(segment.speedScale)}x")
+                if (segment.volumeScale != 1f) append(" · vol ${"%.2f".format(segment.volumeScale)}")
+            }
             Text(
-                text = "${segment.type.name} · ${formatTime(segment.effectiveDurationMs)}",
+                text = "${segment.type.name} · ${formatTime(segment.effectiveDurationMs)}$extras",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

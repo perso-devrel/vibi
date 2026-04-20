@@ -55,7 +55,9 @@ class SegmentRepositoryImpl @Inject constructor(
         imageXPct = imageXPct,
         imageYPct = imageYPct,
         imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct
+        imageHeightPct = imageHeightPct,
+        volumeScale = volumeScale,
+        speedScale = speedScale
     )
 
     private fun Segment.toEntity() = SegmentEntity(
@@ -72,6 +74,8 @@ class SegmentRepositoryImpl @Inject constructor(
         imageXPct = imageXPct,
         imageYPct = imageYPct,
         imageWidthPct = imageWidthPct,
-        imageHeightPct = imageHeightPct
+        imageHeightPct = imageHeightPct,
+        volumeScale = volumeScale,
+        speedScale = speedScale
     )
 }

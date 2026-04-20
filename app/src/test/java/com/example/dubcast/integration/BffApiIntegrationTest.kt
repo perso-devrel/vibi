@@ -5,6 +5,7 @@ import com.example.dubcast.data.remote.api.BffApiService
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -15,6 +16,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.io.File
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 
 /**
  * Integration tests that call the real BFF API (v2 endpoints).
@@ -51,8 +53,15 @@ class BffApiIntegrationTest {
             .add(KotlinJsonAdapterFactory())
             .build()
 
+        val client = OkHttpClient.Builder()
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .build()
+
         api = Retrofit.Builder()
             .baseUrl(baseUrl!!)
+            .client(client)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(BffApiService::class.java)
