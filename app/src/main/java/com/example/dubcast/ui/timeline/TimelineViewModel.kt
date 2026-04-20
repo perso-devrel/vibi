@@ -224,6 +224,8 @@ class TimelineViewModel @Inject constructor(
 
     companion object {
         const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
+        const val MIN_IMAGE_DURATION_MS = 500L
+        const val MAX_IMAGE_DURATION_MS = 30_000L
 
         private val DEFAULT_VOICES = listOf(
             Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),
@@ -705,6 +707,17 @@ class TimelineViewModel @Inject constructor(
     fun onUpdateImageSegmentDuration(segmentId: String, durationMs: Long) {
         viewModelScope.launch {
             updateImageSegmentDuration(segmentId, durationMs)
+        }
+    }
+
+    fun onResizeImageSegmentByDrag(segmentId: String, requestedDurationMs: Long) {
+        viewModelScope.launch {
+            val seg = _uiState.value.segments.firstOrNull { it.id == segmentId } ?: return@launch
+            if (seg.type != SegmentType.IMAGE) return@launch
+            val clamped = requestedDurationMs.coerceIn(MIN_IMAGE_DURATION_MS, MAX_IMAGE_DURATION_MS)
+            if (clamped == seg.durationMs) return@launch
+            pushUndoState()
+            updateImageSegmentDuration(segmentId, clamped)
         }
     }
 

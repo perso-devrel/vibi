@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,8 +54,11 @@ private val VIDEO_TRACK_HEIGHT = 28.dp
 private val TRIM_HANDLE_WIDTH = 14.dp
 private val TRIM_HANDLE_HIT_WIDTH = 32.dp
 private val APPEND_BUTTON_SIZE = 28.dp
+private val IMAGE_RESIZE_HANDLE_WIDTH = 6.dp
+private val IMAGE_RESIZE_HIT_WIDTH = 20.dp
 private val VideoSegmentColor = Color(0xFF4A4A4A)
 private val ImageSegmentColor = Color(0xFF5B5BD6)
+private val ImageResizeHandleColor = Color(0xFFFFD080)
 
 @Composable
 fun Timeline(
@@ -78,6 +82,7 @@ fun Timeline(
     onDubClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipResized: (clipId: String, newEndMs: Long) -> Unit,
+    onImageSegmentResized: (segmentId: String, newDurationMs: Long) -> Unit,
     onAppendRequested: () -> Unit,
     onSeek: (Long) -> Unit,
     onTrimStartChanged: (Long) -> Unit,
@@ -133,6 +138,7 @@ fun Timeline(
                             selectedSegmentId = selectedSegmentId,
                             isTrimming = isTrimming,
                             onSegmentSelected = onSegmentSelected,
+                            onImageSegmentResized = onImageSegmentResized,
                             onTrackTappedForSeek = { globalMs ->
                                 if (isTrimming) {
                                     onSeek(globalMs.coerceIn(trimStartMs, effectiveTrimEnd))
@@ -305,6 +311,7 @@ private fun RenderSegments(
     selectedSegmentId: String?,
     isTrimming: Boolean,
     onSegmentSelected: (String?) -> Unit,
+    onImageSegmentResized: (segmentId: String, newDurationMs: Long) -> Unit,
     onTrackTappedForSeek: (Long) -> Unit
 ) {
     val density = LocalDensity.current
@@ -375,7 +382,65 @@ private fun RenderSegments(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(4.dp)
             )
+
+            if (segment.type == SegmentType.IMAGE && !isTrimming) {
+                ImageSegmentResizeHandle(
+                    segmentId = segment.id,
+                    currentDurationMs = segment.durationMs,
+                    pxPerMs = totalWidthPx / totalDurationMs.toFloat(),
+                    isSelected = segment.id == selectedSegmentId,
+                    onCommit = onImageSegmentResized,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun BoxScope.ImageSegmentResizeHandle(
+    segmentId: String,
+    currentDurationMs: Long,
+    pxPerMs: Float,
+    isSelected: Boolean,
+    onCommit: (segmentId: String, newDurationMs: Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    var dragOffsetPx by remember(segmentId, currentDurationMs) { mutableFloatStateOf(0f) }
+
+    val handleAlpha = if (isSelected) 1f else 0.55f
+    val visibleHandleColor = ImageResizeHandleColor.copy(alpha = handleAlpha)
+
+    Box(
+        modifier = modifier
+            .width(IMAGE_RESIZE_HIT_WIDTH)
+            .fillMaxHeight()
+            .pointerInput(segmentId, currentDurationMs, pxPerMs) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (pxPerMs > 0f) {
+                            val deltaMs = (dragOffsetPx / pxPerMs).toLong()
+                            val target = (currentDurationMs + deltaMs).coerceAtLeast(0L)
+                            onCommit(segmentId, target)
+                        }
+                        dragOffsetPx = 0f
+                    },
+                    onDragCancel = { dragOffsetPx = 0f }
+                ) { _, dragAmount ->
+                    dragOffsetPx += dragAmount
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = with(density) { dragOffsetPx.toDp() })
+                .width(IMAGE_RESIZE_HANDLE_WIDTH)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(2.dp))
+                .background(visibleHandleColor)
+        )
     }
 }
 

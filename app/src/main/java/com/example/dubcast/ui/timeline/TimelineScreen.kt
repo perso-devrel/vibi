@@ -524,6 +524,9 @@ fun TimelineScreen(
                 onDubClipMoved = { clipId, newStartMs -> viewModel.onMoveDubClip(clipId, newStartMs) },
                 onImageClipMoved = { clipId, newStartMs -> viewModel.onMoveImageClip(clipId, newStartMs) },
                 onImageClipResized = { clipId, newEndMs -> viewModel.onResizeImageClipDuration(clipId, newEndMs) },
+                onImageSegmentResized = { segmentId, newDurationMs ->
+                    viewModel.onResizeImageSegmentByDrag(segmentId, newDurationMs)
+                },
                 onAppendRequested = { viewModel.onShowAppendSheet() },
                 onSeek = { posMs ->
                     val clamped = posMs.coerceIn(0L, state.videoDurationMs)
