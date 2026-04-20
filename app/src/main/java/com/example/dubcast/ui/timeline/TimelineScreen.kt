@@ -133,28 +133,22 @@ fun TimelineScreen(
         segmentStartOffset(state.segments, currentSegmentId)
     }
 
-    // Load ExoPlayer with current VIDEO segment's media whenever the active
-    // segment changes (swap uri + seek to current local offset).
-    LaunchedEffect(currentSegmentId, currentSegment?.sourceUri) {
-        val seg = currentSegment ?: run {
+    // Swap ExoPlayer to the current VIDEO segment's media and toggle
+    // playWhenReady in a single coordinated effect so the two signals
+    // cannot race across segment transitions.
+    LaunchedEffect(currentSegmentId, currentSegment?.sourceUri, state.isPlaying) {
+        val seg = currentSegment
+        if (seg == null) {
             exoPlayer.clearMediaItems()
+            exoPlayer.playWhenReady = false
             return@LaunchedEffect
         }
         if (seg.type == SegmentType.VIDEO) {
             val localMs = (state.playbackPositionMs - currentSegmentStart + seg.trimStartMs)
                 .coerceAtLeast(0L)
-            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(seg.sourceUri)))
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(seg.sourceUri)), localMs)
             exoPlayer.prepare()
-            exoPlayer.seekTo(localMs)
-        } else {
-            exoPlayer.pause()
-        }
-    }
-
-    LaunchedEffect(state.isPlaying, currentSegmentId) {
-        val seg = currentSegment
-        if (state.isPlaying && seg?.type == SegmentType.VIDEO) {
-            exoPlayer.playWhenReady = true
+            exoPlayer.playWhenReady = state.isPlaying
         } else {
             exoPlayer.playWhenReady = false
         }
