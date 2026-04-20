@@ -1,5 +1,7 @@
 package com.example.dubcast.domain.usecase.export
 
+import com.example.dubcast.domain.model.SegmentType
+
 data class DubClipMixInput(
     val audioFilePath: String,
     val startMs: Long,
@@ -16,26 +18,38 @@ data class ImageClipMixInput(
     val heightPct: Float
 )
 
-interface FfmpegExecutor {
-    suspend fun burnSubtitles(
-        inputVideoPath: String,
-        assFilePath: String,
-        outputPath: String,
-        fontDir: String,
-        durationMs: Long = 0L,
-        onProgress: (percent: Int) -> Unit
-    ): Result<String>
+data class SegmentInput(
+    val sourceFilePath: String,
+    val type: SegmentType,
+    val order: Int,
+    val durationMs: Long,
+    val trimStartMs: Long,
+    val trimEndMs: Long,
+    val width: Int,
+    val height: Int,
+    val imageXPct: Float = 50f,
+    val imageYPct: Float = 50f,
+    val imageWidthPct: Float = 50f,
+    val imageHeightPct: Float = 50f
+) {
+    val effectiveTrimEndMs: Long
+        get() = if (type == SegmentType.VIDEO && trimEndMs <= 0L) durationMs else trimEndMs
 
-    suspend fun mixAudioWithVideo(
-        inputVideoPath: String,
+    val effectiveDurationMs: Long
+        get() = when (type) {
+            SegmentType.VIDEO -> effectiveTrimEndMs - trimStartMs
+            SegmentType.IMAGE -> durationMs
+        }
+}
+
+interface FfmpegExecutor {
+    suspend fun renderProject(
+        segments: List<SegmentInput>,
         dubClips: List<DubClipMixInput>,
+        imageClips: List<ImageClipMixInput> = emptyList(),
         outputPath: String,
-        videoDurationMs: Long,
-        trimStartMs: Long = 0L,
-        trimEndMs: Long = 0L,
         assFilePath: String? = null,
         fontDir: String? = null,
-        imageClips: List<ImageClipMixInput> = emptyList(),
         onProgress: (percent: Int) -> Unit
     ): Result<String>
 }

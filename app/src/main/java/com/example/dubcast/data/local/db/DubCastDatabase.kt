@@ -7,10 +7,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.dubcast.data.local.db.dao.DubClipDao
 import com.example.dubcast.data.local.db.dao.EditProjectDao
 import com.example.dubcast.data.local.db.dao.ImageClipDao
+import com.example.dubcast.data.local.db.dao.SegmentDao
 import com.example.dubcast.data.local.db.dao.SubtitleClipDao
 import com.example.dubcast.data.local.db.entity.DubClipEntity
 import com.example.dubcast.data.local.db.entity.EditProjectEntity
 import com.example.dubcast.data.local.db.entity.ImageClipEntity
+import com.example.dubcast.data.local.db.entity.SegmentEntity
 import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
 
 @Database(
@@ -18,9 +20,10 @@ import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
         EditProjectEntity::class,
         DubClipEntity::class,
         SubtitleClipEntity::class,
-        ImageClipEntity::class
+        ImageClipEntity::class,
+        SegmentEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -28,6 +31,7 @@ abstract class DubCastDatabase : RoomDatabase() {
     abstract fun dubClipDao(): DubClipDao
     abstract fun subtitleClipDao(): SubtitleClipDao
     abstract fun imageClipDao(): ImageClipDao
+    abstract fun segmentDao(): SegmentDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -115,6 +119,52 @@ abstract class DubCastDatabase : RoomDatabase() {
                         heightPct REAL NOT NULL DEFAULT 30.0
                     )"""
                 )
+            }
+        }
+
+        val MIGRATION_7_8_STATEMENTS: List<String> = listOf(
+            // 1) Create segments table
+            """CREATE TABLE IF NOT EXISTS segments (
+                id TEXT NOT NULL PRIMARY KEY,
+                projectId TEXT NOT NULL,
+                type TEXT NOT NULL,
+                `order` INTEGER NOT NULL,
+                sourceUri TEXT NOT NULL,
+                durationMs INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                trimStartMs INTEGER NOT NULL DEFAULT 0,
+                trimEndMs INTEGER NOT NULL DEFAULT 0,
+                imageXPct REAL NOT NULL DEFAULT 50.0,
+                imageYPct REAL NOT NULL DEFAULT 50.0,
+                imageWidthPct REAL NOT NULL DEFAULT 50.0,
+                imageHeightPct REAL NOT NULL DEFAULT 50.0
+            )""",
+            // 2) Migrate each existing project's video into segment 0
+            """INSERT INTO segments(
+                id, projectId, type, `order`, sourceUri,
+                durationMs, width, height, trimStartMs, trimEndMs,
+                imageXPct, imageYPct, imageWidthPct, imageHeightPct
+            )
+            SELECT projectId || '_seg0', projectId, 'VIDEO', 0, videoUri,
+                videoDurationMs, videoWidth, videoHeight, trimStartMs, trimEndMs,
+                50.0, 50.0, 50.0, 50.0
+            FROM edit_projects""",
+            // 3) Rebuild edit_projects with only projectId/createdAt/updatedAt
+            """CREATE TABLE edit_projects_new (
+                projectId TEXT NOT NULL PRIMARY KEY,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )""",
+            """INSERT INTO edit_projects_new(projectId, createdAt, updatedAt)
+            SELECT projectId, createdAt, updatedAt FROM edit_projects""",
+            "DROP TABLE edit_projects",
+            "ALTER TABLE edit_projects_new RENAME TO edit_projects"
+        )
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_7_8_STATEMENTS.forEach { db.execSQL(it) }
             }
         }
     }

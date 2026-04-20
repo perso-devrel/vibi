@@ -4,14 +4,15 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dubcast.domain.model.DubClip
-import com.example.dubcast.domain.model.EditProject
 import com.example.dubcast.domain.model.ImageClip
+import com.example.dubcast.domain.model.Segment
+import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.model.Voice
 import com.example.dubcast.domain.repository.DubClipRepository
-import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
+import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
@@ -23,6 +24,7 @@ import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -47,6 +49,8 @@ data class PreviewDubClip(
 
 data class TimelineUiState(
     val projectId: String = "",
+    val segments: List<Segment> = emptyList(),
+    val selectedSegmentId: String? = null,
     val videoUri: String = "",
     val videoDurationMs: Long = 0L,
     val videoWidth: Int = 0,
@@ -90,7 +94,7 @@ data class TimelineSnapshot(
 @HiltViewModel
 class TimelineViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val editProjectRepository: EditProjectRepository,
+    private val segmentRepository: SegmentRepository,
     private val dubClipRepository: DubClipRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
     private val imageClipRepository: ImageClipRepository,
@@ -104,7 +108,8 @@ class TimelineViewModel @Inject constructor(
     private val splitDubTextToSubtitles: SplitDubTextToSubtitlesUseCase,
     private val addImageClip: AddImageClipUseCase,
     private val updateImageClip: UpdateImageClipUseCase,
-    private val deleteImageClip: DeleteImageClipUseCase
+    private val deleteImageClip: DeleteImageClipUseCase,
+    private val updateSegmentTrim: UpdateSegmentTrimUseCase
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -118,24 +123,26 @@ class TimelineViewModel @Inject constructor(
     private val undoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
 
     init {
-        loadProject()
+        loadSegments()
         loadVoices()
         observeClips()
     }
 
-    private fun loadProject() {
+    private fun loadSegments() {
         viewModelScope.launch {
-            editProjectRepository.observeProject(projectId).collect { project ->
-                if (project != null) {
-                    _uiState.value = _uiState.value.copy(
-                        videoUri = project.videoUri,
-                        videoDurationMs = project.videoDurationMs,
-                        videoWidth = project.videoWidth,
-                        videoHeight = project.videoHeight,
-                        trimStartMs = project.trimStartMs,
-                        trimEndMs = project.trimEndMs
-                    )
-                }
+            segmentRepository.observeByProjectId(projectId).collect { segments ->
+                val first = segments.firstOrNull()
+                _uiState.value = _uiState.value.copy(
+                    segments = segments,
+                    selectedSegmentId = _uiState.value.selectedSegmentId
+                        ?: first?.id,
+                    videoUri = first?.sourceUri.orEmpty(),
+                    videoDurationMs = first?.durationMs ?: 0L,
+                    videoWidth = first?.width ?: 0,
+                    videoHeight = first?.height ?: 0,
+                    trimStartMs = first?.trimStartMs ?: 0L,
+                    trimEndMs = first?.trimEndMs ?: 0L
+                )
             }
         }
     }
@@ -532,13 +539,13 @@ class TimelineViewModel @Inject constructor(
             isVideoSelected = false
         )
         viewModelScope.launch {
-            val project = editProjectRepository.getProject(projectId) ?: return@launch
-            editProjectRepository.updateProject(
-                project.copy(
-                    trimStartMs = state.pendingTrimStartMs,
-                    trimEndMs = state.pendingTrimEndMs,
-                    updatedAt = System.currentTimeMillis()
-                )
+            val segmentId = state.selectedSegmentId
+                ?: state.segments.firstOrNull { it.type == SegmentType.VIDEO }?.id
+                ?: return@launch
+            updateSegmentTrim(
+                segmentId = segmentId,
+                trimStartMs = state.pendingTrimStartMs,
+                trimEndMs = state.pendingTrimEndMs
             )
         }
     }

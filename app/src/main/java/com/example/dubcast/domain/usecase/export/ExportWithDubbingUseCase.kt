@@ -11,14 +11,9 @@ class ExportWithDubbingUseCase @Inject constructor(
 ) {
 
     suspend fun execute(
-        inputVideoPath: String,
+        segments: List<SegmentInput>,
         dubClips: List<DubClip>,
         subtitleClips: List<SubtitleClip>,
-        videoWidth: Int,
-        videoHeight: Int,
-        videoDurationMs: Long,
-        trimStartMs: Long = 0L,
-        trimEndMs: Long = 0L,
         outputPath: String,
         assFilePath: String?,
         fontDir: String?,
@@ -26,10 +21,15 @@ class ExportWithDubbingUseCase @Inject constructor(
         resolveImagePath: suspend (imageUri: String) -> String? = { null },
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
-        var assPath: String? = null
+        require(segments.isNotEmpty()) { "segments must not be empty" }
 
+        val firstSegment = segments.minByOrNull { it.order } ?: segments.first()
+        val outputWidth = firstSegment.width
+        val outputHeight = firstSegment.height
+
+        var assPath: String? = null
         if (subtitleClips.isNotEmpty() && assFilePath != null) {
-            val assContent = assGenerator.generateFromClips(subtitleClips, videoWidth, videoHeight)
+            val assContent = assGenerator.generateFromClips(subtitleClips, outputWidth, outputHeight)
             java.io.File(assFilePath).writeText(assContent)
             assPath = assFilePath
         }
@@ -55,16 +55,13 @@ class ExportWithDubbingUseCase @Inject constructor(
             )
         }
 
-        return ffmpegExecutor.mixAudioWithVideo(
-            inputVideoPath = inputVideoPath,
+        return ffmpegExecutor.renderProject(
+            segments = segments,
             dubClips = mixInputs,
+            imageClips = imageMixInputs,
             outputPath = outputPath,
-            videoDurationMs = videoDurationMs,
-            trimStartMs = trimStartMs,
-            trimEndMs = trimEndMs,
             assFilePath = assPath,
             fontDir = fontDir,
-            imageClips = imageMixInputs,
             onProgress = onProgress
         )
     }

@@ -1,19 +1,36 @@
 package com.example.dubcast.data.repository
 
+import androidx.room.withTransaction
+import com.example.dubcast.data.local.db.DubCastDatabase
 import com.example.dubcast.data.local.db.dao.EditProjectDao
+import com.example.dubcast.data.local.db.dao.SegmentDao
 import com.example.dubcast.data.local.db.entity.EditProjectEntity
+import com.example.dubcast.data.local.db.entity.SegmentEntity
 import com.example.dubcast.domain.model.EditProject
+import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.repository.EditProjectRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
 class EditProjectRepositoryImpl @Inject constructor(
-    private val dao: EditProjectDao
+    private val database: DubCastDatabase,
+    private val dao: EditProjectDao,
+    private val segmentDao: SegmentDao
 ) : EditProjectRepository {
 
     override suspend fun createProject(project: EditProject) {
         dao.insert(project.toEntity())
+    }
+
+    override suspend fun createProjectWithSegment(project: EditProject, segment: Segment) {
+        require(segment.projectId == project.projectId) {
+            "Segment.projectId must match EditProject.projectId"
+        }
+        database.withTransaction {
+            dao.insert(project.toEntity())
+            segmentDao.insert(segment.toEntity())
+        }
     }
 
     override fun observeProject(projectId: String): Flow<EditProject?> =
@@ -33,25 +50,30 @@ class EditProjectRepositoryImpl @Inject constructor(
 
     private fun EditProjectEntity.toDomain() = EditProject(
         projectId = projectId,
-        videoUri = videoUri,
-        videoDurationMs = videoDurationMs,
-        videoWidth = videoWidth,
-        videoHeight = videoHeight,
-        trimStartMs = trimStartMs,
-        trimEndMs = trimEndMs,
         createdAt = createdAt,
         updatedAt = updatedAt
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
         projectId = projectId,
-        videoUri = videoUri,
-        videoDurationMs = videoDurationMs,
-        videoWidth = videoWidth,
-        videoHeight = videoHeight,
-        trimStartMs = trimStartMs,
-        trimEndMs = trimEndMs,
         createdAt = createdAt,
         updatedAt = updatedAt
+    )
+
+    private fun Segment.toEntity() = SegmentEntity(
+        id = id,
+        projectId = projectId,
+        type = type.name,
+        order = order,
+        sourceUri = sourceUri,
+        durationMs = durationMs,
+        width = width,
+        height = height,
+        trimStartMs = trimStartMs,
+        trimEndMs = trimEndMs,
+        imageXPct = imageXPct,
+        imageYPct = imageYPct,
+        imageWidthPct = imageWidthPct,
+        imageHeightPct = imageHeightPct
     )
 }

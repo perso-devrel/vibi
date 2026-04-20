@@ -12,39 +12,50 @@ class RenderConfigSerializationTest {
     private val adapter = moshi.adapter(RenderConfig::class.java)
 
     @Test
-    fun `config roundtrips with image clips`() {
+    fun `config with a single video segment roundtrips`() {
         val config = RenderConfig(
-            dubClips = listOf(
-                RenderDubClip(audioFileKey = "audio_0", startMs = 1000L, durationMs = 0L, volume = 1f)
-            ),
-            videoDurationMs = 10_000L,
-            trimStartMs = 0L,
-            trimEndMs = 0L,
-            imageClips = listOf(
-                RenderImageClip(
-                    imageFileKey = "image_0",
-                    startMs = 2000L,
-                    endMs = 5000L,
-                    xPct = 50f,
-                    yPct = 50f,
-                    widthPct = 30f,
-                    heightPct = 30f
+            dubClips = emptyList(),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 10_000L,
+                    trimStartMs = 0L,
+                    trimEndMs = 10_000L,
+                    width = 1920,
+                    height = 1080
                 )
             )
         )
-
         val json = adapter.toJson(config)
-        assertTrue("json must contain imageClips", json.contains("imageClips"))
-        assertTrue("json must contain imageFileKey", json.contains("image_0"))
-
-        val parsed = adapter.fromJson(json)!!
-        assertEquals(config, parsed)
+        assertTrue(json.contains("\"segments\""))
+        assertTrue(json.contains("video_0"))
+        assertEquals(config, adapter.fromJson(json)!!)
     }
 
     @Test
-    fun `config defaults to empty imageClips`() {
-        val json = """{"dubClips":[],"videoDurationMs":1000}"""
+    fun `config with image clips and segments roundtrips`() {
+        val config = RenderConfig(
+            dubClips = listOf(
+                RenderDubClip("audio_0", startMs = 1000L, durationMs = 0L, volume = 1f)
+            ),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 20_000L,
+                    width = 1280,
+                    height = 720
+                )
+            ),
+            imageClips = listOf(
+                RenderImageClip("image_0", startMs = 2000L, endMs = 5000L, xPct = 50f, yPct = 50f, widthPct = 30f, heightPct = 30f)
+            )
+        )
+        val json = adapter.toJson(config)
         val parsed = adapter.fromJson(json)!!
-        assertEquals(emptyList<RenderImageClip>(), parsed.imageClips)
+        assertEquals(config, parsed)
     }
 }
