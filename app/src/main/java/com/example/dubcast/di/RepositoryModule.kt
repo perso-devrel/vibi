@@ -4,12 +4,14 @@ import com.example.dubcast.data.repository.AndroidGallerySaver
 import com.example.dubcast.data.repository.AndroidVideoMetadataExtractor
 import com.example.dubcast.data.repository.DubClipRepositoryImpl
 import com.example.dubcast.data.repository.EditProjectRepositoryImpl
+import com.example.dubcast.data.repository.ImageClipRepositoryImpl
 import com.example.dubcast.data.repository.RemoteRenderExecutor
 import com.example.dubcast.data.repository.LipSyncRepositoryImpl
 import com.example.dubcast.data.repository.SubtitleClipRepositoryImpl
 import com.example.dubcast.data.repository.TtsRepositoryImpl
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
+import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.LipSyncRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.repository.TtsRepository
@@ -57,4 +59,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindLipSyncRepository(impl: LipSyncRepositoryImpl): LipSyncRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindImageClipRepository(impl: ImageClipRepositoryImpl): ImageClipRepository
 }

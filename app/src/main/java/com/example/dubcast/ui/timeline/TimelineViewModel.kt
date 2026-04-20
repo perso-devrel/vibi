@@ -5,13 +5,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.EditProject
+import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.model.Voice
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
+import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.repository.TtsRepository
+import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
+import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
+import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
@@ -50,10 +55,12 @@ data class TimelineUiState(
     val trimEndMs: Long = 0L,
     val dubClips: List<DubClip> = emptyList(),
     val subtitleClips: List<SubtitleClip> = emptyList(),
+    val imageClips: List<ImageClip> = emptyList(),
     val playbackPositionMs: Long = 0L,
     val isPlaying: Boolean = false,
     val selectedDubClipId: String? = null,
     val selectedSubtitleClipId: String? = null,
+    val selectedImageClipId: String? = null,
     val voices: List<Voice> = emptyList(),
     val isVoicesLoading: Boolean = false,
     val showDubbingSheet: Boolean = false,
@@ -76,7 +83,8 @@ data class TimelineUiState(
 
 data class TimelineSnapshot(
     val dubClips: List<DubClip>,
-    val subtitleClips: List<SubtitleClip>
+    val subtitleClips: List<SubtitleClip>,
+    val imageClips: List<ImageClip>
 )
 
 @HiltViewModel
@@ -85,6 +93,7 @@ class TimelineViewModel @Inject constructor(
     private val editProjectRepository: EditProjectRepository,
     private val dubClipRepository: DubClipRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
+    private val imageClipRepository: ImageClipRepository,
     private val ttsRepository: TtsRepository,
     private val synthesizeDubClip: SynthesizeDubClipUseCase,
     private val getVoiceList: GetVoiceListUseCase,
@@ -92,7 +101,10 @@ class TimelineViewModel @Inject constructor(
     private val deleteDubClip: DeleteDubClipUseCase,
     private val addSubtitleClip: AddSubtitleClipUseCase,
     private val deleteSubtitleClip: DeleteSubtitleClipUseCase,
-    private val splitDubTextToSubtitles: SplitDubTextToSubtitlesUseCase
+    private val splitDubTextToSubtitles: SplitDubTextToSubtitlesUseCase,
+    private val addImageClip: AddImageClipUseCase,
+    private val updateImageClip: UpdateImageClipUseCase,
+    private val deleteImageClip: DeleteImageClipUseCase
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -155,12 +167,14 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 dubClipRepository.observeClips(projectId),
-                subtitleClipRepository.observeClips(projectId)
-            ) { dubs, subs -> dubs to subs }
-                .collect { (dubs, subs) ->
+                subtitleClipRepository.observeClips(projectId),
+                imageClipRepository.observeClips(projectId)
+            ) { dubs, subs, images -> Triple(dubs, subs, images) }
+                .collect { (dubs, subs, images) ->
                     _uiState.value = _uiState.value.copy(
                         dubClips = dubs,
-                        subtitleClips = subs
+                        subtitleClips = subs,
+                        imageClips = images
                     )
                 }
         }
@@ -170,7 +184,8 @@ class TimelineViewModel @Inject constructor(
         // Read directly from DB to avoid race with async Flow emission
         val dubs = dubClipRepository.observeClips(projectId).first()
         val subs = subtitleClipRepository.observeClips(projectId).first()
-        undoRedoManager.pushState(TimelineSnapshot(dubs, subs))
+        val images = imageClipRepository.observeClips(projectId).first()
+        undoRedoManager.pushState(TimelineSnapshot(dubs, subs, images))
         updateUndoRedoState()
     }
 
@@ -298,6 +313,7 @@ class TimelineViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             selectedDubClipId = newSelected,
             selectedSubtitleClipId = null,
+            selectedImageClipId = null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
             showDubVolumeSlider = false
@@ -308,6 +324,20 @@ class TimelineViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             selectedSubtitleClipId = clipId,
             selectedDubClipId = null,
+            selectedImageClipId = null,
+            isVideoSelected = false,
+            showVideoVolumeSlider = false,
+            showDubVolumeSlider = false
+        )
+    }
+
+    fun onSelectImageClip(clipId: String?) {
+        val currentSelected = _uiState.value.selectedImageClipId
+        val newSelected = if (currentSelected == clipId) null else clipId
+        _uiState.value = _uiState.value.copy(
+            selectedImageClipId = newSelected,
+            selectedDubClipId = null,
+            selectedSubtitleClipId = null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
             showDubVolumeSlider = false
@@ -330,9 +360,67 @@ class TimelineViewModel @Inject constructor(
                 subtitleClipRepository.deleteClipsBySourceDubClipId(dubClipId)
             }
             state.selectedSubtitleClipId?.let { deleteSubtitleClip(it) }
+            state.selectedImageClipId?.let { deleteImageClip(it) }
             _uiState.value = _uiState.value.copy(
                 selectedDubClipId = null,
-                selectedSubtitleClipId = null
+                selectedSubtitleClipId = null,
+                selectedImageClipId = null
+            )
+        }
+    }
+
+    fun onInsertImage(uri: String, defaultDurationMs: Long = 3000L) {
+        viewModelScope.launch {
+            pushUndoState()
+            val state = _uiState.value
+            val videoDurationMs = state.videoDurationMs
+            val maxStart = if (videoDurationMs > 0L) (videoDurationMs - 500L).coerceAtLeast(0L) else Long.MAX_VALUE
+            val startMs = state.playbackPositionMs.coerceIn(0L, maxStart)
+            val maxEnd = if (videoDurationMs > 0L) videoDurationMs else (startMs + defaultDurationMs)
+            val endMs = (startMs + defaultDurationMs)
+                .coerceAtMost(maxEnd)
+                .coerceAtLeast(startMs + 500L)
+            addImageClip(projectId = projectId, imageUri = uri, startMs = startMs, endMs = endMs)
+        }
+    }
+
+    fun onMoveImageClip(clipId: String, newStartMs: Long) {
+        viewModelScope.launch {
+            val clip = _uiState.value.imageClips.find { it.id == clipId } ?: return@launch
+            pushUndoState()
+            val duration = clip.endMs - clip.startMs
+            val videoDuration = _uiState.value.videoDurationMs
+            val coercedStart = newStartMs.coerceAtLeast(0L).let {
+                if (videoDuration > 0L) it.coerceAtMost((videoDuration - duration).coerceAtLeast(0L)) else it
+            }
+            updateImageClip(clip.copy(startMs = coercedStart, endMs = coercedStart + duration))
+        }
+    }
+
+    fun onResizeImageClipDuration(clipId: String, newEndMs: Long) {
+        viewModelScope.launch {
+            val clip = _uiState.value.imageClips.find { it.id == clipId } ?: return@launch
+            pushUndoState()
+            val minEnd = clip.startMs + 500L
+            val videoDuration = _uiState.value.videoDurationMs
+            val coercedEnd = newEndMs.coerceAtLeast(minEnd).let {
+                if (videoDuration > 0L) it.coerceAtMost(videoDuration) else it
+            }
+            updateImageClip(clip.copy(endMs = coercedEnd))
+        }
+    }
+
+    fun onUpdateImageClipPosition(
+        clipId: String,
+        xPct: Float,
+        yPct: Float,
+        widthPct: Float,
+        heightPct: Float
+    ) {
+        viewModelScope.launch {
+            val clip = imageClipRepository.getClip(clipId) ?: return@launch
+            updateImageClip(
+                clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
             )
         }
     }
@@ -377,6 +465,10 @@ class TimelineViewModel @Inject constructor(
         for (clip in snapshot.subtitleClips) {
             subtitleClipRepository.addClip(clip)
         }
+        imageClipRepository.deleteAllClips(projectId)
+        for (clip in snapshot.imageClips) {
+            imageClipRepository.addClip(clip)
+        }
     }
 
     fun onVideoTrackTapped() {
@@ -386,7 +478,8 @@ class TimelineViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isVideoSelected = true,
                 selectedDubClipId = null,
-                selectedSubtitleClipId = null
+                selectedSubtitleClipId = null,
+                selectedImageClipId = null
             )
         }
     }

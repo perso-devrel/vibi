@@ -17,7 +17,9 @@
 ### 3.2 타임라인 에디터
 - ExoPlayer 비디오 프리뷰 + 드래그 가능한 플레이헤드.
 - 더빙 삽입: 언어 선택 → 보이스 선택 → 텍스트 입력 → TTS 생성 → 타임라인에 클립 배치.
+  - "Show on screen" 토글: 켜면 더빙 입력 텍스트를 `\n` 단위로 분할해 오디오 싱크에 맞춘 자동 자막으로 동시 생성 (글자 수 가중 분할, 마지막 줄에 오차 흡수). 자동 자막은 텍스트 수정 불가, 위치/크기만 스티커처럼 조정 가능. 더빙 삭제 시 연동 삭제.
 - 더빙 클립 드래그로 위치 이동, 선택 후 삭제.
+- 스티커 이미지 삽입: 갤러리에서 선택 → 기본 3초 duration으로 배치 → 프리뷰에서 드래그/리사이즈로 위치·크기 조절, 타임라인에서 구간 조절.
 - undo/redo 지원 (최대 50단계).
 
 ### 3.3 내보내기
@@ -42,7 +44,7 @@
 | 화면 | 설명 |
 |------|------|
 | Input | 갤러리에서 영상 선택, 메타데이터 검증 |
-| Timeline | ExoPlayer 프리뷰 + 타임라인 에디터 (더빙 클립 관리) |
+| Timeline | ExoPlayer 프리뷰 + 타임라인 에디터 (더빙/자막/스티커 이미지 클립 관리) |
 | Export | 저장 방식 선택 (본 영상 / 다국어 번역본) + 옵션 설정 + 내보내기 |
 | Share | 갤러리 저장, 공유 |
 
@@ -66,11 +68,11 @@
 │  ├─ ExportScreen / ExportViewModel (옵션 선택, ffmpeg 렌더링)
 │  └─ ShareScreen / ShareViewModel (갤러리 저장)
 ├─ Domain Layer
-│  ├─ Models: EditProject, DubClip, SubtitleClip, Voice, SubtitlePosition
-│  ├─ Use Cases: tts/, timeline/, subtitle/, lipsync/, export/, input/
+│  ├─ Models: EditProject, DubClip, SubtitleClip, ImageClip, Voice, SubtitlePosition
+│  ├─ Use Cases: tts/, timeline/, subtitle/, image/, lipsync/, export/, input/
 │  └─ Repository Interfaces
 ├─ Data Layer
-│  ├─ Room DB (v4): EditProject, DubClip, SubtitleClip 테이블
+│  ├─ Room DB (v7): EditProject, DubClip, SubtitleClip, ImageClip 테이블
 │  ├─ Retrofit + Moshi: BFF v2 API
 │  └─ Repository Implementations
 └─ DI: Hilt (DatabaseModule, NetworkModule, RepositoryModule)
@@ -85,10 +87,15 @@
 
 ## 7. 데이터 모델
 ```kotlin
-EditProject { projectId, videoUri, videoDurationMs, videoWidth, videoHeight, createdAt, updatedAt }
+EditProject { projectId, videoUri, videoDurationMs, videoWidth, videoHeight, trimStartMs, trimEndMs, createdAt, updatedAt }
 DubClip { id, projectId, text, voiceId, voiceName, audioFilePath, startMs, durationMs, volume }
-SubtitleClip { id, projectId, text, startMs, endMs, position: SubtitlePosition }
+SubtitleClip {
+    id, projectId, text, startMs, endMs, position: SubtitlePosition,
+    // 자동 자막 전용 (sourceDubClipId != null 이면 자동 자막 = 스티커 좌표 사용)
+    sourceDubClipId: String?, xPct: Float?, yPct: Float?, widthPct: Float?, heightPct: Float?
+}
 SubtitlePosition { anchor: Anchor(TOP|MIDDLE|BOTTOM), yOffsetPct: Float }
+ImageClip { id, projectId, imageUri, startMs, endMs, xPct, yPct, widthPct, heightPct }  // 영상 위 스티커 오버레이
 Voice { voiceId, name, previewUrl, language }
 ```
 

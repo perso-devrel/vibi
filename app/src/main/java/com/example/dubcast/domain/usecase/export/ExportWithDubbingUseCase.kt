@@ -1,6 +1,7 @@
 package com.example.dubcast.domain.usecase.export
 
 import com.example.dubcast.domain.model.DubClip
+import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.SubtitleClip
 import javax.inject.Inject
 
@@ -21,6 +22,8 @@ class ExportWithDubbingUseCase @Inject constructor(
         outputPath: String,
         assFilePath: String?,
         fontDir: String?,
+        imageClips: List<ImageClip> = emptyList(),
+        resolveImagePath: suspend (imageUri: String) -> String? = { null },
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
         var assPath: String? = null
@@ -39,6 +42,19 @@ class ExportWithDubbingUseCase @Inject constructor(
             )
         }
 
+        val imageMixInputs = imageClips.mapNotNull { clip ->
+            val localPath = resolveImagePath(clip.imageUri) ?: return@mapNotNull null
+            ImageClipMixInput(
+                imageFilePath = localPath,
+                startMs = clip.startMs,
+                endMs = clip.endMs,
+                xPct = clip.xPct,
+                yPct = clip.yPct,
+                widthPct = clip.widthPct,
+                heightPct = clip.heightPct
+            )
+        }
+
         return ffmpegExecutor.mixAudioWithVideo(
             inputVideoPath = inputVideoPath,
             dubClips = mixInputs,
@@ -48,6 +64,7 @@ class ExportWithDubbingUseCase @Inject constructor(
             trimEndMs = trimEndMs,
             assFilePath = assPath,
             fontDir = fontDir,
+            imageClips = imageMixInputs,
             onProgress = onProgress
         )
     }

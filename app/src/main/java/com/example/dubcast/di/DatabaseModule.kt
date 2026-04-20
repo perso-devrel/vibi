@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.example.dubcast.data.local.db.DubCastDatabase
 import com.example.dubcast.data.local.db.dao.DubClipDao
 import com.example.dubcast.data.local.db.dao.EditProjectDao
+import com.example.dubcast.data.local.db.dao.ImageClipDao
 import com.example.dubcast.data.local.db.dao.SubtitleClipDao
 import dagger.Module
 import dagger.Provides
@@ -25,7 +26,14 @@ object DatabaseModule {
             DubCastDatabase::class.java,
             "dubcast.db"
         )
-            .addMigrations(DubCastDatabase.MIGRATION_1_2, DubCastDatabase.MIGRATION_2_3, DubCastDatabase.MIGRATION_3_4, DubCastDatabase.MIGRATION_4_5, DubCastDatabase.MIGRATION_5_6)
+            .addMigrations(
+                DubCastDatabase.MIGRATION_1_2,
+                DubCastDatabase.MIGRATION_2_3,
+                DubCastDatabase.MIGRATION_3_4,
+                DubCastDatabase.MIGRATION_4_5,
+                DubCastDatabase.MIGRATION_5_6,
+                DubCastDatabase.MIGRATION_6_7
+            )
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
@@ -38,4 +46,7 @@ object DatabaseModule {
 
     @Provides
     fun provideSubtitleClipDao(db: DubCastDatabase): SubtitleClipDao = db.subtitleClipDao()
+
+    @Provides
+    fun provideImageClipDao(db: DubCastDatabase): ImageClipDao = db.imageClipDao()
 }

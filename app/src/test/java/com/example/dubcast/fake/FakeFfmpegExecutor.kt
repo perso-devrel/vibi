@@ -2,12 +2,14 @@ package com.example.dubcast.fake
 
 import com.example.dubcast.domain.usecase.export.DubClipMixInput
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
+import com.example.dubcast.domain.usecase.export.ImageClipMixInput
 
 class FakeFfmpegExecutor : FfmpegExecutor {
     var result: Result<String> = Result.success("/output/video.mp4")
     var mixResult: Result<String> = Result.success("/output/mixed.mp4")
     var progressSteps: List<Int> = listOf(25, 50, 75, 100)
     var lastMixInputs: List<DubClipMixInput>? = null
+    var lastImageInputs: List<ImageClipMixInput>? = null
 
     override suspend fun burnSubtitles(
         inputVideoPath: String,
@@ -30,9 +32,11 @@ class FakeFfmpegExecutor : FfmpegExecutor {
         trimEndMs: Long,
         assFilePath: String?,
         fontDir: String?,
+        imageClips: List<ImageClipMixInput>,
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
         lastMixInputs = dubClips
+        lastImageInputs = imageClips
         progressSteps.forEach { onProgress(it) }
         return mixResult
     }

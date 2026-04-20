@@ -6,24 +6,28 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.dubcast.data.local.db.dao.DubClipDao
 import com.example.dubcast.data.local.db.dao.EditProjectDao
+import com.example.dubcast.data.local.db.dao.ImageClipDao
 import com.example.dubcast.data.local.db.dao.SubtitleClipDao
 import com.example.dubcast.data.local.db.entity.DubClipEntity
 import com.example.dubcast.data.local.db.entity.EditProjectEntity
+import com.example.dubcast.data.local.db.entity.ImageClipEntity
 import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
 
 @Database(
     entities = [
         EditProjectEntity::class,
         DubClipEntity::class,
-        SubtitleClipEntity::class
+        SubtitleClipEntity::class,
+        ImageClipEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
     abstract fun editProjectDao(): EditProjectDao
     abstract fun dubClipDao(): DubClipDao
     abstract fun subtitleClipDao(): SubtitleClipDao
+    abstract fun imageClipDao(): ImageClipDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -93,6 +97,24 @@ abstract class DubCastDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN yPct REAL DEFAULT NULL")
                 db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN widthPct REAL DEFAULT NULL")
                 db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN heightPct REAL DEFAULT NULL")
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS image_clips (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        projectId TEXT NOT NULL,
+                        imageUri TEXT NOT NULL,
+                        startMs INTEGER NOT NULL,
+                        endMs INTEGER NOT NULL,
+                        xPct REAL NOT NULL DEFAULT 50.0,
+                        yPct REAL NOT NULL DEFAULT 50.0,
+                        widthPct REAL NOT NULL DEFAULT 30.0,
+                        heightPct REAL NOT NULL DEFAULT 30.0
+                    )"""
+                )
             }
         }
     }

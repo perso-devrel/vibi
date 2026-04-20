@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.dubcast.domain.model.DubClip
+import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.SubtitleClip
 
 private const val PX_PER_SECOND = 50f
@@ -51,6 +52,7 @@ fun Timeline(
     videoDurationMs: Long,
     dubClips: List<DubClip>,
     subtitleClips: List<SubtitleClip>,
+    imageClips: List<ImageClip>,
     playbackPositionMs: Long,
     trimStartMs: Long,
     trimEndMs: Long,
@@ -58,10 +60,14 @@ fun Timeline(
     isVideoSelected: Boolean,
     selectedDubClipId: String?,
     selectedSubtitleClipId: String?,
+    selectedImageClipId: String?,
     onVideoTrackTapped: () -> Unit,
     onDubClipSelected: (String?) -> Unit,
     onSubtitleClipSelected: (String?) -> Unit,
+    onImageClipSelected: (String?) -> Unit,
     onDubClipMoved: (clipId: String, newStartMs: Long) -> Unit,
+    onImageClipMoved: (clipId: String, newStartMs: Long) -> Unit,
+    onImageClipResized: (clipId: String, newEndMs: Long) -> Unit,
     onSeek: (Long) -> Unit,
     onTrimStartChanged: (Long) -> Unit,
     onTrimEndChanged: (Long) -> Unit,
@@ -199,6 +205,26 @@ fun Timeline(
                             videoDurationMs = videoDurationMs,
                             isSelected = clip.id == selectedSubtitleClipId,
                             onClick = { onSubtitleClipSelected(clip.id) },
+                            totalWidthDp = totalWidthDp.coerceAtLeast(300.dp)
+                        )
+                    }
+                }
+
+                // Image track
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(28.dp)
+                        .padding(vertical = 1.dp)
+                ) {
+                    imageClips.forEach { clip ->
+                        ImageClipItem(
+                            clip = clip,
+                            videoDurationMs = videoDurationMs,
+                            isSelected = clip.id == selectedImageClipId,
+                            onClick = { onImageClipSelected(clip.id) },
+                            onMoved = { newStartMs -> onImageClipMoved(clip.id, newStartMs) },
+                            onResized = { newEndMs -> onImageClipResized(clip.id, newEndMs) },
                             totalWidthDp = totalWidthDp.coerceAtLeast(300.dp)
                         )
                     }
