@@ -250,7 +250,7 @@ class ExportViewModel @Inject constructor(
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 if (!imageUri.startsWith("content://")) return@withContext imageUri
-                val safeName = "image_${imageUri.hashCode().toUInt()}.bin"
+                val safeName = "image_${java.util.UUID.nameUUIDFromBytes(imageUri.toByteArray())}.bin"
                 val dest = File(cacheDir, safeName)
                 if (!dest.exists()) {
                     context.contentResolver.openInputStream(Uri.parse(imageUri))?.use { input ->

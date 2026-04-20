@@ -373,11 +373,13 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             pushUndoState()
             val state = _uiState.value
-            val startMs = state.playbackPositionMs.coerceAtLeast(0L)
-            val maxEnd = if (state.videoDurationMs > 0L) state.videoDurationMs else (startMs + defaultDurationMs)
-            val endMs = (startMs + defaultDurationMs).coerceAtMost(maxEnd).let {
-                if (it <= startMs) startMs + 500L else it
-            }
+            val videoDurationMs = state.videoDurationMs
+            val maxStart = if (videoDurationMs > 0L) (videoDurationMs - 500L).coerceAtLeast(0L) else Long.MAX_VALUE
+            val startMs = state.playbackPositionMs.coerceIn(0L, maxStart)
+            val maxEnd = if (videoDurationMs > 0L) videoDurationMs else (startMs + defaultDurationMs)
+            val endMs = (startMs + defaultDurationMs)
+                .coerceAtMost(maxEnd)
+                .coerceAtLeast(startMs + 500L)
             addImageClip(projectId = projectId, imageUri = uri, startMs = startMs, endMs = endMs)
         }
     }

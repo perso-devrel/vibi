@@ -67,10 +67,10 @@ private fun OverlayImage(
 ) {
     val density = LocalDensity.current
 
-    var dragX by remember(clip.id) { mutableFloatStateOf(0f) }
-    var dragY by remember(clip.id) { mutableFloatStateOf(0f) }
-    var resizeDW by remember(clip.id) { mutableFloatStateOf(0f) }
-    var resizeDH by remember(clip.id) { mutableFloatStateOf(0f) }
+    var dragX by remember(clip.id, clip.xPct, clip.yPct) { mutableFloatStateOf(0f) }
+    var dragY by remember(clip.id, clip.xPct, clip.yPct) { mutableFloatStateOf(0f) }
+    var resizeDW by remember(clip.id, clip.widthPct, clip.heightPct) { mutableFloatStateOf(0f) }
+    var resizeDH by remember(clip.id, clip.widthPct, clip.heightPct) { mutableFloatStateOf(0f) }
 
     val displayXPct = (clip.xPct + dragX / containerW * 100f).coerceIn(0f, 100f)
     val displayYPct = (clip.yPct + dragY / containerH * 100f).coerceIn(0f, 100f)
