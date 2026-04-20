@@ -23,7 +23,7 @@ import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
         ImageClipEntity::class,
         SegmentEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -165,6 +165,13 @@ abstract class DubCastDatabase : RoomDatabase() {
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 MIGRATION_7_8_STATEMENTS.forEach { db.execSQL(it) }
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE segments ADD COLUMN volumeScale REAL NOT NULL DEFAULT 1.0")
+                db.execSQL("ALTER TABLE segments ADD COLUMN speedScale REAL NOT NULL DEFAULT 1.0")
             }
         }
     }

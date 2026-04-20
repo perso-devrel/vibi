@@ -26,12 +26,17 @@ import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
 import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.DuplicateSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
+import com.example.dubcast.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.RemoveSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
+import com.example.dubcast.domain.usecase.timeline.SplitSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateSegmentSpeedUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
+import com.example.dubcast.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -88,12 +93,20 @@ data class TimelineUiState(
     val showDubVolumeSlider: Boolean = false,
     val isTrimming: Boolean = false,
     val pendingTrimStartMs: Long = 0L,
-    val pendingTrimEndMs: Long = 0L
+    val pendingTrimEndMs: Long = 0L,
+    val isRangeSelecting: Boolean = false,
+    val rangeTargetSegmentId: String? = null,
+    val pendingRangeStartMs: Long = 0L,
+    val pendingRangeEndMs: Long = 0L,
+    val showRangeActionSheet: Boolean = false,
+    val pendingRangeVolume: Float = 1.0f,
+    val pendingRangeSpeed: Float = 1.0f
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
 }
 
 data class TimelineSnapshot(
+    val segments: List<Segment>,
     val dubClips: List<DubClip>,
     val subtitleClips: List<SubtitleClip>,
     val imageClips: List<ImageClip>
@@ -123,6 +136,11 @@ class TimelineViewModel @Inject constructor(
     private val removeSegment: RemoveSegmentUseCase,
     private val updateImageSegmentDuration: UpdateImageSegmentDurationUseCase,
     private val updateImageSegmentPosition: UpdateImageSegmentPositionUseCase,
+    private val splitSegment: SplitSegmentUseCase,
+    private val duplicateSegmentRange: DuplicateSegmentRangeUseCase,
+    private val removeSegmentRange: RemoveSegmentRangeUseCase,
+    private val updateSegmentVolume: UpdateSegmentVolumeUseCase,
+    private val updateSegmentSpeed: UpdateSegmentSpeedUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor
 ) : ViewModel() {
@@ -205,6 +223,8 @@ class TimelineViewModel @Inject constructor(
     }
 
     companion object {
+        const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
+
         private val DEFAULT_VOICES = listOf(
             Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),
             Voice("TX3LPaxmHKxFdv7VOQHJ", "Liam", null, "en"),
@@ -237,7 +257,8 @@ class TimelineViewModel @Inject constructor(
         val dubs = dubClipRepository.observeClips(projectId).first()
         val subs = subtitleClipRepository.observeClips(projectId).first()
         val images = imageClipRepository.observeClips(projectId).first()
-        undoRedoManager.pushState(TimelineSnapshot(dubs, subs, images))
+        val segs = segmentRepository.getByProjectId(projectId)
+        undoRedoManager.pushState(TimelineSnapshot(segs, dubs, subs, images))
         updateUndoRedoState()
     }
 
@@ -521,6 +542,10 @@ class TimelineViewModel @Inject constructor(
         for (clip in snapshot.imageClips) {
             imageClipRepository.addClip(clip)
         }
+        segmentRepository.deleteAllByProjectId(projectId)
+        for (seg in snapshot.segments) {
+            segmentRepository.addSegment(seg)
+        }
     }
 
     fun onVideoTrackTapped() {
@@ -693,6 +718,127 @@ class TimelineViewModel @Inject constructor(
         viewModelScope.launch {
             updateImageSegmentPosition(segmentId, xPct, yPct, widthPct, heightPct)
         }
+    }
+
+    fun onEnterRangeMode(segmentId: String) {
+        val seg = _uiState.value.segments.firstOrNull { it.id == segmentId } ?: return
+        if (seg.type != SegmentType.VIDEO) return
+        val trimStart = seg.trimStartMs
+        val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
+        val defaultEnd = (trimStart + 1000L).coerceAtMost(trimEnd)
+        _uiState.value = _uiState.value.copy(
+            isRangeSelecting = true,
+            rangeTargetSegmentId = seg.id,
+            selectedSegmentId = seg.id,
+            pendingRangeStartMs = trimStart,
+            pendingRangeEndMs = defaultEnd,
+            showRangeActionSheet = false,
+            pendingRangeVolume = seg.volumeScale,
+            pendingRangeSpeed = seg.speedScale,
+            isPlaying = false
+        )
+    }
+
+    fun onSetPendingRangeStart(localMs: Long) {
+        val state = _uiState.value
+        val seg = state.segments.firstOrNull { it.id == state.rangeTargetSegmentId } ?: return
+        val trimStart = seg.trimStartMs
+        val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
+        val upper = (state.pendingRangeEndMs - MIN_RANGE_MS).coerceAtLeast(trimStart)
+        val clamped = localMs.coerceIn(trimStart, upper.coerceAtMost(trimEnd))
+        _uiState.value = state.copy(pendingRangeStartMs = clamped)
+    }
+
+    fun onSetPendingRangeEnd(localMs: Long) {
+        val state = _uiState.value
+        val seg = state.segments.firstOrNull { it.id == state.rangeTargetSegmentId } ?: return
+        val trimStart = seg.trimStartMs
+        val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
+        val lower = (state.pendingRangeStartMs + MIN_RANGE_MS).coerceAtMost(trimEnd)
+        val clamped = localMs.coerceIn(lower.coerceAtLeast(trimStart), trimEnd)
+        _uiState.value = state.copy(pendingRangeEndMs = clamped)
+    }
+
+    fun onConfirmRangeSelection() {
+        _uiState.value = _uiState.value.copy(showRangeActionSheet = true)
+    }
+
+    fun onCancelRangeMode() {
+        _uiState.value = _uiState.value.copy(
+            isRangeSelecting = false,
+            rangeTargetSegmentId = null,
+            showRangeActionSheet = false
+        )
+    }
+
+    fun onUpdatePendingRangeVolume(value: Float) {
+        _uiState.value = _uiState.value.copy(pendingRangeVolume = value.coerceIn(0f, 2f))
+    }
+
+    fun onUpdatePendingRangeSpeed(value: Float) {
+        _uiState.value = _uiState.value.copy(pendingRangeSpeed = value.coerceIn(0.25f, 4f))
+    }
+
+    fun onDuplicateRange() {
+        val state = _uiState.value
+        val segmentId = state.rangeTargetSegmentId ?: return
+        val start = state.pendingRangeStartMs
+        val end = state.pendingRangeEndMs
+        if (end - start < MIN_RANGE_MS) return
+        viewModelScope.launch {
+            pushUndoState()
+            duplicateSegmentRange(segmentId, start, end)
+            resetRangeMode()
+        }
+    }
+
+    fun onDeleteRange() {
+        val state = _uiState.value
+        val segmentId = state.rangeTargetSegmentId ?: return
+        val start = state.pendingRangeStartMs
+        val end = state.pendingRangeEndMs
+        if (end - start < MIN_RANGE_MS) return
+        viewModelScope.launch {
+            pushUndoState()
+            removeSegmentRange(segmentId, start, end)
+            resetRangeMode()
+        }
+    }
+
+    fun onApplyRangeVolume(value: Float) {
+        val state = _uiState.value
+        val segmentId = state.rangeTargetSegmentId ?: return
+        val start = state.pendingRangeStartMs
+        val end = state.pendingRangeEndMs
+        if (end - start < MIN_RANGE_MS) return
+        viewModelScope.launch {
+            pushUndoState()
+            val result = splitSegment(segmentId, start, end)
+            updateSegmentVolume(result.middle.id, value)
+            resetRangeMode()
+        }
+    }
+
+    fun onApplyRangeSpeed(value: Float) {
+        val state = _uiState.value
+        val segmentId = state.rangeTargetSegmentId ?: return
+        val start = state.pendingRangeStartMs
+        val end = state.pendingRangeEndMs
+        if (end - start < MIN_RANGE_MS) return
+        viewModelScope.launch {
+            pushUndoState()
+            val result = splitSegment(segmentId, start, end)
+            updateSegmentSpeed(result.middle.id, value)
+            resetRangeMode()
+        }
+    }
+
+    private fun resetRangeMode() {
+        _uiState.value = _uiState.value.copy(
+            isRangeSelecting = false,
+            rangeTargetSegmentId = null,
+            showRangeActionSheet = false
+        )
     }
 
     fun segmentStartMs(segmentId: String): Long {
