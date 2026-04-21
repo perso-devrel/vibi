@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
+import com.example.dubcast.domain.repository.BgmClipRepository
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
@@ -77,7 +78,8 @@ class ExportViewModel @Inject constructor(
     private val subtitleClipRepository: SubtitleClipRepository,
     private val imageClipRepository: ImageClipRepository,
     private val segmentRepository: SegmentRepository,
-    private val textOverlayRepository: TextOverlayRepository
+    private val textOverlayRepository: TextOverlayRepository,
+    private val bgmClipRepository: BgmClipRepository
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle.get<String>("projectId") ?: ""
@@ -182,6 +184,7 @@ class ExportViewModel @Inject constructor(
 
                 val imageClips = imageClipRepository.observeClips(projectId).first()
                 val textOverlays = textOverlayRepository.observeOverlays(projectId).first()
+                val bgmClips = bgmClipRepository.observeClips(projectId).first()
 
                 val needsAss = subtitleClips.isNotEmpty() || textOverlays.isNotEmpty()
                 val assFilePath = if (needsAss) {
@@ -204,7 +207,9 @@ class ExportViewModel @Inject constructor(
                     frame = frame,
                     imageClips = imageClips,
                     textOverlays = textOverlays,
+                    bgmClips = bgmClips,
                     resolveImagePath = { uri -> copyContentUriToCache(uri, cacheDir, prefix = "image") },
+                    resolveAudioPath = { uri -> copyContentUriToCache(uri, cacheDir, prefix = "bgm") },
                     onProgress = { percent ->
                         _uiState.value = _uiState.value.copy(progressPercent = percent)
                     }

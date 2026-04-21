@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.MicExternalOn
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
@@ -138,6 +139,20 @@ fun TimelineScreen(
             viewModel.onAppendImageSegment(uri.toString())
         }
         appendMode = null
+    }
+
+    val bgmPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            viewModel.onPickBgmAudio(uri.toString())
+        }
     }
 
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
@@ -431,6 +446,12 @@ fun TimelineScreen(
                     IconButton(onClick = { viewModel.onShowTextOverlaySheetForNew() }) {
                         Icon(Icons.Default.TextFields, contentDescription = "Insert Text")
                     }
+                    IconButton(
+                        onClick = { bgmPickerLauncher.launch(arrayOf("audio/*")) },
+                        enabled = !state.isAddingBgm
+                    ) {
+                        Icon(Icons.Default.MusicNote, contentDescription = "Add Background Music")
+                    }
                     Spacer(modifier = Modifier.weight(1f))
                     IconButton(
                         onClick = { viewModel.onUndo() },
@@ -502,6 +523,40 @@ fun TimelineScreen(
                         Icon(Icons.Default.Delete, contentDescription = "Delete")
                     }
                     Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+
+            val selectedBgmClip = state.bgmClips.find { it.id == state.selectedBgmClipId }
+            if (selectedBgmClip != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { viewModel.onDeleteBgmClip(selectedBgmClip.id) }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete BGM")
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = "BGM · start ${formatTime(selectedBgmClip.startMs)}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Volume", modifier = Modifier.width(60.dp))
+                        Slider(
+                            value = selectedBgmClip.volumeScale,
+                            onValueChange = { viewModel.onUpdateBgmVolume(selectedBgmClip.id, it) },
+                            valueRange = 0f..2f,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "${(selectedBgmClip.volumeScale * 100).toInt()}%",
+                            modifier = Modifier.width(48.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
 
@@ -604,6 +659,9 @@ fun TimelineScreen(
                 selectedTextOverlayId = state.selectedTextOverlayId,
                 onTextOverlaySelected = { viewModel.onSelectTextOverlay(it) },
                 onTextOverlayLongPressed = { viewModel.onDuplicateTextOverlay(it) },
+                bgmClips = state.bgmClips,
+                selectedBgmClipId = state.selectedBgmClipId,
+                onBgmClipSelected = { viewModel.onSelectBgmClip(it) },
                 onAppendRequested = { viewModel.onShowAppendSheet() },
                 onSeek = { posMs ->
                     val clamped = posMs.coerceIn(0L, state.videoDurationMs)

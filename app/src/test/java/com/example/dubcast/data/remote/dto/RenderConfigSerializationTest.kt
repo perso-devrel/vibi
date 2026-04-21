@@ -117,6 +117,31 @@ class RenderConfigSerializationTest {
     }
 
     @Test
+    fun `config with bgm clips roundtrips`() {
+        val config = RenderConfig(
+            dubClips = emptyList(),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 10_000L,
+                    width = 1920,
+                    height = 1080
+                )
+            ),
+            bgmClips = listOf(
+                RenderBgmClip(audioFileKey = "bgm_0", startMs = 1000L, volume = 0.5f),
+                RenderBgmClip(audioFileKey = "bgm_1", startMs = 5000L, volume = 1.2f)
+            )
+        )
+        val json = adapter.toJson(config)
+        assertTrue(json.contains("\"bgmClips\""))
+        assertTrue(json.contains("\"bgm_0\""))
+        assertEquals(config, adapter.fromJson(json)!!)
+    }
+
+    @Test
     fun `config without frame still roundtrips`() {
         val config = RenderConfig(
             dubClips = emptyList(),

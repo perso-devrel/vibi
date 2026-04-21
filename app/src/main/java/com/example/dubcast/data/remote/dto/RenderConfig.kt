@@ -7,7 +7,15 @@ data class RenderConfig(
     val dubClips: List<RenderDubClip>,
     val segments: List<RenderSegment>,
     val imageClips: List<RenderImageClip> = emptyList(),
-    val frame: RenderFrame? = null
+    val frame: RenderFrame? = null,
+    val bgmClips: List<RenderBgmClip> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class RenderBgmClip(
+    val audioFileKey: String,
+    val startMs: Long,
+    val volume: Float = 1.0f
 )
 
 @JsonClass(generateAdapter = true)

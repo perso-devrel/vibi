@@ -51,6 +51,7 @@ interface BffApiService {
         @Part subtitles: MultipartBody.Part?,
         @Part imageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part segmentImageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
+        @Part bgmFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part("config") config: RequestBody
     ): RenderJobResponse
 
