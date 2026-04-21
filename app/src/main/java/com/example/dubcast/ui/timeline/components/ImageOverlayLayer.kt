@@ -102,11 +102,14 @@ private fun OverlayImage(
             .pointerInput(clip.id, containerW, containerH) {
                 detectDragGestures(
                     onDragEnd = {
+                        // Don't reset dragX/Y here — that would snap the image
+                        // back to the old clip.xPct for one frame. The
+                        // remember(clip.id, clip.xPct, clip.yPct) above auto
+                        // -resets the deltas as soon as the new clip.xPct
+                        // flows back through the repository.
                         val finalX = (clip.xPct + dragX / containerW * 100f).coerceIn(0f, 100f)
                         val finalY = (clip.yPct + dragY / containerH * 100f).coerceIn(0f, 100f)
                         onPositionChanged(finalX, finalY, clip.widthPct, clip.heightPct)
-                        dragX = 0f
-                        dragY = 0f
                     },
                     onDragCancel = {
                         dragX = 0f

@@ -3,6 +3,7 @@ package com.example.dubcast.ui.timeline.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -52,6 +53,8 @@ import com.example.dubcast.ui.theme.TimeRulerGray
 
 private const val PX_PER_SECOND = 50f
 private val VIDEO_TRACK_HEIGHT = 28.dp
+/** Standard height for one lane row in any overlay/dub/subtitle/bgm track. */
+internal val TRACK_LANE_HEIGHT = 28.dp
 private val TRIM_HANDLE_WIDTH = 14.dp
 private val TRIM_HANDLE_HIT_WIDTH = 32.dp
 private val APPEND_BUTTON_SIZE = 28.dp
@@ -83,14 +86,27 @@ fun Timeline(
     onDubClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipResized: (clipId: String, newEndMs: Long) -> Unit,
+    onImageClipLaneChanged: (clipId: String, delta: Int) -> Unit = { _, _ -> },
     onImageSegmentResized: (segmentId: String, newDurationMs: Long) -> Unit,
     textOverlays: List<com.example.dubcast.domain.model.TextOverlay> = emptyList(),
     selectedTextOverlayId: String? = null,
     onTextOverlaySelected: (String?) -> Unit = {},
     onTextOverlayLongPressed: (String) -> Unit = {},
+    onTextOverlayResized: (String, Long) -> Unit = { _, _ -> },
+    onTextOverlayMoved: (String, Long) -> Unit = { _, _ -> },
+    onTextOverlayLaneChanged: (String, Int) -> Unit = { _, _ -> },
     bgmClips: List<com.example.dubcast.domain.model.BgmClip> = emptyList(),
     selectedBgmClipId: String? = null,
     onBgmClipSelected: (String?) -> Unit = {},
+    isRangeSelecting: Boolean = false,
+    rangeTargetSegmentId: String? = null,
+    rangeTargetSegmentStartMs: Long = 0L,
+    rangeTargetTrimStartMs: Long = 0L,
+    rangeTargetTrimEndMs: Long = 0L,
+    pendingRangeStartMs: Long = 0L,
+    pendingRangeEndMs: Long = 0L,
+    onRangeStartChanged: (Long) -> Unit = {},
+    onRangeEndChanged: (Long) -> Unit = {},
     onAppendRequested: () -> Unit,
     onSeek: (Long) -> Unit,
     onTrimStartChanged: (Long) -> Unit,
@@ -150,6 +166,8 @@ fun Timeline(
                             onTrackTappedForSeek = { globalMs ->
                                 if (isTrimming) {
                                     onSeek(globalMs.coerceIn(trimStartMs, effectiveTrimEnd))
+                                } else {
+                                    onSeek(globalMs.coerceAtLeast(0L))
                                 }
                             }
                         )
@@ -189,6 +207,56 @@ fun Timeline(
                                 onDrag = { newMs -> onTrimEndChanged(newMs) }
                             )
                         }
+
+                        // Range edit handles — drag on the timeline to set the
+                        // start/end of the operation range (volume/speed/duplicate/
+                        // delete). Local segment ms are converted to global so
+                        // the handles share the trim handle visual language.
+                        if (isRangeSelecting && rangeTargetSegmentId != null) {
+                            val rangeStartGlobal = rangeTargetSegmentStartMs +
+                                (pendingRangeStartMs - rangeTargetTrimStartMs).coerceAtLeast(0L)
+                            val rangeEndGlobal = rangeTargetSegmentStartMs +
+                                (pendingRangeEndMs - rangeTargetTrimStartMs).coerceAtLeast(0L)
+                            // Faint green wash between the two handles so the
+                            // entire selected interval is visually obvious,
+                            // not just the bounding handles.
+                            Canvas(modifier = Modifier.matchParentSize()) {
+                                val pxPerMs = size.width / totalDurationMs.toFloat()
+                                val sx = rangeStartGlobal * pxPerMs
+                                val ex = rangeEndGlobal * pxPerMs
+                                if (ex > sx) {
+                                    drawRect(
+                                        color = Color(0xFF34C759).copy(alpha = 0.18f),
+                                        topLeft = Offset(sx, 0f),
+                                        size = Size(ex - sx, size.height)
+                                    )
+                                }
+                            }
+                            RangeHandle(
+                                positionMs = rangeStartGlobal,
+                                totalDurationMs = totalDurationMs,
+                                totalWidthPx = totalWidthPx,
+                                isStart = true,
+                                onDrag = { newGlobal ->
+                                    val local = (newGlobal - rangeTargetSegmentStartMs +
+                                        rangeTargetTrimStartMs)
+                                        .coerceIn(rangeTargetTrimStartMs, rangeTargetTrimEndMs)
+                                    onRangeStartChanged(local)
+                                }
+                            )
+                            RangeHandle(
+                                positionMs = rangeEndGlobal,
+                                totalDurationMs = totalDurationMs,
+                                totalWidthPx = totalWidthPx,
+                                isStart = false,
+                                onDrag = { newGlobal ->
+                                    val local = (newGlobal - rangeTargetSegmentStartMs +
+                                        rangeTargetTrimStartMs)
+                                        .coerceIn(rangeTargetTrimStartMs, rangeTargetTrimEndMs)
+                                    onRangeEndChanged(local)
+                                }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(6.dp))
@@ -213,97 +281,83 @@ fun Timeline(
                     }
                 }
 
-                // Dub track
-                Box(
-                    modifier = Modifier
-                        .width(totalWidthDp)
-                        .height(28.dp)
-                        .padding(vertical = 1.dp)
-                ) {
-                    dubClips.forEach { clip ->
-                        DubClipItem(
-                            clip = clip,
-                            videoDurationMs = totalDurationMs,
-                            isSelected = clip.id == selectedDubClipId,
-                            onClick = { onDubClipSelected(clip.id) },
-                            onMoved = { newStartMs -> onDubClipMoved(clip.id, newStartMs) },
-                            totalWidthDp = totalWidthDp
-                        )
+                // Dub track — only render when there's at least one clip so
+                // the timeline doesn't reserve empty rows under the video.
+                if (dubClips.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .width(totalWidthDp)
+                            .height(TRACK_LANE_HEIGHT)
+                            .padding(vertical = 1.dp)
+                    ) {
+                        dubClips.forEach { clip ->
+                            DubClipItem(
+                                clip = clip,
+                                videoDurationMs = totalDurationMs,
+                                isSelected = clip.id == selectedDubClipId,
+                                onClick = { onDubClipSelected(clip.id) },
+                                onMoved = { newStartMs -> onDubClipMoved(clip.id, newStartMs) },
+                                totalWidthDp = totalWidthDp
+                            )
+                        }
                     }
                 }
 
                 // Subtitle track
-                Box(
-                    modifier = Modifier
-                        .width(totalWidthDp)
-                        .height(28.dp)
-                        .padding(vertical = 1.dp)
-                ) {
-                    subtitleClips.forEach { clip ->
-                        SubtitleClipItem(
-                            clip = clip,
-                            videoDurationMs = totalDurationMs,
-                            isSelected = clip.id == selectedSubtitleClipId,
-                            onClick = { onSubtitleClipSelected(clip.id) },
-                            totalWidthDp = totalWidthDp
-                        )
+                if (subtitleClips.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .width(totalWidthDp)
+                            .height(TRACK_LANE_HEIGHT)
+                            .padding(vertical = 1.dp)
+                    ) {
+                        subtitleClips.forEach { clip ->
+                            SubtitleClipItem(
+                                clip = clip,
+                                videoDurationMs = totalDurationMs,
+                                isSelected = clip.id == selectedSubtitleClipId,
+                                onClick = { onSubtitleClipSelected(clip.id) },
+                                totalWidthDp = totalWidthDp
+                            )
+                        }
                     }
                 }
 
-                // Sticker image track
-                Box(
-                    modifier = Modifier
-                        .width(totalWidthDp)
-                        .height(28.dp)
-                        .padding(vertical = 1.dp)
-                ) {
-                    imageClips.forEach { clip ->
-                        ImageClipItem(
-                            clip = clip,
-                            videoDurationMs = totalDurationMs,
-                            isSelected = clip.id == selectedImageClipId,
-                            onClick = { onImageClipSelected(clip.id) },
-                            onMoved = { newStartMs -> onImageClipMoved(clip.id, newStartMs) },
-                            onResized = { newEndMs -> onImageClipResized(clip.id, newEndMs) },
-                            totalWidthDp = totalWidthDp
-                        )
-                    }
-                }
-
-                // Text overlay track — long-press to duplicate
-                Box(
-                    modifier = Modifier
-                        .width(totalWidthDp)
-                        .height(28.dp)
-                        .padding(vertical = 1.dp)
-                ) {
-                    textOverlays.forEach { overlay ->
-                        TextOverlayTrackItem(
-                            overlay = overlay,
-                            videoDurationMs = totalDurationMs,
-                            isSelected = overlay.id == selectedTextOverlayId,
-                            onClick = { onTextOverlaySelected(overlay.id) },
-                            onLongPress = { onTextOverlayLongPressed(overlay.id) },
-                            totalWidthDp = totalWidthDp
-                        )
-                    }
-                }
+                OverlayTrackRow(
+                    imageClips = imageClips,
+                    textOverlays = textOverlays,
+                    totalDurationMs = totalDurationMs,
+                    totalWidthDp = totalWidthDp,
+                    selectedImageClipId = selectedImageClipId,
+                    selectedTextOverlayId = selectedTextOverlayId,
+                    onImageClipSelected = onImageClipSelected,
+                    onImageClipMoved = onImageClipMoved,
+                    onImageClipResized = onImageClipResized,
+                    onImageClipLaneChanged = onImageClipLaneChanged,
+                    onTextOverlaySelected = onTextOverlaySelected,
+                    onTextOverlayLongPressed = onTextOverlayLongPressed,
+                    onTextOverlayResized = onTextOverlayResized,
+                    onTextOverlayMoved = onTextOverlayMoved,
+                    onTextOverlayLaneChanged = onTextOverlayLaneChanged
+                )
 
                 // BGM track
-                Box(
-                    modifier = Modifier
-                        .width(totalWidthDp)
-                        .height(28.dp)
-                        .padding(vertical = 1.dp)
-                ) {
-                    bgmClips.forEach { clip ->
-                        BgmTrackItem(
-                            clip = clip,
-                            videoDurationMs = totalDurationMs,
-                            isSelected = clip.id == selectedBgmClipId,
-                            onClick = { onBgmClipSelected(clip.id) },
-                            totalWidthDp = totalWidthDp
-                        )
+                if (bgmClips.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .width(totalWidthDp)
+                            .height(TRACK_LANE_HEIGHT)
+                            .padding(vertical = 1.dp)
+                    ) {
+                        bgmClips.forEach { clip ->
+                            BgmTrackItem(
+                                clip = clip,
+                                videoDurationMs = totalDurationMs,
+                                isSelected = clip.id == selectedBgmClipId,
+                                onClick = { onBgmClipSelected(clip.id) },
+                                totalWidthDp = totalWidthDp
+                            )
+                        }
                     }
                 }
             }
@@ -311,22 +365,29 @@ fun Timeline(
             // Playhead
             val playheadXPx = playbackPositionMs.toFloat() / totalDurationMs * totalWidthPx
             val hitAreaWidth = 32.dp
-            val hitAreaWidthPx = with(density) { hitAreaWidth.toPx() }
             val playheadOffsetDp = with(density) { playheadXPx.toDp() } - hitAreaWidth / 2
+
+            // Capture latest props so the drag lambda doesn't close over stale
+            // values during fast drags (otherwise the playhead jumps).
+            val latestPosition = androidx.compose.runtime.rememberUpdatedState(playbackPositionMs)
+            val latestTotalDuration = androidx.compose.runtime.rememberUpdatedState(totalDurationMs)
+            val latestTotalWidthPx = androidx.compose.runtime.rememberUpdatedState(totalWidthPx)
+            val latestOnSeek = androidx.compose.runtime.rememberUpdatedState(onSeek)
 
             Box(
                 modifier = Modifier
                     .offset(x = playheadOffsetDp)
                     .width(hitAreaWidth)
                     .fillMaxHeight()
-                    .pointerInput(totalDurationMs, totalWidthPx) {
-                        detectHorizontalDragGestures { change, _ ->
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures { change, dragAmount ->
                             change.consume()
-                            val newPx = playheadXPx + (change.position.x - hitAreaWidthPx / 2f)
-                            val newMs = (newPx / totalWidthPx * totalDurationMs)
-                                .toLong()
-                                .coerceIn(0L, totalDurationMs)
-                            onSeek(newMs)
+                            val width = latestTotalWidthPx.value
+                            val total = latestTotalDuration.value
+                            if (width <= 0f || total <= 0L) return@detectHorizontalDragGestures
+                            val deltaMs = (dragAmount / width * total).toLong()
+                            val next = (latestPosition.value + deltaMs).coerceIn(0L, total)
+                            latestOnSeek.value(next)
                         }
                     }
             ) {
@@ -369,16 +430,28 @@ private fun RenderSegments(
         val leftDp = with(density) {
             (segStart.toFloat() / totalDurationMs * totalWidthPx).toDp()
         }
+        // No width overlap: a previous +1px hack let the next segment cover
+        // the previous segment's resize handle, blocking image resize taps.
         val widthDp = with(density) {
             (segDuration.toFloat() / totalDurationMs * totalWidthPx).toDp()
         }
-        val color = when (segment.type) {
+        val baseColor = when (segment.type) {
             SegmentType.VIDEO -> VideoSegmentColor
             SegmentType.IMAGE -> ImageSegmentColor
         }
-        val borderColor = if (segment.id == selectedSegmentId) {
-            MaterialTheme.colorScheme.primary
-        } else Color.Transparent
+        // Visual indicator: tint VIDEO segments that have non-default speed
+        // or volume so the user can immediately tell which pieces have been
+        // modified after applying a range edit.
+        val color = if (segment.type == SegmentType.VIDEO) {
+            val speedAccent = segment.speedScale != 1f
+            val volumeAccent = segment.volumeScale != 1f
+            when {
+                speedAccent && volumeAccent -> Color(0xFF8E44AD) // purple
+                speedAccent -> Color(0xFF1976D2)                 // blue (speed)
+                volumeAccent -> Color(0xFF2E7D32)                // green (volume)
+                else -> baseColor
+            }
+        } else baseColor
 
         Box(
             modifier = Modifier
@@ -386,47 +459,24 @@ private fun RenderSegments(
                 .width(widthDp)
                 .fillMaxHeight()
                 .background(color)
-                .clip(RoundedCornerShape(4.dp))
                 .pointerInput(segment.id, isTrimming) {
                     detectTapGestures { tapOffset ->
-                        if (isTrimming) {
-                            val pxPerMs = size.width.toFloat() / segDuration.toFloat()
-                            val localMs = (tapOffset.x / pxPerMs).toLong()
-                            onTrackTappedForSeek(segStart + localMs)
-                        } else {
+                        val pxPerMs = size.width.toFloat() / segDuration.toFloat()
+                        val localMs = (tapOffset.x / pxPerMs).toLong().coerceAtLeast(0L)
+                        // Always seek the playhead to the tap location so range
+                        // mode opens its default 1s window starting where the
+                        // user tapped, not at the segment's leftmost edge.
+                        onTrackTappedForSeek(segStart + localMs)
+                        if (!isTrimming) {
                             onSegmentSelected(segment.id)
                         }
                     }
                 }
         ) {
-            if (borderColor != Color.Transparent) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .padding(1.dp)
-                        .background(Color.Transparent)
-                ) {
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        drawRect(
-                            color = borderColor,
-                            topLeft = Offset.Zero,
-                            size = Size(size.width, size.height),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)
-                        )
-                    }
-                }
-            }
-            Text(
-                text = when (segment.type) {
-                    SegmentType.VIDEO -> "Video"
-                    SegmentType.IMAGE -> "Photo"
-                },
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(4.dp)
-            )
+            // Inner labels and per-segment selection borders are intentionally
+            // omitted so a multi-segment timeline reads as a single continuous
+            // strip. Selection state is conveyed through the inline edit panel
+            // and the green range handles instead.
 
             if (segment.type == SegmentType.IMAGE && !isTrimming) {
                 ImageSegmentResizeHandle(
@@ -496,25 +546,69 @@ private fun TrimHandle(
     totalWidthPx: Float,
     isStart: Boolean,
     onDrag: (Long) -> Unit
+) = DraggableHandle(
+    positionMs = positionMs,
+    totalDurationMs = totalDurationMs,
+    totalWidthPx = totalWidthPx,
+    color = TrimHandleColor,
+    onDrag = onDrag
+)
+
+@Composable
+private fun RangeHandle(
+    positionMs: Long,
+    totalDurationMs: Long,
+    totalWidthPx: Float,
+    isStart: Boolean,
+    onDrag: (Long) -> Unit
+) = DraggableHandle(
+    positionMs = positionMs,
+    totalDurationMs = totalDurationMs,
+    totalWidthPx = totalWidthPx,
+    color = RangeHandleColor,
+    onDrag = onDrag
+)
+
+private val TrimHandleColor = Color(0xFFE8772E)
+private val RangeHandleColor = Color(0xFF34C759)
+
+/**
+ * Shared draggable timeline handle (used by trim + range UIs). Uses
+ * `rememberUpdatedState` + accumulated `dragAmount` so the lambda doesn't
+ * close over stale props mid-drag (which made fast drags jumpy in the older
+ * "absolute position from change.position" implementation).
+ */
+@Composable
+private fun DraggableHandle(
+    positionMs: Long,
+    totalDurationMs: Long,
+    totalWidthPx: Float,
+    color: Color,
+    onDrag: (Long) -> Unit
 ) {
     val density = LocalDensity.current
     val handleXPx = positionMs.toFloat() / totalDurationMs * totalWidthPx
     val handleOffsetDp = with(density) { handleXPx.toDp() } - TRIM_HANDLE_HIT_WIDTH / 2
-    val hitWidthPx = with(density) { TRIM_HANDLE_HIT_WIDTH.toPx() }
+
+    val latestPosition = androidx.compose.runtime.rememberUpdatedState(positionMs)
+    val latestTotalDuration = androidx.compose.runtime.rememberUpdatedState(totalDurationMs)
+    val latestTotalWidthPx = androidx.compose.runtime.rememberUpdatedState(totalWidthPx)
+    val latestOnDrag = androidx.compose.runtime.rememberUpdatedState(onDrag)
 
     Box(
         modifier = Modifier
             .offset(x = handleOffsetDp)
             .width(TRIM_HANDLE_HIT_WIDTH)
             .fillMaxHeight()
-            .pointerInput(totalDurationMs, totalWidthPx) {
-                detectHorizontalDragGestures { change, _ ->
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { change, dragAmount ->
                     change.consume()
-                    val newPx = handleXPx + (change.position.x - hitWidthPx / 2f)
-                    val newMs = (newPx / totalWidthPx * totalDurationMs)
-                        .toLong()
-                        .coerceIn(0L, totalDurationMs)
-                    onDrag(newMs)
+                    val width = latestTotalWidthPx.value
+                    val total = latestTotalDuration.value
+                    if (width <= 0f || total <= 0L) return@detectHorizontalDragGestures
+                    val deltaMs = (dragAmount / width * total).toLong()
+                    val next = (latestPosition.value + deltaMs).coerceIn(0L, total)
+                    latestOnDrag.value(next)
                 }
             },
         contentAlignment = Alignment.Center
@@ -524,7 +618,7 @@ private fun TrimHandle(
                 .width(TRIM_HANDLE_WIDTH)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(3.dp))
-                .background(Color(0xFFE8772E))
+                .background(color)
         )
     }
 }
@@ -579,6 +673,9 @@ private fun TextOverlayTrackItem(
     isSelected: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
+    onResized: (newEndMs: Long) -> Unit,
+    onMoved: (newStartMs: Long) -> Unit = {},
+    onLaneChanged: (delta: Int) -> Unit = {},
     totalWidthDp: Dp
 ) {
     if (videoDurationMs <= 0L) return
@@ -590,10 +687,13 @@ private fun TextOverlayTrackItem(
     val widthDp = with(density) { (durationMs * pxPerMs).toDp() }
     val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
 
+    var resizeDeltaPx by remember(overlay.id, overlay.endMs) { mutableFloatStateOf(0f) }
+    var moveDeltaPx by remember(overlay.id, overlay.startMs) { mutableFloatStateOf(0f) }
+
     Box(
         modifier = Modifier
-            .offset(x = offsetXDp)
-            .width(widthDp.coerceAtLeast(20.dp))
+            .offset(x = offsetXDp + with(density) { moveDeltaPx.toDp() })
+            .width((widthDp + with(density) { resizeDeltaPx.toDp() }).coerceAtLeast(20.dp))
             .fillMaxHeight()
             .clip(RoundedCornerShape(4.dp))
             .background(TextOverlayTrackColor.copy(alpha = 0.85f))
@@ -604,6 +704,31 @@ private fun TextOverlayTrackItem(
                     onLongPress = { onLongPress() }
                 )
             }
+            .pointerInput(overlay.id, overlay.startMs, pxPerMs) {
+                // 2D drag: horizontal -> startMs, vertical -> lane change.
+                val laneRowHeightPx = TRACK_LANE_HEIGHT.toPx()
+                var verticalAcc = 0f
+                detectDragGestures(
+                    onDragStart = { verticalAcc = 0f },
+                    onDragEnd = {
+                        if (pxPerMs > 0f) {
+                            val deltaMs = (moveDeltaPx / pxPerMs).toLong()
+                            val target = (overlay.startMs + deltaMs).coerceAtLeast(0L)
+                            if (target != overlay.startMs) onMoved(target)
+                        }
+                        val laneDelta = (verticalAcc / laneRowHeightPx).toInt()
+                        if (laneDelta != 0) onLaneChanged(laneDelta)
+                    },
+                    onDragCancel = {
+                        moveDeltaPx = 0f
+                        verticalAcc = 0f
+                    }
+                ) { change, dragAmount ->
+                    change.consume()
+                    moveDeltaPx += dragAmount.x
+                    verticalAcc += dragAmount.y
+                }
+            }
     ) {
         Text(
             text = overlay.text,
@@ -613,6 +738,114 @@ private fun TextOverlayTrackItem(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 4.dp)
         )
+
+        if (isSelected) {
+            // Right-edge drag handle: matches the photo segment resize affordance
+            // so users can stretch text overlay duration directly on the timeline.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(IMAGE_RESIZE_HIT_WIDTH)
+                    .fillMaxHeight()
+                    .pointerInput(overlay.id, overlay.endMs, pxPerMs) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (pxPerMs > 0f) {
+                                    val deltaMs = (resizeDeltaPx / pxPerMs).toLong()
+                                    val target = (overlay.endMs + deltaMs)
+                                        .coerceAtLeast(overlay.startMs + 100L)
+                                    onResized(target)
+                                }
+                                resizeDeltaPx = 0f
+                            },
+                            onDragCancel = { resizeDeltaPx = 0f }
+                        ) { _, dragAmount ->
+                            resizeDeltaPx += dragAmount
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(IMAGE_RESIZE_HANDLE_WIDTH)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(ImageResizeHandleColor)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Combined image+text overlay track row. Both element types share the lane
+ * space so they can sit side-by-side or stacked freely on the same row.
+ */
+@Composable
+private fun OverlayTrackRow(
+    imageClips: List<ImageClip>,
+    textOverlays: List<com.example.dubcast.domain.model.TextOverlay>,
+    totalDurationMs: Long,
+    totalWidthDp: Dp,
+    selectedImageClipId: String?,
+    selectedTextOverlayId: String?,
+    onImageClipSelected: (String?) -> Unit,
+    onImageClipMoved: (String, Long) -> Unit,
+    onImageClipResized: (String, Long) -> Unit,
+    onImageClipLaneChanged: (String, Int) -> Unit,
+    onTextOverlaySelected: (String?) -> Unit,
+    onTextOverlayLongPressed: (String) -> Unit,
+    onTextOverlayResized: (String, Long) -> Unit,
+    onTextOverlayMoved: (String, Long) -> Unit,
+    onTextOverlayLaneChanged: (String, Int) -> Unit
+) {
+    if (imageClips.isEmpty() && textOverlays.isEmpty()) return
+    val maxImageLane = imageClips.maxOfOrNull { it.lane } ?: -1
+    val maxTextLane = textOverlays.maxOfOrNull { it.lane } ?: -1
+    val laneCount = (maxOf(maxImageLane, maxTextLane) + 1).coerceAtLeast(1)
+    Box(
+        modifier = Modifier
+            .width(totalWidthDp)
+            .height(TRACK_LANE_HEIGHT * laneCount)
+            .padding(vertical = 1.dp)
+    ) {
+        imageClips.forEach { clip ->
+            Box(modifier = Modifier
+                .offset(y = TRACK_LANE_HEIGHT * clip.lane)
+                .height(TRACK_LANE_HEIGHT)
+                .width(totalWidthDp)
+            ) {
+                ImageClipItem(
+                    clip = clip,
+                    videoDurationMs = totalDurationMs,
+                    isSelected = clip.id == selectedImageClipId,
+                    onClick = { onImageClipSelected(clip.id) },
+                    onMoved = { newStartMs -> onImageClipMoved(clip.id, newStartMs) },
+                    onResized = { newEndMs -> onImageClipResized(clip.id, newEndMs) },
+                    onLaneChanged = { delta -> onImageClipLaneChanged(clip.id, delta) },
+                    totalWidthDp = totalWidthDp
+                )
+            }
+        }
+        textOverlays.forEach { overlay ->
+            Box(modifier = Modifier
+                .offset(y = TRACK_LANE_HEIGHT * overlay.lane)
+                .height(TRACK_LANE_HEIGHT)
+                .width(totalWidthDp)
+            ) {
+                TextOverlayTrackItem(
+                    overlay = overlay,
+                    videoDurationMs = totalDurationMs,
+                    isSelected = overlay.id == selectedTextOverlayId,
+                    onClick = { onTextOverlaySelected(overlay.id) },
+                    onLongPress = { onTextOverlayLongPressed(overlay.id) },
+                    onResized = { newEndMs -> onTextOverlayResized(overlay.id, newEndMs) },
+                    onMoved = { newStartMs -> onTextOverlayMoved(overlay.id, newStartMs) },
+                    onLaneChanged = { delta -> onTextOverlayLaneChanged(overlay.id, delta) },
+                    totalWidthDp = totalWidthDp
+                )
+            }
+        }
     }
 }
 

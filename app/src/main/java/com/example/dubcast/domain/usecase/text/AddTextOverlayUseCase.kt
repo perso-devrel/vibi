@@ -3,6 +3,8 @@ package com.example.dubcast.domain.usecase.text
 import com.example.dubcast.domain.model.TextOverlay
 import com.example.dubcast.domain.repository.TextOverlayRepository
 import com.example.dubcast.domain.util.isValidHexColor
+import com.example.dubcast.domain.util.pickLowestFreeLane
+import kotlinx.coroutines.flow.first
 import java.util.UUID
 import javax.inject.Inject
 
@@ -18,7 +20,8 @@ class AddTextOverlayUseCase @Inject constructor(
         fontSizeSp: Float = TextOverlay.DEFAULT_FONT_SIZE_SP,
         colorHex: String = TextOverlay.DEFAULT_COLOR_HEX,
         xPct: Float = 50f,
-        yPct: Float = 50f
+        yPct: Float = 50f,
+        lane: Int? = null
     ): TextOverlay {
         require(text.isNotBlank()) { "text must not be blank" }
         require(endMs > startMs) { "endMs ($endMs) must be greater than startMs ($startMs)" }
@@ -31,6 +34,14 @@ class AddTextOverlayUseCase @Inject constructor(
         require(isValidHexColor(colorHex)) {
             "colorHex must be #RRGGBB or #AARRGGBB: $colorHex"
         }
+        val effectiveLane = lane ?: pickLowestFreeLane(
+            existing = textOverlayRepository.observeOverlays(projectId).first(),
+            startMs = startMs,
+            endMs = endMs,
+            laneOf = { it.lane },
+            startOf = { it.startMs },
+            endOf = { it.endMs }
+        )
         val overlay = TextOverlay(
             id = UUID.randomUUID().toString(),
             projectId = projectId,
@@ -41,7 +52,8 @@ class AddTextOverlayUseCase @Inject constructor(
             startMs = startMs,
             endMs = endMs,
             xPct = xPct.coerceIn(0f, 100f),
-            yPct = yPct.coerceIn(0f, 100f)
+            yPct = yPct.coerceIn(0f, 100f),
+            lane = effectiveLane
         )
         textOverlayRepository.addOverlay(overlay)
         return overlay

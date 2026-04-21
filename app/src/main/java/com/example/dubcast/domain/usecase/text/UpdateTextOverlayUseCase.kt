@@ -17,7 +17,8 @@ class UpdateTextOverlayUseCase @Inject constructor(
         startMs: Long? = null,
         endMs: Long? = null,
         xPct: Float? = null,
-        yPct: Float? = null
+        yPct: Float? = null,
+        lane: Int? = null
     ): TextOverlay {
         val current = textOverlayRepository.getOverlay(overlayId)
             ?: throw IllegalArgumentException("Text overlay not found: $overlayId")
@@ -48,7 +49,8 @@ class UpdateTextOverlayUseCase @Inject constructor(
             startMs = newStart,
             endMs = newEnd,
             xPct = xPct?.coerceIn(0f, 100f) ?: current.xPct,
-            yPct = yPct?.coerceIn(0f, 100f) ?: current.yPct
+            yPct = yPct?.coerceIn(0f, 100f) ?: current.yPct,
+            lane = lane?.coerceAtLeast(0) ?: current.lane
         )
         textOverlayRepository.updateOverlay(updated)
         return updated

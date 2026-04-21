@@ -55,6 +55,8 @@ import com.example.dubcast.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -264,8 +266,11 @@ class TimelineViewModel @Inject constructor(
                 val first = segments.firstOrNull()
                 val total = segments.sumOf { it.effectiveDurationMs }
                 val currentSelectedId = _uiState.value.selectedSegmentId
+                // Only keep an existing selection if it still references a real
+                // segment. No fallback to `first?.id` — the screen should open
+                // with nothing selected so the inline edit panel stays hidden
+                // until the user actually taps a segment.
                 val selectedId = currentSelectedId?.takeIf { id -> segments.any { it.id == id } }
-                    ?: first?.id
                 val selected = segments.firstOrNull { it.id == selectedId }
                 val (globalTrimStart, globalTrimEnd) = selectedSegmentGlobalTrim(segments, selected)
                 _uiState.value = _uiState.value.copy(
@@ -337,14 +342,27 @@ class TimelineViewModel @Inject constructor(
     }
 
     private suspend fun pushUndoState() {
-        // Read directly from DB to avoid race with async Flow emission
-        val dubs = dubClipRepository.observeClips(projectId).first()
-        val subs = subtitleClipRepository.observeClips(projectId).first()
-        val images = imageClipRepository.observeClips(projectId).first()
-        val segs = segmentRepository.getByProjectId(projectId)
-        val texts = textOverlayRepository.observeOverlays(projectId).first()
-        val bgms = bgmClipRepository.observeClips(projectId).first()
-        val project = editProjectRepository.getProject(projectId)
+        // Read every repository concurrently — sequential .first() calls
+        // serialised on dispatcher hops added measurable latency on every
+        // mutating handler (which is hot path during pinch/drag).
+        val (segs, dubs, subs, images, texts, bgms, project) = coroutineScope {
+            val segsAsync = async { segmentRepository.getByProjectId(projectId) }
+            val dubsAsync = async { dubClipRepository.observeClips(projectId).first() }
+            val subsAsync = async { subtitleClipRepository.observeClips(projectId).first() }
+            val imgsAsync = async { imageClipRepository.observeClips(projectId).first() }
+            val textsAsync = async { textOverlayRepository.observeOverlays(projectId).first() }
+            val bgmsAsync = async { bgmClipRepository.observeClips(projectId).first() }
+            val projectAsync = async { editProjectRepository.getProject(projectId) }
+            UndoSnapshotInputs(
+                segs = segsAsync.await(),
+                dubs = dubsAsync.await(),
+                subs = subsAsync.await(),
+                images = imgsAsync.await(),
+                texts = textsAsync.await(),
+                bgms = bgmsAsync.await(),
+                project = projectAsync.await()
+            )
+        }
         undoRedoManager.pushState(
             TimelineSnapshot(
                 segments = segs,
@@ -361,6 +379,17 @@ class TimelineViewModel @Inject constructor(
         )
         updateUndoRedoState()
     }
+
+    /** Destructuring shim for the parallel repository fan-out in [pushUndoState]. */
+    private data class UndoSnapshotInputs(
+        val segs: List<Segment>,
+        val dubs: List<DubClip>,
+        val subs: List<SubtitleClip>,
+        val images: List<ImageClip>,
+        val texts: List<TextOverlay>,
+        val bgms: List<BgmClip>,
+        val project: EditProject?
+    )
 
     private fun updateUndoRedoState() {
         _uiState.value = _uiState.value.copy(
@@ -480,42 +509,46 @@ class TimelineViewModel @Inject constructor(
         }
     }
 
-    fun onSelectDubClip(clipId: String?) {
-        val currentSelected = _uiState.value.selectedDubClipId
-        val newSelected = if (currentSelected == clipId) null else clipId
-        _uiState.value = _uiState.value.copy(
-            selectedDubClipId = newSelected,
-            selectedSubtitleClipId = null,
-            selectedImageClipId = null,
+    /**
+     * Single-selection model: at any moment at most one of segment / dub /
+     * subtitle / image / text-overlay / bgm may be selected. This helper
+     * applies a tap-toggle on the chosen target while clearing every other
+     * selected*Id, so each handler is a one-line wrapper.
+     */
+    private enum class SelectionTarget {
+        Segment, Dub, Subtitle, Image, TextOverlay, Bgm
+    }
+
+    private fun selectExclusively(target: SelectionTarget, id: String?) {
+        val state = _uiState.value
+        // Tap-toggle: tapping the already-selected element clears it.
+        val current = when (target) {
+            SelectionTarget.Segment -> state.selectedSegmentId
+            SelectionTarget.Dub -> state.selectedDubClipId
+            SelectionTarget.Subtitle -> state.selectedSubtitleClipId
+            SelectionTarget.Image -> state.selectedImageClipId
+            SelectionTarget.TextOverlay -> state.selectedTextOverlayId
+            SelectionTarget.Bgm -> state.selectedBgmClipId
+        }
+        val next = if (id != null && id == current) null else id
+        _uiState.value = state.copy(
+            selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
+            selectedDubClipId = if (target == SelectionTarget.Dub) next else null,
+            selectedSubtitleClipId = if (target == SelectionTarget.Subtitle) next else null,
+            selectedImageClipId = if (target == SelectionTarget.Image) next else null,
+            selectedTextOverlayId = if (target == SelectionTarget.TextOverlay) next else null,
+            selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
             showDubVolumeSlider = false
         )
     }
 
-    fun onSelectSubtitleClip(clipId: String?) {
-        _uiState.value = _uiState.value.copy(
-            selectedSubtitleClipId = clipId,
-            selectedDubClipId = null,
-            selectedImageClipId = null,
-            isVideoSelected = false,
-            showVideoVolumeSlider = false,
-            showDubVolumeSlider = false
-        )
-    }
+    fun onSelectDubClip(clipId: String?) = selectExclusively(SelectionTarget.Dub, clipId)
 
-    fun onSelectImageClip(clipId: String?) {
-        val currentSelected = _uiState.value.selectedImageClipId
-        val newSelected = if (currentSelected == clipId) null else clipId
-        _uiState.value = _uiState.value.copy(
-            selectedImageClipId = newSelected,
-            selectedDubClipId = null,
-            selectedSubtitleClipId = null,
-            isVideoSelected = false,
-            showVideoVolumeSlider = false,
-            showDubVolumeSlider = false
-        )
-    }
+    fun onSelectSubtitleClip(clipId: String?) = selectExclusively(SelectionTarget.Subtitle, clipId)
+
+    fun onSelectImageClip(clipId: String?) = selectExclusively(SelectionTarget.Image, clipId)
 
     fun onUpdateDubClipVolume(clipId: String, volume: Float) {
         viewModelScope.launch {
@@ -550,12 +583,22 @@ class TimelineViewModel @Inject constructor(
             val state = _uiState.value
             val videoDurationMs = state.videoDurationMs
             val maxStart = if (videoDurationMs > 0L) (videoDurationMs - 500L).coerceAtLeast(0L) else Long.MAX_VALUE
-            val startMs = state.playbackPositionMs.coerceIn(0L, maxStart)
+            // Avoid stacking new sticker on top of an existing one at the same
+            // start time — shift right in 250ms increments until a free spot.
+            val taken = state.imageClips.map { it.startMs }.toSet()
+            var startMs = state.playbackPositionMs.coerceIn(0L, maxStart)
+            while (startMs in taken && startMs < maxStart) startMs = (startMs + 250L).coerceAtMost(maxStart)
             val maxEnd = if (videoDurationMs > 0L) videoDurationMs else (startMs + defaultDurationMs)
             val endMs = (startMs + defaultDurationMs)
                 .coerceAtMost(maxEnd)
                 .coerceAtLeast(startMs + 500L)
-            addImageClip(projectId = projectId, imageUri = uri, startMs = startMs, endMs = endMs)
+            addImageClip(
+                projectId = projectId,
+                imageUri = uri,
+                startMs = startMs,
+                endMs = endMs,
+                lane = pickFreeOverlayLane(startMs, endMs)
+            )
             pushUndoState()
         }
     }
@@ -569,6 +612,60 @@ class TimelineViewModel @Inject constructor(
                 if (videoDuration > 0L) it.coerceAtMost((videoDuration - duration).coerceAtLeast(0L)) else it
             }
             updateImageClip(clip.copy(startMs = coercedStart, endMs = coercedStart + duration))
+            pushUndoState()
+        }
+    }
+
+    /**
+     * Pick the lowest lane number free of time-overlap with both image clips
+     * AND text overlays — they share lanes on the merged overlay track.
+     */
+    private fun pickFreeOverlayLane(startMs: Long, endMs: Long): Int {
+        val state = _uiState.value
+        // Treat both lists as one virtual collection of (lane, start, end)
+        // tuples and reuse the shared lane-packing helper.
+        data class LaneItem(val lane: Int, val start: Long, val end: Long)
+        val combined = state.imageClips.map { LaneItem(it.lane, it.startMs, it.endMs) } +
+            state.textOverlays.map { LaneItem(it.lane, it.startMs, it.endMs) }
+        return com.example.dubcast.domain.util.pickLowestFreeLane(
+            existing = combined,
+            startMs = startMs,
+            endMs = endMs,
+            laneOf = { it.lane },
+            startOf = { it.start },
+            endOf = { it.end }
+        )
+    }
+
+    fun onChangeImageClipLane(clipId: String, delta: Int) {
+        if (delta == 0) return
+        viewModelScope.launch {
+            val clip = imageClipRepository.getClip(clipId) ?: return@launch
+            val newLane = (clip.lane + delta).coerceAtLeast(0)
+            if (newLane == clip.lane) return@launch
+            updateImageClip(clip.copy(lane = newLane))
+            pushUndoState()
+        }
+    }
+
+    fun onDuplicateImageClip(clipId: String) {
+        viewModelScope.launch {
+            val clip = imageClipRepository.getClip(clipId) ?: return@launch
+            // Place the duplicate at the same time position so it sits directly
+            // beside the source on the timeline. AddImageClipUseCase auto-picks
+            // the lowest free lane that doesn't time-conflict, which pushes the
+            // copy to the row right below the original.
+            addImageClip(
+                projectId = projectId,
+                imageUri = clip.imageUri,
+                startMs = clip.startMs,
+                endMs = clip.endMs,
+                xPct = clip.xPct,
+                yPct = clip.yPct,
+                widthPct = clip.widthPct,
+                heightPct = clip.heightPct,
+                lane = pickFreeOverlayLane(clip.startMs, clip.endMs)
+            )
             pushUndoState()
         }
     }
@@ -807,15 +904,11 @@ class TimelineViewModel @Inject constructor(
     }
 
     fun onSelectSegment(segmentId: String?) {
-        val current = _uiState.value.selectedSegmentId
-        val next = if (current == segmentId) null else segmentId
-        val selected = _uiState.value.segments.firstOrNull { it.id == next }
+        selectExclusively(SelectionTarget.Segment, segmentId)
+        // Segment selection additionally seeds the trim fields used by the
+        // trim-mode overlay; the helper handles only the selected*Id fields.
+        val selected = _uiState.value.segments.firstOrNull { it.id == _uiState.value.selectedSegmentId }
         _uiState.value = _uiState.value.copy(
-            selectedSegmentId = next,
-            selectedDubClipId = null,
-            selectedSubtitleClipId = null,
-            selectedImageClipId = null,
-            isVideoSelected = false,
             trimStartMs = selected?.trimStartMs ?: 0L,
             trimEndMs = selected?.trimEndMs ?: 0L
         )
@@ -868,16 +961,19 @@ class TimelineViewModel @Inject constructor(
     }
 
     fun onEnterRangeMode(segmentId: String) {
-        val seg = _uiState.value.segments.firstOrNull { it.id == segmentId } ?: return
+        val state = _uiState.value
+        val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
-        val trimStart = seg.trimStartMs
-        val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
-        val defaultEnd = (trimStart + 1000L).coerceAtMost(trimEnd)
-        _uiState.value = _uiState.value.copy(
+        // Default range begins at the playhead so a tap on a specific spot
+        // opens the 1s window right there (not at the leftmost segment edge).
+        val total = state.videoDurationMs.coerceAtLeast(1L)
+        val defaultStart = state.playbackPositionMs.coerceIn(0L, (total - 1L).coerceAtLeast(0L))
+        val defaultEnd = (defaultStart + 1000L).coerceAtMost(total)
+        _uiState.value = state.copy(
             isRangeSelecting = true,
             rangeTargetSegmentId = seg.id,
             selectedSegmentId = seg.id,
-            pendingRangeStartMs = trimStart,
+            pendingRangeStartMs = defaultStart,
             pendingRangeEndMs = defaultEnd,
             showRangeActionSheet = false,
             pendingRangeVolume = seg.volumeScale,
@@ -886,24 +982,51 @@ class TimelineViewModel @Inject constructor(
         )
     }
 
-    fun onSetPendingRangeStart(localMs: Long) {
+    fun onSetPendingRangeStart(globalMs: Long) {
         val state = _uiState.value
-        val seg = state.segments.firstOrNull { it.id == state.rangeTargetSegmentId } ?: return
-        val trimStart = seg.trimStartMs
-        val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
-        val upper = (state.pendingRangeEndMs - MIN_RANGE_MS).coerceAtLeast(trimStart)
-        val clamped = localMs.coerceIn(trimStart, upper.coerceAtMost(trimEnd))
+        val total = state.videoDurationMs.coerceAtLeast(0L)
+        val upper = (state.pendingRangeEndMs - MIN_RANGE_MS).coerceAtLeast(0L)
+        val clamped = globalMs.coerceIn(0L, upper.coerceAtMost(total))
         _uiState.value = state.copy(pendingRangeStartMs = clamped)
     }
 
-    fun onSetPendingRangeEnd(localMs: Long) {
+    fun onSetPendingRangeEnd(globalMs: Long) {
         val state = _uiState.value
-        val seg = state.segments.firstOrNull { it.id == state.rangeTargetSegmentId } ?: return
-        val trimStart = seg.trimStartMs
-        val trimEnd = if (seg.trimEndMs <= 0L) seg.durationMs else seg.trimEndMs
-        val lower = (state.pendingRangeStartMs + MIN_RANGE_MS).coerceAtMost(trimEnd)
-        val clamped = localMs.coerceIn(lower.coerceAtLeast(trimStart), trimEnd)
+        val total = state.videoDurationMs.coerceAtLeast(0L)
+        val lower = (state.pendingRangeStartMs + MIN_RANGE_MS).coerceAtMost(total)
+        val clamped = globalMs.coerceIn(lower.coerceAtLeast(0L), total)
         _uiState.value = state.copy(pendingRangeEndMs = clamped)
+    }
+
+    /**
+     * Slice the global range [globalStart, globalEnd] into per-segment local
+     * ranges. Returns segments that overlap, sorted by `order`. Skips IMAGE
+     * and segments where the overlap is below MIN_RANGE_MS.
+     */
+    private data class SegmentRangeSlice(
+        val segmentId: String,
+        val order: Int,
+        val localStart: Long,
+        val localEnd: Long
+    )
+
+    private fun sliceGlobalRange(globalStart: Long, globalEnd: Long): List<SegmentRangeSlice> {
+        val out = mutableListOf<SegmentRangeSlice>()
+        var acc = 0L
+        for (seg in _uiState.value.segments) {
+            val segDur = seg.effectiveDurationMs
+            val segGlobalStart = acc
+            val segGlobalEnd = acc + segDur
+            acc += segDur
+            if (seg.type != SegmentType.VIDEO) continue
+            val overlapStart = maxOf(segGlobalStart, globalStart)
+            val overlapEnd = minOf(segGlobalEnd, globalEnd)
+            if (overlapEnd - overlapStart < MIN_RANGE_MS) continue
+            val localStart = seg.trimStartMs + (overlapStart - segGlobalStart)
+            val localEnd = seg.trimStartMs + (overlapEnd - segGlobalStart)
+            out += SegmentRangeSlice(seg.id, seg.order, localStart, localEnd)
+        }
+        return out
     }
 
     fun onConfirmRangeSelection() {
@@ -928,63 +1051,72 @@ class TimelineViewModel @Inject constructor(
 
     fun onDuplicateRange() {
         val state = _uiState.value
-        val segmentId = state.rangeTargetSegmentId ?: return
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        // Hide UI immediately for instant feedback; the actual split work
+        // continues in the background.
+        resetRangeMode()
         viewModelScope.launch {
-            duplicateSegmentRange(segmentId, start, end)
-            resetRangeMode()
+            slices.forEach { s -> duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd) }
             pushUndoState()
         }
     }
 
     fun onDeleteRange() {
         val state = _uiState.value
-        val segmentId = state.rangeTargetSegmentId ?: return
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        resetRangeMode()
         viewModelScope.launch {
-            removeSegmentRange(segmentId, start, end)
-            resetRangeMode()
+            slices.forEach { s -> removeSegmentRange(s.segmentId, s.localStart, s.localEnd) }
             pushUndoState()
         }
     }
 
     fun onApplyRangeVolume(value: Float) {
         val state = _uiState.value
-        val segmentId = state.rangeTargetSegmentId ?: return
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        resetRangeMode()
         viewModelScope.launch {
-            val result = splitSegment(segmentId, start, end)
-            updateSegmentVolume(result.middle.id, value)
-            resetRangeMode()
+            slices.forEach { s ->
+                val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
+                updateSegmentVolume(r.middle.id, value)
+            }
             pushUndoState()
         }
     }
 
     fun onApplyRangeSpeed(value: Float) {
         val state = _uiState.value
-        val segmentId = state.rangeTargetSegmentId ?: return
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        resetRangeMode()
         viewModelScope.launch {
-            val result = splitSegment(segmentId, start, end)
-            updateSegmentSpeed(result.middle.id, value)
-            resetRangeMode()
+            slices.forEach { s ->
+                val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
+                updateSegmentSpeed(r.middle.id, value)
+            }
             pushUndoState()
         }
     }
 
     private fun resetRangeMode() {
+        // Also clear segment selection so the inline action bar disappears
+        // alongside the range handles (apply means "I'm done editing").
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             rangeTargetSegmentId = null,
-            showRangeActionSheet = false
+            showRangeActionSheet = false,
+            selectedSegmentId = null
         )
     }
 
@@ -1081,7 +1213,13 @@ class TimelineViewModel @Inject constructor(
     fun onShowTextOverlaySheetForNew() {
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(1L)
-        val start = state.playbackPositionMs.coerceIn(0L, (total - 1L).coerceAtLeast(0L))
+        val playhead = state.playbackPositionMs.coerceIn(0L, (total - 1L).coerceAtLeast(0L))
+        // Avoid stacking on top of an existing overlay at the same start time.
+        // Shift the new clip rightward in 250ms steps until a free spot opens
+        // (or until we run out of timeline).
+        val taken = state.textOverlays.map { it.startMs }.toSet()
+        var start = playhead
+        while (start in taken && start < total - 1L) start += 250L
         val end = (start + DEFAULT_OVERLAY_DURATION_MS).coerceAtMost(total)
         _uiState.value = state.copy(
             showTextOverlaySheet = true,
@@ -1152,27 +1290,10 @@ class TimelineViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                val editId = state.editingTextOverlayId
-                if (editId == null) {
-                    addTextOverlay(
-                        projectId = projectId,
-                        text = text,
-                        startMs = state.pendingOverlayStartMs,
-                        endMs = state.pendingOverlayEndMs,
-                        fontFamily = state.pendingOverlayFontFamily,
-                        fontSizeSp = state.pendingOverlayFontSizeSp,
-                        colorHex = state.pendingOverlayColorHex
-                    )
+                if (state.editingTextOverlayId == null) {
+                    addPendingTextOverlay(state, text)
                 } else {
-                    updateTextOverlay(
-                        overlayId = editId,
-                        text = text,
-                        fontFamily = state.pendingOverlayFontFamily,
-                        fontSizeSp = state.pendingOverlayFontSizeSp,
-                        colorHex = state.pendingOverlayColorHex,
-                        startMs = state.pendingOverlayStartMs,
-                        endMs = state.pendingOverlayEndMs
-                    )
+                    updatePendingTextOverlay(state, state.editingTextOverlayId, text)
                 }
                 _uiState.value = _uiState.value.copy(
                     showTextOverlaySheet = false,
@@ -1187,17 +1308,124 @@ class TimelineViewModel @Inject constructor(
         }
     }
 
-    fun onSelectTextOverlay(overlayId: String?) {
-        _uiState.value = _uiState.value.copy(selectedTextOverlayId = overlayId)
+    private suspend fun addPendingTextOverlay(state: TimelineUiState, text: String) {
+        addTextOverlay(
+            projectId = projectId,
+            text = text,
+            startMs = state.pendingOverlayStartMs,
+            endMs = state.pendingOverlayEndMs,
+            fontFamily = state.pendingOverlayFontFamily,
+            fontSizeSp = state.pendingOverlayFontSizeSp,
+            colorHex = state.pendingOverlayColorHex,
+            lane = pickFreeOverlayLane(state.pendingOverlayStartMs, state.pendingOverlayEndMs)
+        )
+    }
+
+    private suspend fun updatePendingTextOverlay(
+        state: TimelineUiState,
+        editId: String,
+        text: String
+    ) {
+        updateTextOverlay(
+            overlayId = editId,
+            text = text,
+            fontFamily = state.pendingOverlayFontFamily,
+            fontSizeSp = state.pendingOverlayFontSizeSp,
+            colorHex = state.pendingOverlayColorHex,
+            startMs = state.pendingOverlayStartMs,
+            endMs = state.pendingOverlayEndMs
+        )
+    }
+
+    fun onSelectTextOverlay(overlayId: String?) =
+        selectExclusively(SelectionTarget.TextOverlay, overlayId)
+
+    fun onUpdateTextOverlayScreenPosition(overlayId: String, xPct: Float, yPct: Float) {
+        viewModelScope.launch {
+            try {
+                updateTextOverlay(overlayId, xPct = xPct, yPct = yPct)
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
+            }
+        }
+    }
+
+    fun onUpdateTextOverlayFontSize(overlayId: String, fontSizeSp: Float) {
+        viewModelScope.launch {
+            try {
+                updateTextOverlay(overlayId, fontSizeSp = fontSizeSp)
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
+            }
+        }
+    }
+
+    fun onMoveTextOverlay(overlayId: String, newStartMs: Long) {
+        viewModelScope.launch {
+            val overlay = _uiState.value.textOverlays.firstOrNull { it.id == overlayId } ?: return@launch
+            val duration = overlay.endMs - overlay.startMs
+            val total = _uiState.value.videoDurationMs
+            val maxStart = (total - duration).coerceAtLeast(0L)
+            val coercedStart = newStartMs.coerceIn(0L, maxStart)
+            try {
+                updateTextOverlay(
+                    overlayId,
+                    startMs = coercedStart,
+                    endMs = coercedStart + duration
+                )
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
+            }
+        }
+    }
+
+    fun onResizeTextOverlay(overlayId: String, newEndMs: Long) {
+        viewModelScope.launch {
+            try {
+                updateTextOverlay(overlayId, endMs = newEndMs)
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
+            }
+        }
     }
 
     fun onDuplicateTextOverlay(overlayId: String) {
         viewModelScope.launch {
+            val src = textOverlayRepository.getOverlay(overlayId) ?: return@launch
+            // Place duplicate at the same time position; AddTextOverlayUseCase
+            // auto-picks the lowest free lane so the copy lands directly below.
             try {
-                duplicateTextOverlay(overlayId)
+                addTextOverlay(
+                    projectId = projectId,
+                    text = src.text,
+                    startMs = src.startMs,
+                    endMs = src.endMs,
+                    fontFamily = src.fontFamily,
+                    fontSizeSp = src.fontSizeSp,
+                    colorHex = src.colorHex,
+                    xPct = src.xPct,
+                    yPct = src.yPct,
+                    lane = pickFreeOverlayLane(src.startMs, src.endMs)
+                )
                 pushUndoState()
             } catch (_: IllegalArgumentException) {
                 // overlay disappeared between selection and action; safe to ignore
+            }
+        }
+    }
+
+    fun onChangeTextOverlayLane(overlayId: String, delta: Int) {
+        if (delta == 0) return
+        viewModelScope.launch {
+            val overlay = textOverlayRepository.getOverlay(overlayId) ?: return@launch
+            val newLane = (overlay.lane + delta).coerceAtLeast(0)
+            if (newLane == overlay.lane) return@launch
+            try {
+                updateTextOverlay(overlayId, lane = newLane)
+                pushUndoState()
+            } catch (_: IllegalArgumentException) {
             }
         }
     }
@@ -1243,9 +1471,7 @@ class TimelineViewModel @Inject constructor(
         }
     }
 
-    fun onSelectBgmClip(clipId: String?) {
-        _uiState.value = _uiState.value.copy(selectedBgmClipId = clipId)
-    }
+    fun onSelectBgmClip(clipId: String?) = selectExclusively(SelectionTarget.Bgm, clipId)
 
     fun onUpdateBgmStartMs(clipId: String, newStartMs: Long) {
         viewModelScope.launch {

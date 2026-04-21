@@ -2,6 +2,7 @@ package com.example.dubcast.ui.timeline.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ fun ImageClipItem(
     onClick: () -> Unit,
     onMoved: (newStartMs: Long) -> Unit,
     onResized: (newEndMs: Long) -> Unit,
+    onLaneChanged: (delta: Int) -> Unit = {},
     totalWidthDp: Dp
 ) {
     if (videoDurationMs <= 0L) return
@@ -53,9 +55,9 @@ fun ImageClipItem(
     val widthDp = with(density) { (durationMs * pxPerMs).toDp() }
 
     var dragOffset by remember(clip.startMs, clip.endMs) { mutableFloatStateOf(0f) }
-    var dragStartMs by remember { mutableFloatStateOf(clip.startMs.toFloat()) }
     var resizeDelta by remember(clip.endMs) { mutableFloatStateOf(0f) }
     var resizeStartEndMs by remember { mutableFloatStateOf(clip.endMs.toFloat()) }
+    val laneRowHeightPx = with(density) { TRACK_LANE_HEIGHT.toPx() }
 
     val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
 
@@ -70,17 +72,32 @@ fun ImageClipItem(
             .pointerInput(clip.id) {
                 detectTapGestures { onClick() }
             }
-            .pointerInput(clip.id) {
-                detectHorizontalDragGestures(
-                    onDragStart = { dragStartMs = clip.startMs.toFloat() },
+            .pointerInput(clip.id, clip.startMs, pxPerMs) {
+                // 2D drag: horizontal -> startMs, vertical -> lane change.
+                // Don't reset dragOffset on end — the new clip.startMs will
+                // arrive via the repository flow and remember(...) keys above
+                // reset the accumulator at that point, avoiding a snap-back.
+                var verticalAcc = 0f
+                detectDragGestures(
+                    onDragStart = { verticalAcc = 0f },
                     onDragEnd = {
-                        val newStartMs = ((dragStartMs * pxPerMs + dragOffset) / pxPerMs).toLong()
-                        onMoved(newStartMs.coerceAtLeast(0L))
-                        dragOffset = 0f
+                        if (pxPerMs > 0f) {
+                            val newStartMs = (clip.startMs + (dragOffset / pxPerMs).toLong())
+                                .coerceAtLeast(0L)
+                            if (newStartMs != clip.startMs) onMoved(newStartMs)
+                        }
+                        val laneDelta = (verticalAcc / laneRowHeightPx).toInt()
+                        if (laneDelta != 0) onLaneChanged(laneDelta)
+                        verticalAcc = 0f
                     },
-                    onDragCancel = { dragOffset = 0f }
-                ) { _, dragAmount ->
-                    dragOffset += dragAmount
+                    onDragCancel = {
+                        dragOffset = 0f
+                        verticalAcc = 0f
+                    }
+                ) { change, dragAmount ->
+                    change.consume()
+                    dragOffset += dragAmount.x
+                    verticalAcc += dragAmount.y
                 }
             }
             .padding(horizontal = 4.dp),

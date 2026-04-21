@@ -13,5 +13,6 @@ data class ImageClipEntity(
     val xPct: Float = 50f,
     val yPct: Float = 50f,
     val widthPct: Float = 30f,
-    val heightPct: Float = 30f
+    val heightPct: Float = 30f,
+    val lane: Int = 0
 )
