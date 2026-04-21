@@ -35,7 +35,8 @@ object DatabaseModule {
                 DubCastDatabase.MIGRATION_5_6,
                 DubCastDatabase.MIGRATION_6_7,
                 DubCastDatabase.MIGRATION_7_8,
-                DubCastDatabase.MIGRATION_8_9
+                DubCastDatabase.MIGRATION_8_9,
+                DubCastDatabase.MIGRATION_9_10
             )
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()

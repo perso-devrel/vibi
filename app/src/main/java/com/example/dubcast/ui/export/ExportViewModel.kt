@@ -14,6 +14,7 @@ import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.usecase.export.ExportWithDubbingUseCase
+import com.example.dubcast.domain.usecase.export.FrameInput
 import com.example.dubcast.domain.usecase.export.SegmentInput
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -136,11 +137,19 @@ class ExportViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isExporting = true, error = null, statusMessage = "Getting ready...")
 
             try {
-                editProjectRepository.getProject(projectId)
+                val project = editProjectRepository.getProject(projectId)
                     ?: throw IllegalStateException("Project not found: $projectId")
 
                 val segments = segmentRepository.getByProjectId(projectId)
                 require(segments.isNotEmpty()) { "Project has no segments" }
+
+                val frame = if (project.frameWidth > 0 && project.frameHeight > 0) {
+                    FrameInput(
+                        width = project.frameWidth,
+                        height = project.frameHeight,
+                        backgroundColorHex = project.backgroundColorHex
+                    )
+                } else null
 
                 val options = _uiState.value
                 val isTranslation = options.exportMode == ExportMode.WITH_TRANSLATION
@@ -188,6 +197,7 @@ class ExportViewModel @Inject constructor(
                     outputPath = outputPath,
                     assFilePath = assFilePath,
                     fontDir = fontDir,
+                    frame = frame,
                     imageClips = imageClips,
                     resolveImagePath = { uri -> copyContentUriToCache(uri, cacheDir, prefix = "image") },
                     onProgress = { percent ->

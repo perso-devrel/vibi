@@ -11,15 +11,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
@@ -32,14 +36,21 @@ import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -279,12 +290,26 @@ fun TimelineScreen(
         var timelineHeightDp by remember { mutableStateOf(120f) }
 
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            val frameBackgroundColor = remember(state.backgroundColorHex) {
+                runCatching { Color(android.graphics.Color.parseColor(state.backgroundColorHex)) }
+                    .getOrDefault(Color.Black)
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
             ) {
-                if (currentSegment?.type == SegmentType.IMAGE) {
+                val frameModifier = if (state.frameAspectRatio > 0f) {
+                    Modifier.fillMaxWidth()
+                        .aspectRatio(state.frameAspectRatio)
+                        .background(frameBackgroundColor)
+                } else {
+                    Modifier.matchParentSize()
+                }
+                Box(modifier = frameModifier) {
+                    if (currentSegment?.type == SegmentType.IMAGE) {
                     AsyncImage(
                         model = currentSegment.sourceUri,
                         contentDescription = null,
@@ -325,6 +350,7 @@ fun TimelineScreen(
                         },
                         modifier = Modifier.matchParentSize()
                     )
+                }
                 }
             }
 
@@ -388,6 +414,9 @@ fun TimelineScreen(
                         )
                     }) {
                         Icon(Icons.Default.Image, contentDescription = "Insert Image")
+                    }
+                    IconButton(onClick = { viewModel.onShowFrameSheet() }) {
+                        Icon(Icons.Default.AspectRatio, contentDescription = "Frame")
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     IconButton(
@@ -596,6 +625,99 @@ fun TimelineScreen(
                 onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
                 onDismiss = { viewModel.onCancelRangeMode() }
             )
+        }
+    }
+
+    if (state.showFrameSheet) {
+        FrameSettingsSheet(
+            pendingWidth = state.pendingFrameWidth,
+            pendingHeight = state.pendingFrameHeight,
+            pendingBackgroundColorHex = state.pendingBackgroundColorHex,
+            error = state.frameError,
+            onWidthChange = { viewModel.onFrameWidthInputChanged(it) },
+            onHeightChange = { viewModel.onFrameHeightInputChanged(it) },
+            onColorChange = { viewModel.onFrameBackgroundColorChanged(it) },
+            onPreset = { viewModel.onApplyFramePreset(it) },
+            onConfirm = { viewModel.onConfirmFrame() },
+            onDismiss = { viewModel.onDismissFrameSheet() }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FrameSettingsSheet(
+    pendingWidth: String,
+    pendingHeight: String,
+    pendingBackgroundColorHex: String,
+    error: String?,
+    onWidthChange: (String) -> Unit,
+    onHeightChange: (String) -> Unit,
+    onColorChange: (String) -> Unit,
+    onPreset: (FramePreset) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+            Text("Frame", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(12.dp))
+            Text("Preset", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                FramePreset.entries.forEach { preset ->
+                    AssistChip(
+                        onClick = { onPreset(preset) },
+                        label = { Text(preset.label) },
+                        modifier = Modifier.padding(end = 6.dp),
+                        colors = AssistChipDefaults.assistChipColors()
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = pendingWidth,
+                    onValueChange = onWidthChange,
+                    label = { Text("Width") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("×")
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = pendingHeight,
+                    onValueChange = onHeightChange,
+                    label = { Text("Height") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = pendingBackgroundColorHex,
+                onValueChange = onColorChange,
+                label = { Text("Background (#RRGGBB)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.CenterEnd)) {
+                Button(onClick = onConfirm) { Text("Apply") }
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

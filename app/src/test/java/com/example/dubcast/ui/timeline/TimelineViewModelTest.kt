@@ -12,6 +12,7 @@ import com.example.dubcast.domain.repository.TtsResult
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
+import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
@@ -31,6 +32,7 @@ import com.example.dubcast.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import com.example.dubcast.fake.FakeDubClipRepository
+import com.example.dubcast.fake.FakeEditProjectRepository
 import com.example.dubcast.fake.FakeImageClipRepository
 import com.example.dubcast.fake.FakeImageMetadataExtractor
 import com.example.dubcast.fake.FakeSegmentRepository
@@ -59,6 +61,7 @@ class TimelineViewModelTest {
     private lateinit var subRepo: FakeSubtitleClipRepository
     private lateinit var imageRepo: FakeImageClipRepository
     private lateinit var segmentRepo: FakeSegmentRepository
+    private lateinit var projectRepo: FakeEditProjectRepository
     private lateinit var ttsRepo: FakeTtsRepository
     private lateinit var videoExtractor: FakeVideoMetadataExtractor
     private lateinit var imageExtractor: FakeImageMetadataExtractor
@@ -72,6 +75,7 @@ class TimelineViewModelTest {
         subRepo = FakeSubtitleClipRepository()
         imageRepo = FakeImageClipRepository()
         segmentRepo = FakeSegmentRepository()
+        projectRepo = FakeEditProjectRepository(segmentRepo)
         ttsRepo = FakeTtsRepository()
         videoExtractor = FakeVideoMetadataExtractor()
         imageExtractor = FakeImageMetadataExtractor()
@@ -81,6 +85,7 @@ class TimelineViewModelTest {
             dubClipRepository = dubRepo,
             subtitleClipRepository = subRepo,
             imageClipRepository = imageRepo,
+            editProjectRepository = projectRepo,
             ttsRepository = ttsRepo,
             synthesizeDubClip = SynthesizeDubClipUseCase(ttsRepo, dubRepo),
             getVoiceList = GetVoiceListUseCase(ttsRepo),
@@ -103,6 +108,7 @@ class TimelineViewModelTest {
             removeSegmentRange = RemoveSegmentRangeUseCase(segmentRepo, SplitSegmentUseCase(segmentRepo), RemoveSegmentUseCase(segmentRepo)),
             updateSegmentVolume = UpdateSegmentVolumeUseCase(segmentRepo),
             updateSegmentSpeed = UpdateSegmentSpeedUseCase(segmentRepo),
+            setProjectFrame = SetProjectFrameUseCase(projectRepo),
             videoMetadataExtractor = videoExtractor,
             imageMetadataExtractor = imageExtractor
         )
@@ -527,5 +533,112 @@ class TimelineViewModelTest {
         advanceUntilIdle()
 
         assertEquals(10_000L, segmentRepo.getSegment("vid-1")!!.durationMs)
+    }
+
+    private suspend fun seedProject(
+        frameWidth: Int = 1920,
+        frameHeight: Int = 1080
+    ): com.example.dubcast.domain.model.EditProject {
+        val project = com.example.dubcast.domain.model.EditProject(
+            projectId = projectId,
+            createdAt = 0L,
+            updatedAt = 0L,
+            frameWidth = frameWidth,
+            frameHeight = frameHeight
+        )
+        projectRepo.createProject(project)
+        return project
+    }
+
+    @Test
+    fun `observes project frame on init`() = runTest {
+        seedProject(frameWidth = 1080, frameHeight = 1920)
+        advanceUntilIdle()
+
+        assertEquals(1080, vm.uiState.value.frameWidth)
+        assertEquals(1920, vm.uiState.value.frameHeight)
+    }
+
+    @Test
+    fun `onShowFrameSheet pre-fills pending values from current frame`() = runTest {
+        seedProject(frameWidth = 1280, frameHeight = 720)
+        advanceUntilIdle()
+
+        vm.onShowFrameSheet()
+        val s = vm.uiState.value
+        assertTrue(s.showFrameSheet)
+        assertEquals("1280", s.pendingFrameWidth)
+        assertEquals("720", s.pendingFrameHeight)
+        assertEquals("#000000", s.pendingBackgroundColorHex)
+    }
+
+    @Test
+    fun `onApplyFramePreset 9_16 fills portrait dimensions`() = runTest {
+        seedProject(frameWidth = 1920, frameHeight = 1080)
+        advanceUntilIdle()
+
+        vm.onShowFrameSheet()
+        vm.onApplyFramePreset(FramePreset.PORTRAIT_9_16)
+        val s = vm.uiState.value
+        val w = s.pendingFrameWidth.toInt()
+        val h = s.pendingFrameHeight.toInt()
+        assertTrue(h > w)
+        // ratio 9:16 → w/h ≈ 0.5625
+        val ratio = w.toFloat() / h.toFloat()
+        assertTrue(kotlin.math.abs(ratio - 9f / 16f) < 0.01f)
+    }
+
+    @Test
+    fun `onConfirmFrame persists frame and closes sheet`() = runTest {
+        seedProject(frameWidth = 1920, frameHeight = 1080)
+        advanceUntilIdle()
+
+        vm.onShowFrameSheet()
+        vm.onFrameWidthInputChanged("1080")
+        vm.onFrameHeightInputChanged("1920")
+        vm.onFrameBackgroundColorChanged("#FF00FF")
+        vm.onConfirmFrame()
+        advanceUntilIdle()
+
+        assertTrue(!vm.uiState.value.showFrameSheet)
+        val updated = projectRepo.getProject(projectId)!!
+        assertEquals(1080, updated.frameWidth)
+        assertEquals(1920, updated.frameHeight)
+        assertEquals("#FF00FF", updated.backgroundColorHex)
+    }
+
+    @Test
+    fun `onConfirmFrame rejects malformed color and keeps sheet open with error`() = runTest {
+        seedProject(frameWidth = 1920, frameHeight = 1080)
+        advanceUntilIdle()
+
+        vm.onShowFrameSheet()
+        vm.onFrameWidthInputChanged("1080")
+        vm.onFrameHeightInputChanged("1920")
+        vm.onFrameBackgroundColorChanged("not-a-color")
+        vm.onConfirmFrame()
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertTrue(s.showFrameSheet)
+        assertNotNull(s.frameError)
+        // Project not updated
+        assertEquals(1920, projectRepo.getProject(projectId)!!.frameWidth)
+    }
+
+    @Test
+    fun `onConfirmFrame rejects non-positive dimensions`() = runTest {
+        seedProject(frameWidth = 1920, frameHeight = 1080)
+        advanceUntilIdle()
+
+        vm.onShowFrameSheet()
+        vm.onFrameWidthInputChanged("0")
+        vm.onFrameHeightInputChanged("1920")
+        vm.onConfirmFrame()
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertTrue(s.showFrameSheet)
+        assertNotNull(s.frameError)
     }
 }

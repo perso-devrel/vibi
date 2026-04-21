@@ -17,7 +17,9 @@ class CreateProjectWithInitialVideoSegmentUseCase @Inject constructor(
         val project = EditProject(
             projectId = projectId,
             createdAt = now,
-            updatedAt = now
+            updatedAt = now,
+            frameWidth = videoInfo.width,
+            frameHeight = videoInfo.height
         )
         val segment = Segment(
             id = "${projectId}_seg0",

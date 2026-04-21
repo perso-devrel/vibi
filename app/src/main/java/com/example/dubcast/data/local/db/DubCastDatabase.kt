@@ -23,7 +23,7 @@ import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
         ImageClipEntity::class,
         SegmentEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -172,6 +172,28 @@ abstract class DubCastDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE segments ADD COLUMN volumeScale REAL NOT NULL DEFAULT 1.0")
                 db.execSQL("ALTER TABLE segments ADD COLUMN speedScale REAL NOT NULL DEFAULT 1.0")
+            }
+        }
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN frameWidth INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN frameHeight INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN backgroundColorHex TEXT NOT NULL DEFAULT '#000000'")
+                // Backfill frame dimensions from each project's first VIDEO segment.
+                db.execSQL(
+                    """UPDATE edit_projects SET
+                        frameWidth = COALESCE((
+                            SELECT s.width FROM segments s
+                            WHERE s.projectId = edit_projects.projectId AND s.type = 'VIDEO'
+                            ORDER BY s.`order` ASC LIMIT 1
+                        ), 0),
+                        frameHeight = COALESCE((
+                            SELECT s.height FROM segments s
+                            WHERE s.projectId = edit_projects.projectId AND s.type = 'VIDEO'
+                            ORDER BY s.`order` ASC LIMIT 1
+                        ), 0)"""
+                )
             }
         }
     }

@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.dubcast.domain.model.DubClip
+import com.example.dubcast.domain.model.EditProject
 import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
@@ -11,6 +12,7 @@ import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.model.Voice
 import com.example.dubcast.domain.repository.DubClipRepository
+import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
@@ -19,6 +21,7 @@ import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
 import com.example.dubcast.domain.usecase.input.ImageMetadataExtractor
+import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
 import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
@@ -100,9 +103,21 @@ data class TimelineUiState(
     val pendingRangeEndMs: Long = 0L,
     val showRangeActionSheet: Boolean = false,
     val pendingRangeVolume: Float = 1.0f,
-    val pendingRangeSpeed: Float = 1.0f
+    val pendingRangeSpeed: Float = 1.0f,
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
+    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+    val showFrameSheet: Boolean = false,
+    val pendingFrameWidth: String = "",
+    val pendingFrameHeight: String = "",
+    val pendingBackgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+    val frameError: String? = null
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
+    val frameAspectRatio: Float
+        get() = if (frameWidth > 0 && frameHeight > 0) {
+            frameWidth.toFloat() / frameHeight.toFloat()
+        } else 0f
 }
 
 data class TimelineSnapshot(
@@ -119,6 +134,7 @@ class TimelineViewModel @Inject constructor(
     private val dubClipRepository: DubClipRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
     private val imageClipRepository: ImageClipRepository,
+    private val editProjectRepository: EditProjectRepository,
     private val ttsRepository: TtsRepository,
     private val synthesizeDubClip: SynthesizeDubClipUseCase,
     private val getVoiceList: GetVoiceListUseCase,
@@ -141,6 +157,7 @@ class TimelineViewModel @Inject constructor(
     private val removeSegmentRange: RemoveSegmentRangeUseCase,
     private val updateSegmentVolume: UpdateSegmentVolumeUseCase,
     private val updateSegmentSpeed: UpdateSegmentSpeedUseCase,
+    private val setProjectFrame: SetProjectFrameUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor
 ) : ViewModel() {
@@ -159,6 +176,21 @@ class TimelineViewModel @Inject constructor(
         loadSegments()
         loadVoices()
         observeClips()
+        observeProject()
+    }
+
+    private fun observeProject() {
+        viewModelScope.launch {
+            editProjectRepository.observeProject(projectId).collect { project ->
+                if (project != null) {
+                    _uiState.value = _uiState.value.copy(
+                        frameWidth = project.frameWidth,
+                        frameHeight = project.frameHeight,
+                        backgroundColorHex = project.backgroundColorHex
+                    )
+                }
+            }
+        }
     }
 
     private fun loadSegments() {
@@ -220,21 +252,6 @@ class TimelineViewModel @Inject constructor(
                 isVoicesLoading = false
             )
         }
-    }
-
-    companion object {
-        const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
-        const val MIN_IMAGE_DURATION_MS = 500L
-        const val MAX_IMAGE_DURATION_MS = 30_000L
-
-        private val DEFAULT_VOICES = listOf(
-            Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),
-            Voice("TX3LPaxmHKxFdv7VOQHJ", "Liam", null, "en"),
-            Voice("pFZP5JQG7iQjIQuC4Bku", "Lily", null, "en"),
-            Voice("bIHbv24MWmeRgasZH58o", "Will", null, "en"),
-            Voice("default-ko-1", "Jimin", null, "ko"),
-            Voice("default-ko-2", "Seoyeon", null, "ko"),
-        )
     }
 
     private fun observeClips() {
@@ -873,5 +890,106 @@ class TimelineViewModel @Inject constructor(
             acc = next
         }
         return segments.lastOrNull()
+    }
+
+    fun onShowFrameSheet() {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            showFrameSheet = true,
+            pendingFrameWidth = if (state.frameWidth > 0) state.frameWidth.toString() else "",
+            pendingFrameHeight = if (state.frameHeight > 0) state.frameHeight.toString() else "",
+            pendingBackgroundColorHex = state.backgroundColorHex,
+            frameError = null
+        )
+    }
+
+    fun onDismissFrameSheet() {
+        _uiState.value = _uiState.value.copy(showFrameSheet = false, frameError = null)
+    }
+
+    fun onFrameWidthInputChanged(value: String) {
+        _uiState.value = _uiState.value.copy(pendingFrameWidth = value, frameError = null)
+    }
+
+    fun onFrameHeightInputChanged(value: String) {
+        _uiState.value = _uiState.value.copy(pendingFrameHeight = value, frameError = null)
+    }
+
+    fun onFrameBackgroundColorChanged(value: String) {
+        _uiState.value = _uiState.value.copy(pendingBackgroundColorHex = value, frameError = null)
+    }
+
+    fun onApplyFramePreset(preset: FramePreset) {
+        val state = _uiState.value
+        val basis = state.frameLongestSidePx().coerceAtLeast(MIN_FRAME_DIMENSION)
+        val (w, h) = preset.toDimensions(basis)
+        _uiState.value = state.copy(
+            pendingFrameWidth = w.toString(),
+            pendingFrameHeight = h.toString(),
+            frameError = null
+        )
+    }
+
+    fun onConfirmFrame() {
+        val state = _uiState.value
+        val width = state.pendingFrameWidth.toIntOrNull()
+        val height = state.pendingFrameHeight.toIntOrNull()
+        if (width == null || width <= 0 || height == null || height <= 0) {
+            _uiState.value = state.copy(frameError = "Width와 Height는 양의 정수")
+            return
+        }
+        if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
+            _uiState.value = state.copy(frameError = "최대 ${MAX_FRAME_DIMENSION}px")
+            return
+        }
+        val color = state.pendingBackgroundColorHex.trim()
+        viewModelScope.launch {
+            try {
+                pushUndoState()
+                setProjectFrame(projectId, width, height, color)
+                _uiState.value = _uiState.value.copy(showFrameSheet = false, frameError = null)
+            } catch (e: IllegalArgumentException) {
+                // SetProjectFrameUseCase is the source of truth for color/dimension
+                // validation; keep its message as-is for the UI.
+                _uiState.value = _uiState.value.copy(frameError = e.message ?: "Invalid frame")
+            }
+        }
+    }
+
+    private fun TimelineUiState.frameLongestSidePx(): Int {
+        val segMax = segments.firstOrNull()?.let { maxOf(it.width, it.height) } ?: 0
+        return maxOf(frameWidth, frameHeight, segMax)
+    }
+
+    companion object {
+        const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
+        const val MIN_IMAGE_DURATION_MS = 500L
+        const val MAX_IMAGE_DURATION_MS = 30_000L
+        const val MIN_FRAME_DIMENSION = 16
+        const val MAX_FRAME_DIMENSION = 7680
+
+        private val DEFAULT_VOICES = listOf(
+            Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),
+            Voice("TX3LPaxmHKxFdv7VOQHJ", "Liam", null, "en"),
+            Voice("pFZP5JQG7iQjIQuC4Bku", "Lily", null, "en"),
+            Voice("bIHbv24MWmeRgasZH58o", "Will", null, "en"),
+            Voice("default-ko-1", "Jimin", null, "ko"),
+            Voice("default-ko-2", "Seoyeon", null, "ko"),
+        )
+    }
+}
+
+enum class FramePreset(val ratioW: Int, val ratioH: Int, val label: String) {
+    PORTRAIT_9_16(9, 16, "9:16"),
+    SQUARE_1_1(1, 1, "1:1"),
+    LANDSCAPE_16_9(16, 9, "16:9"),
+    PORTRAIT_4_5(4, 5, "4:5");
+
+    fun toDimensions(longestSide: Int): Pair<Int, Int> {
+        val maxRatio = maxOf(ratioW, ratioH)
+        val unit = (longestSide.toDouble() / maxRatio).coerceAtLeast(1.0)
+        val w = (unit * ratioW).toInt().coerceAtLeast(1)
+        val h = (unit * ratioH).toInt().coerceAtLeast(1)
+        return w to h
     }
 }
