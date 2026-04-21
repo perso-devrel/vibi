@@ -3,6 +3,7 @@ package com.example.dubcast.domain.usecase.export
 import com.example.dubcast.domain.model.Anchor
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
+import com.example.dubcast.domain.model.TextOverlay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -175,5 +176,43 @@ class AssGeneratorTest {
         assertEquals(2, dialogues)
         assertTrue(result.contains("Manual"))
         assertTrue(result.contains("Auto"))
+    }
+
+    @Test
+    fun `text overlays are emitted as additional Dialogue lines with font and color overrides`() {
+        val overlay = TextOverlay(
+            id = "t1",
+            projectId = "proj-1",
+            text = "Hi",
+            fontFamily = "noto_serif_kr",
+            fontSizeSp = 36f,
+            colorHex = "#FFAABBCC",
+            startMs = 0L,
+            endMs = 1000L,
+            xPct = 50f,
+            yPct = 50f
+        )
+        val result = generator.generateFromClips(emptyList(), 1920, 1080, listOf(overlay))
+        val dialogues = result.lines().filter { it.startsWith("Dialogue:") }
+        assertEquals(1, dialogues.size)
+        val line = dialogues.single()
+        assertTrue("expects font override", line.contains("\\fnNoto Serif KR"))
+        // ASS color order is BGR: RR=AA, GG=BB, BB=CC → &HFFCCBBAA&
+        assertTrue("expects ass color &HFFCCBBAA&, got: $line", line.contains("\\c&HFFCCBBAA&"))
+        assertTrue("expects positioning at center", line.contains("\\an5\\pos(960,540)"))
+    }
+
+    @Test
+    fun `subtitles and text overlays both appear in output`() {
+        val sub = clip(id = "s1", startMs = 0L, endMs = 500L, text = "Sub")
+        val overlay = TextOverlay(
+            id = "t1", projectId = "proj-1", text = "Overlay",
+            startMs = 1000L, endMs = 2000L
+        )
+        val result = generator.generateFromClips(listOf(sub), 1920, 1080, listOf(overlay))
+        val dialogues = result.lines().count { it.startsWith("Dialogue:") }
+        assertEquals(2, dialogues)
+        assertTrue(result.contains("Sub"))
+        assertTrue(result.contains("Overlay"))
     }
 }

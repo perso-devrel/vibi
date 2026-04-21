@@ -26,14 +26,17 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MicExternalOn
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AssistChip
@@ -351,6 +354,13 @@ fun TimelineScreen(
                         modifier = Modifier.matchParentSize()
                     )
                 }
+                TextOverlayPreviewLayer(
+                    textOverlays = state.textOverlays,
+                    playbackPositionMs = state.playbackPositionMs,
+                    selectedOverlayId = state.selectedTextOverlayId,
+                    onSelect = { viewModel.onSelectTextOverlay(it) },
+                    modifier = Modifier.matchParentSize()
+                )
                 }
             }
 
@@ -417,6 +427,9 @@ fun TimelineScreen(
                     }
                     IconButton(onClick = { viewModel.onShowFrameSheet() }) {
                         Icon(Icons.Default.AspectRatio, contentDescription = "Frame")
+                    }
+                    IconButton(onClick = { viewModel.onShowTextOverlaySheetForNew() }) {
+                        Icon(Icons.Default.TextFields, contentDescription = "Insert Text")
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     IconButton(
@@ -492,6 +505,37 @@ fun TimelineScreen(
                 }
             }
 
+            val selectedTextOverlay = state.textOverlays.find { it.id == state.selectedTextOverlayId }
+            if (selectedTextOverlay != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        viewModel.onShowTextOverlaySheetForEdit(selectedTextOverlay.id)
+                    }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Text")
+                    }
+                    IconButton(onClick = {
+                        viewModel.onDuplicateTextOverlay(selectedTextOverlay.id)
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate Text")
+                    }
+                    IconButton(onClick = {
+                        viewModel.onDeleteTextOverlay(selectedTextOverlay.id)
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete Text")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "Text · ${selectedTextOverlay.text.take(16)}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
             val selectedSegment = state.segments.find { it.id == state.selectedSegmentId }
             if (selectedSegment != null && !state.isTrimming) {
                 SelectedSegmentActionBar(
@@ -556,6 +600,10 @@ fun TimelineScreen(
                 onImageSegmentResized = { segmentId, newDurationMs ->
                     viewModel.onResizeImageSegmentByDrag(segmentId, newDurationMs)
                 },
+                textOverlays = state.textOverlays,
+                selectedTextOverlayId = state.selectedTextOverlayId,
+                onTextOverlaySelected = { viewModel.onSelectTextOverlay(it) },
+                onTextOverlayLongPressed = { viewModel.onDuplicateTextOverlay(it) },
                 onAppendRequested = { viewModel.onShowAppendSheet() },
                 onSeek = { posMs ->
                     val clamped = posMs.coerceIn(0L, state.videoDurationMs)
@@ -626,6 +674,23 @@ fun TimelineScreen(
                 onDismiss = { viewModel.onCancelRangeMode() }
             )
         }
+    }
+
+    if (state.showTextOverlaySheet) {
+        InsertTextOverlaySheet(
+            pendingText = state.pendingOverlayText,
+            pendingFontFamily = state.pendingOverlayFontFamily,
+            pendingFontSizeSp = state.pendingOverlayFontSizeSp,
+            pendingColorHex = state.pendingOverlayColorHex,
+            error = state.textOverlayError,
+            isEditing = state.editingTextOverlayId != null,
+            onTextChange = { viewModel.onTextOverlayTextChanged(it) },
+            onFontFamilyChange = { viewModel.onTextOverlayFontFamilyChanged(it) },
+            onFontSizeChange = { viewModel.onTextOverlayFontSizeChanged(it) },
+            onColorChange = { viewModel.onTextOverlayColorChanged(it) },
+            onConfirm = { viewModel.onConfirmTextOverlay() },
+            onDismiss = { viewModel.onDismissTextOverlaySheet() }
+        )
     }
 
     if (state.showFrameSheet) {

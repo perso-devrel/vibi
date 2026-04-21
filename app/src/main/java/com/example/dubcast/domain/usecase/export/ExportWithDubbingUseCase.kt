@@ -3,6 +3,7 @@ package com.example.dubcast.domain.usecase.export
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.SubtitleClip
+import com.example.dubcast.domain.model.TextOverlay
 import javax.inject.Inject
 
 class ExportWithDubbingUseCase @Inject constructor(
@@ -19,6 +20,7 @@ class ExportWithDubbingUseCase @Inject constructor(
         fontDir: String?,
         frame: FrameInput? = null,
         imageClips: List<ImageClip> = emptyList(),
+        textOverlays: List<TextOverlay> = emptyList(),
         resolveImagePath: suspend (imageUri: String) -> String? = { null },
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
@@ -29,8 +31,14 @@ class ExportWithDubbingUseCase @Inject constructor(
         val outputHeight = frame?.height ?: firstSegment.height
 
         var assPath: String? = null
-        if (subtitleClips.isNotEmpty() && assFilePath != null) {
-            val assContent = assGenerator.generateFromClips(subtitleClips, outputWidth, outputHeight)
+        val needsAss = subtitleClips.isNotEmpty() || textOverlays.isNotEmpty()
+        if (needsAss && assFilePath != null) {
+            val assContent = assGenerator.generateFromClips(
+                clips = subtitleClips,
+                videoWidth = outputWidth,
+                videoHeight = outputHeight,
+                textOverlays = textOverlays
+            )
             java.io.File(assFilePath).writeText(assContent)
             assPath = assFilePath
         }

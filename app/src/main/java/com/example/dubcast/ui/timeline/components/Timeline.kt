@@ -2,6 +2,7 @@ package com.example.dubcast.ui.timeline.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -83,6 +84,10 @@ fun Timeline(
     onImageClipMoved: (clipId: String, newStartMs: Long) -> Unit,
     onImageClipResized: (clipId: String, newEndMs: Long) -> Unit,
     onImageSegmentResized: (segmentId: String, newDurationMs: Long) -> Unit,
+    textOverlays: List<com.example.dubcast.domain.model.TextOverlay> = emptyList(),
+    selectedTextOverlayId: String? = null,
+    onTextOverlaySelected: (String?) -> Unit = {},
+    onTextOverlayLongPressed: (String) -> Unit = {},
     onAppendRequested: () -> Unit,
     onSeek: (Long) -> Unit,
     onTrimStartChanged: (Long) -> Unit,
@@ -257,6 +262,25 @@ fun Timeline(
                             onClick = { onImageClipSelected(clip.id) },
                             onMoved = { newStartMs -> onImageClipMoved(clip.id, newStartMs) },
                             onResized = { newEndMs -> onImageClipResized(clip.id, newEndMs) },
+                            totalWidthDp = totalWidthDp
+                        )
+                    }
+                }
+
+                // Text overlay track — long-press to duplicate
+                Box(
+                    modifier = Modifier
+                        .width(totalWidthDp)
+                        .height(28.dp)
+                        .padding(vertical = 1.dp)
+                ) {
+                    textOverlays.forEach { overlay ->
+                        TextOverlayTrackItem(
+                            overlay = overlay,
+                            videoDurationMs = totalDurationMs,
+                            isSelected = overlay.id == selectedTextOverlayId,
+                            onClick = { onTextOverlaySelected(overlay.id) },
+                            onLongPress = { onTextOverlayLongPressed(overlay.id) },
                             totalWidthDp = totalWidthDp
                         )
                     }
@@ -522,5 +546,51 @@ private fun TimeRuler(
                 color = TimeRulerGray
             )
         }
+    }
+}
+
+private val TextOverlayTrackColor = Color(0xFFE8772E)
+
+@Composable
+private fun TextOverlayTrackItem(
+    overlay: com.example.dubcast.domain.model.TextOverlay,
+    videoDurationMs: Long,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+    totalWidthDp: Dp
+) {
+    if (videoDurationMs <= 0L) return
+    val density = LocalDensity.current
+    val totalWidthPx = with(density) { totalWidthDp.toPx() }
+    val pxPerMs = totalWidthPx / videoDurationMs.toFloat()
+    val durationMs = (overlay.endMs - overlay.startMs).coerceAtLeast(1L)
+    val offsetXDp = with(density) { (overlay.startMs * pxPerMs).toDp() }
+    val widthDp = with(density) { (durationMs * pxPerMs).toDp() }
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+
+    Box(
+        modifier = Modifier
+            .offset(x = offsetXDp)
+            .width(widthDp.coerceAtLeast(20.dp))
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(4.dp))
+            .background(TextOverlayTrackColor.copy(alpha = 0.85f))
+            .border(2.dp, borderColor, RoundedCornerShape(4.dp))
+            .pointerInput(overlay.id) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { onLongPress() }
+                )
+            }
+    ) {
+        Text(
+            text = overlay.text,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
