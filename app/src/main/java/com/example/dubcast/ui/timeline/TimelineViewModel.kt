@@ -10,12 +10,14 @@ import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
+import com.example.dubcast.domain.model.TextOverlay
 import com.example.dubcast.domain.model.Voice
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
+import com.example.dubcast.domain.repository.TextOverlayRepository
 import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
@@ -26,6 +28,10 @@ import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
+import com.example.dubcast.domain.usecase.text.AddTextOverlayUseCase
+import com.example.dubcast.domain.usecase.text.DeleteTextOverlayUseCase
+import com.example.dubcast.domain.usecase.text.DuplicateTextOverlayUseCase
+import com.example.dubcast.domain.usecase.text.UpdateTextOverlayUseCase
 import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
@@ -111,7 +117,18 @@ data class TimelineUiState(
     val pendingFrameWidth: String = "",
     val pendingFrameHeight: String = "",
     val pendingBackgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
-    val frameError: String? = null
+    val frameError: String? = null,
+    val textOverlays: List<TextOverlay> = emptyList(),
+    val selectedTextOverlayId: String? = null,
+    val showTextOverlaySheet: Boolean = false,
+    val editingTextOverlayId: String? = null,
+    val pendingOverlayText: String = "",
+    val pendingOverlayFontFamily: String = TextOverlay.DEFAULT_FONT_FAMILY,
+    val pendingOverlayFontSizeSp: Float = TextOverlay.DEFAULT_FONT_SIZE_SP,
+    val pendingOverlayColorHex: String = TextOverlay.DEFAULT_COLOR_HEX,
+    val pendingOverlayStartMs: Long = 0L,
+    val pendingOverlayEndMs: Long = 0L,
+    val textOverlayError: String? = null
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -124,7 +141,8 @@ data class TimelineSnapshot(
     val segments: List<Segment>,
     val dubClips: List<DubClip>,
     val subtitleClips: List<SubtitleClip>,
-    val imageClips: List<ImageClip>
+    val imageClips: List<ImageClip>,
+    val textOverlays: List<TextOverlay> = emptyList()
 )
 
 @HiltViewModel
@@ -135,6 +153,7 @@ class TimelineViewModel @Inject constructor(
     private val subtitleClipRepository: SubtitleClipRepository,
     private val imageClipRepository: ImageClipRepository,
     private val editProjectRepository: EditProjectRepository,
+    private val textOverlayRepository: TextOverlayRepository,
     private val ttsRepository: TtsRepository,
     private val synthesizeDubClip: SynthesizeDubClipUseCase,
     private val getVoiceList: GetVoiceListUseCase,
@@ -158,6 +177,10 @@ class TimelineViewModel @Inject constructor(
     private val updateSegmentVolume: UpdateSegmentVolumeUseCase,
     private val updateSegmentSpeed: UpdateSegmentSpeedUseCase,
     private val setProjectFrame: SetProjectFrameUseCase,
+    private val addTextOverlay: AddTextOverlayUseCase,
+    private val updateTextOverlay: UpdateTextOverlayUseCase,
+    private val deleteTextOverlay: DeleteTextOverlayUseCase,
+    private val duplicateTextOverlay: DuplicateTextOverlayUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor
 ) : ViewModel() {
@@ -177,6 +200,7 @@ class TimelineViewModel @Inject constructor(
         loadVoices()
         observeClips()
         observeProject()
+        observeTextOverlays()
     }
 
     private fun observeProject() {
@@ -189,6 +213,14 @@ class TimelineViewModel @Inject constructor(
                         backgroundColorHex = project.backgroundColorHex
                     )
                 }
+            }
+        }
+    }
+
+    private fun observeTextOverlays() {
+        viewModelScope.launch {
+            textOverlayRepository.observeOverlays(projectId).collect { overlays ->
+                _uiState.value = _uiState.value.copy(textOverlays = overlays)
             }
         }
     }
@@ -277,7 +309,8 @@ class TimelineViewModel @Inject constructor(
         val subs = subtitleClipRepository.observeClips(projectId).first()
         val images = imageClipRepository.observeClips(projectId).first()
         val segs = segmentRepository.getByProjectId(projectId)
-        undoRedoManager.pushState(TimelineSnapshot(segs, dubs, subs, images))
+        val texts = textOverlayRepository.observeOverlays(projectId).first()
+        undoRedoManager.pushState(TimelineSnapshot(segs, dubs, subs, images, texts))
         updateUndoRedoState()
     }
 
@@ -564,6 +597,10 @@ class TimelineViewModel @Inject constructor(
         segmentRepository.deleteAllByProjectId(projectId)
         for (seg in snapshot.segments) {
             segmentRepository.addSegment(seg)
+        }
+        textOverlayRepository.deleteAllByProjectId(projectId)
+        for (overlay in snapshot.textOverlays) {
+            textOverlayRepository.addOverlay(overlay)
         }
     }
 
@@ -961,12 +998,147 @@ class TimelineViewModel @Inject constructor(
         return maxOf(frameWidth, frameHeight, segMax)
     }
 
+    fun onShowTextOverlaySheetForNew() {
+        val state = _uiState.value
+        val total = state.videoDurationMs.coerceAtLeast(1L)
+        val start = state.playbackPositionMs.coerceIn(0L, (total - 1L).coerceAtLeast(0L))
+        val end = (start + DEFAULT_OVERLAY_DURATION_MS).coerceAtMost(total)
+        _uiState.value = state.copy(
+            showTextOverlaySheet = true,
+            editingTextOverlayId = null,
+            pendingOverlayText = "",
+            pendingOverlayFontFamily = TextOverlay.DEFAULT_FONT_FAMILY,
+            pendingOverlayFontSizeSp = TextOverlay.DEFAULT_FONT_SIZE_SP,
+            pendingOverlayColorHex = TextOverlay.DEFAULT_COLOR_HEX,
+            pendingOverlayStartMs = start,
+            pendingOverlayEndMs = end,
+            textOverlayError = null
+        )
+    }
+
+    fun onShowTextOverlaySheetForEdit(overlayId: String) {
+        val overlay = _uiState.value.textOverlays.firstOrNull { it.id == overlayId } ?: return
+        _uiState.value = _uiState.value.copy(
+            showTextOverlaySheet = true,
+            editingTextOverlayId = overlay.id,
+            pendingOverlayText = overlay.text,
+            pendingOverlayFontFamily = overlay.fontFamily,
+            pendingOverlayFontSizeSp = overlay.fontSizeSp,
+            pendingOverlayColorHex = overlay.colorHex,
+            pendingOverlayStartMs = overlay.startMs,
+            pendingOverlayEndMs = overlay.endMs,
+            textOverlayError = null
+        )
+    }
+
+    fun onDismissTextOverlaySheet() {
+        _uiState.value = _uiState.value.copy(
+            showTextOverlaySheet = false,
+            textOverlayError = null
+        )
+    }
+
+    fun onTextOverlayTextChanged(value: String) {
+        _uiState.value = _uiState.value.copy(pendingOverlayText = value, textOverlayError = null)
+    }
+
+    fun onTextOverlayFontFamilyChanged(family: String) {
+        _uiState.value = _uiState.value.copy(pendingOverlayFontFamily = family, textOverlayError = null)
+    }
+
+    fun onTextOverlayFontSizeChanged(sizeSp: Float) {
+        _uiState.value = _uiState.value.copy(
+            pendingOverlayFontSizeSp = sizeSp.coerceIn(
+                TextOverlay.MIN_FONT_SIZE_SP, TextOverlay.MAX_FONT_SIZE_SP
+            ),
+            textOverlayError = null
+        )
+    }
+
+    fun onTextOverlayColorChanged(colorHex: String) {
+        _uiState.value = _uiState.value.copy(pendingOverlayColorHex = colorHex, textOverlayError = null)
+    }
+
+    fun onConfirmTextOverlay() {
+        val state = _uiState.value
+        val text = state.pendingOverlayText.trim()
+        if (text.isEmpty()) {
+            _uiState.value = state.copy(textOverlayError = "Text는 비어있을 수 없음")
+            return
+        }
+        if (state.pendingOverlayEndMs <= state.pendingOverlayStartMs) {
+            _uiState.value = state.copy(textOverlayError = "End는 Start보다 커야 함")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                pushUndoState()
+                val editId = state.editingTextOverlayId
+                if (editId == null) {
+                    addTextOverlay(
+                        projectId = projectId,
+                        text = text,
+                        startMs = state.pendingOverlayStartMs,
+                        endMs = state.pendingOverlayEndMs,
+                        fontFamily = state.pendingOverlayFontFamily,
+                        fontSizeSp = state.pendingOverlayFontSizeSp,
+                        colorHex = state.pendingOverlayColorHex
+                    )
+                } else {
+                    updateTextOverlay(
+                        overlayId = editId,
+                        text = text,
+                        fontFamily = state.pendingOverlayFontFamily,
+                        fontSizeSp = state.pendingOverlayFontSizeSp,
+                        colorHex = state.pendingOverlayColorHex,
+                        startMs = state.pendingOverlayStartMs,
+                        endMs = state.pendingOverlayEndMs
+                    )
+                }
+                _uiState.value = _uiState.value.copy(
+                    showTextOverlaySheet = false,
+                    textOverlayError = null
+                )
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(
+                    textOverlayError = e.message ?: "Invalid text overlay"
+                )
+            }
+        }
+    }
+
+    fun onSelectTextOverlay(overlayId: String?) {
+        _uiState.value = _uiState.value.copy(selectedTextOverlayId = overlayId)
+    }
+
+    fun onDuplicateTextOverlay(overlayId: String) {
+        viewModelScope.launch {
+            pushUndoState()
+            try {
+                duplicateTextOverlay(overlayId)
+            } catch (_: IllegalArgumentException) {
+                // overlay disappeared between selection and action; safe to ignore
+            }
+        }
+    }
+
+    fun onDeleteTextOverlay(overlayId: String) {
+        viewModelScope.launch {
+            pushUndoState()
+            deleteTextOverlay(overlayId)
+            if (_uiState.value.selectedTextOverlayId == overlayId) {
+                _uiState.value = _uiState.value.copy(selectedTextOverlayId = null)
+            }
+        }
+    }
+
     companion object {
         const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
         const val MIN_IMAGE_DURATION_MS = 500L
         const val MAX_IMAGE_DURATION_MS = 30_000L
         const val MIN_FRAME_DIMENSION = 16
         const val MAX_FRAME_DIMENSION = 7680
+        const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
 
         private val DEFAULT_VOICES = listOf(
             Voice("EXAVITQu4vr4xnSDxMaL", "Sarah", null, "en"),

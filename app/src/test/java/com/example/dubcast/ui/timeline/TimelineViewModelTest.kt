@@ -15,6 +15,10 @@ import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
 import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
+import com.example.dubcast.domain.usecase.text.AddTextOverlayUseCase
+import com.example.dubcast.domain.usecase.text.DeleteTextOverlayUseCase
+import com.example.dubcast.domain.usecase.text.DuplicateTextOverlayUseCase
+import com.example.dubcast.domain.usecase.text.UpdateTextOverlayUseCase
 import com.example.dubcast.domain.usecase.timeline.AddImageSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.DeleteDubClipUseCase
@@ -37,6 +41,7 @@ import com.example.dubcast.fake.FakeImageClipRepository
 import com.example.dubcast.fake.FakeImageMetadataExtractor
 import com.example.dubcast.fake.FakeSegmentRepository
 import com.example.dubcast.fake.FakeSubtitleClipRepository
+import com.example.dubcast.fake.FakeTextOverlayRepository
 import com.example.dubcast.fake.FakeTtsRepository
 import com.example.dubcast.fake.FakeVideoMetadataExtractor
 import com.example.dubcast.util.MainDispatcherRule
@@ -62,6 +67,7 @@ class TimelineViewModelTest {
     private lateinit var imageRepo: FakeImageClipRepository
     private lateinit var segmentRepo: FakeSegmentRepository
     private lateinit var projectRepo: FakeEditProjectRepository
+    private lateinit var textOverlayRepo: FakeTextOverlayRepository
     private lateinit var ttsRepo: FakeTtsRepository
     private lateinit var videoExtractor: FakeVideoMetadataExtractor
     private lateinit var imageExtractor: FakeImageMetadataExtractor
@@ -76,6 +82,7 @@ class TimelineViewModelTest {
         imageRepo = FakeImageClipRepository()
         segmentRepo = FakeSegmentRepository()
         projectRepo = FakeEditProjectRepository(segmentRepo)
+        textOverlayRepo = FakeTextOverlayRepository()
         ttsRepo = FakeTtsRepository()
         videoExtractor = FakeVideoMetadataExtractor()
         imageExtractor = FakeImageMetadataExtractor()
@@ -86,6 +93,7 @@ class TimelineViewModelTest {
             subtitleClipRepository = subRepo,
             imageClipRepository = imageRepo,
             editProjectRepository = projectRepo,
+            textOverlayRepository = textOverlayRepo,
             ttsRepository = ttsRepo,
             synthesizeDubClip = SynthesizeDubClipUseCase(ttsRepo, dubRepo),
             getVoiceList = GetVoiceListUseCase(ttsRepo),
@@ -109,6 +117,10 @@ class TimelineViewModelTest {
             updateSegmentVolume = UpdateSegmentVolumeUseCase(segmentRepo),
             updateSegmentSpeed = UpdateSegmentSpeedUseCase(segmentRepo),
             setProjectFrame = SetProjectFrameUseCase(projectRepo),
+            addTextOverlay = AddTextOverlayUseCase(textOverlayRepo),
+            updateTextOverlay = UpdateTextOverlayUseCase(textOverlayRepo),
+            deleteTextOverlay = DeleteTextOverlayUseCase(textOverlayRepo),
+            duplicateTextOverlay = DuplicateTextOverlayUseCase(textOverlayRepo),
             videoMetadataExtractor = videoExtractor,
             imageMetadataExtractor = imageExtractor
         )
@@ -640,5 +652,116 @@ class TimelineViewModelTest {
         val s = vm.uiState.value
         assertTrue(s.showFrameSheet)
         assertNotNull(s.frameError)
+    }
+
+    @Test
+    fun `onShowTextOverlaySheetForNew clears editing id and seeds time window from playhead`() = runTest {
+        seedSegment(durationMs = 30_000L)
+        advanceUntilIdle()
+        vm.onUpdatePlaybackPosition(5_000L)
+
+        vm.onShowTextOverlaySheetForNew()
+        val s = vm.uiState.value
+        assertTrue(s.showTextOverlaySheet)
+        assertEquals(null, s.editingTextOverlayId)
+        assertEquals(5_000L, s.pendingOverlayStartMs)
+        assertEquals(8_000L, s.pendingOverlayEndMs)
+        assertEquals("", s.pendingOverlayText)
+    }
+
+    @Test
+    fun `onConfirmTextOverlay rejects blank text and keeps sheet open`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onShowTextOverlaySheetForNew()
+        vm.onTextOverlayTextChanged("   ")
+        vm.onConfirmTextOverlay()
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertTrue(s.showTextOverlaySheet)
+        assertNotNull(s.textOverlayError)
+        assertTrue(textOverlayRepo.all().isEmpty())
+    }
+
+    @Test
+    fun `onConfirmTextOverlay creates overlay when sheet is in new mode`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        advanceUntilIdle()
+
+        vm.onShowTextOverlaySheetForNew()
+        vm.onTextOverlayTextChanged("Hello")
+        vm.onTextOverlayFontFamilyChanged("noto_serif_kr")
+        vm.onTextOverlayFontSizeChanged(40f)
+        vm.onTextOverlayColorChanged("#FFAABBCC")
+        vm.onConfirmTextOverlay()
+        advanceUntilIdle()
+
+        assertTrue(!vm.uiState.value.showTextOverlaySheet)
+        val all = textOverlayRepo.all()
+        assertEquals(1, all.size)
+        assertEquals("Hello", all[0].text)
+        assertEquals("noto_serif_kr", all[0].fontFamily)
+        assertEquals(40f, all[0].fontSizeSp)
+        assertEquals("#FFAABBCC", all[0].colorHex)
+    }
+
+    @Test
+    fun `onConfirmTextOverlay updates overlay when sheet is in edit mode`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        textOverlayRepo.addOverlay(
+            com.example.dubcast.domain.model.TextOverlay(
+                id = "t1", projectId = projectId, text = "old",
+                startMs = 0L, endMs = 1000L
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onShowTextOverlaySheetForEdit("t1")
+        vm.onTextOverlayTextChanged("new")
+        vm.onConfirmTextOverlay()
+        advanceUntilIdle()
+
+        assertEquals("new", textOverlayRepo.getOverlay("t1")!!.text)
+    }
+
+    @Test
+    fun `onDuplicateTextOverlay places duplicate after source`() = runTest {
+        seedSegment(durationMs = 30_000L)
+        textOverlayRepo.addOverlay(
+            com.example.dubcast.domain.model.TextOverlay(
+                id = "t1", projectId = projectId, text = "x",
+                startMs = 1000L, endMs = 3000L
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onDuplicateTextOverlay("t1")
+        advanceUntilIdle()
+
+        val all = textOverlayRepo.all().sortedBy { it.startMs }
+        assertEquals(2, all.size)
+        assertEquals(3000L, all[1].startMs)
+        assertEquals(5000L, all[1].endMs)
+    }
+
+    @Test
+    fun `onDeleteTextOverlay removes selected overlay and clears selection`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        textOverlayRepo.addOverlay(
+            com.example.dubcast.domain.model.TextOverlay(
+                id = "t1", projectId = projectId, text = "x",
+                startMs = 0L, endMs = 1000L
+            )
+        )
+        advanceUntilIdle()
+        vm.onSelectTextOverlay("t1")
+
+        vm.onDeleteTextOverlay("t1")
+        advanceUntilIdle()
+
+        assertEquals(0, textOverlayRepo.all().size)
+        assertEquals(null, vm.uiState.value.selectedTextOverlayId)
     }
 }

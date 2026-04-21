@@ -13,6 +13,7 @@ import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
 import com.example.dubcast.domain.repository.SegmentRepository
 import com.example.dubcast.domain.repository.SubtitleClipRepository
+import com.example.dubcast.domain.repository.TextOverlayRepository
 import com.example.dubcast.domain.usecase.export.ExportWithDubbingUseCase
 import com.example.dubcast.domain.usecase.export.FrameInput
 import com.example.dubcast.domain.usecase.export.SegmentInput
@@ -75,7 +76,8 @@ class ExportViewModel @Inject constructor(
     private val dubClipRepository: DubClipRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
     private val imageClipRepository: ImageClipRepository,
-    private val segmentRepository: SegmentRepository
+    private val segmentRepository: SegmentRepository,
+    private val textOverlayRepository: TextOverlayRepository
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle.get<String>("projectId") ?: ""
@@ -178,17 +180,19 @@ class ExportViewModel @Inject constructor(
 
                 val outputPath = File(cacheDir, "export_${System.currentTimeMillis()}.mp4").absolutePath
 
-                val assFilePath = if (subtitleClips.isNotEmpty()) {
+                val imageClips = imageClipRepository.observeClips(projectId).first()
+                val textOverlays = textOverlayRepository.observeOverlays(projectId).first()
+
+                val needsAss = subtitleClips.isNotEmpty() || textOverlays.isNotEmpty()
+                val assFilePath = if (needsAss) {
                     File(cacheDir, "subtitles_${projectId}.ass").absolutePath
                 } else null
 
-                val fontDir = if (subtitleClips.isNotEmpty()) {
+                val fontDir = if (needsAss) {
                     File(cacheDir, "fonts").apply { mkdirs() }.absolutePath.also {
                         copyFontFromAssets(it)
                     }
                 } else null
-
-                val imageClips = imageClipRepository.observeClips(projectId).first()
 
                 val result = exportWithDubbingUseCase.execute(
                     segments = segmentInputs,
@@ -199,6 +203,7 @@ class ExportViewModel @Inject constructor(
                     fontDir = fontDir,
                     frame = frame,
                     imageClips = imageClips,
+                    textOverlays = textOverlays,
                     resolveImagePath = { uri -> copyContentUriToCache(uri, cacheDir, prefix = "image") },
                     onProgress = { percent ->
                         _uiState.value = _uiState.value.copy(progressPercent = percent)

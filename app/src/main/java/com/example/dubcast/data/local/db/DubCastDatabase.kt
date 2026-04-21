@@ -9,11 +9,13 @@ import com.example.dubcast.data.local.db.dao.EditProjectDao
 import com.example.dubcast.data.local.db.dao.ImageClipDao
 import com.example.dubcast.data.local.db.dao.SegmentDao
 import com.example.dubcast.data.local.db.dao.SubtitleClipDao
+import com.example.dubcast.data.local.db.dao.TextOverlayDao
 import com.example.dubcast.data.local.db.entity.DubClipEntity
 import com.example.dubcast.data.local.db.entity.EditProjectEntity
 import com.example.dubcast.data.local.db.entity.ImageClipEntity
 import com.example.dubcast.data.local.db.entity.SegmentEntity
 import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
+import com.example.dubcast.data.local.db.entity.TextOverlayEntity
 
 @Database(
     entities = [
@@ -21,9 +23,10 @@ import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
         DubClipEntity::class,
         SubtitleClipEntity::class,
         ImageClipEntity::class,
-        SegmentEntity::class
+        SegmentEntity::class,
+        TextOverlayEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -32,6 +35,7 @@ abstract class DubCastDatabase : RoomDatabase() {
     abstract fun subtitleClipDao(): SubtitleClipDao
     abstract fun imageClipDao(): ImageClipDao
     abstract fun segmentDao(): SegmentDao
+    abstract fun textOverlayDao(): TextOverlayDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -193,6 +197,25 @@ abstract class DubCastDatabase : RoomDatabase() {
                             WHERE s.projectId = edit_projects.projectId AND s.type = 'VIDEO'
                             ORDER BY s.`order` ASC LIMIT 1
                         ), 0)"""
+                )
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS text_overlays (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        projectId TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        fontFamily TEXT NOT NULL DEFAULT 'noto_sans_kr',
+                        fontSizeSp REAL NOT NULL DEFAULT 24.0,
+                        colorHex TEXT NOT NULL DEFAULT '#FFFFFFFF',
+                        startMs INTEGER NOT NULL,
+                        endMs INTEGER NOT NULL,
+                        xPct REAL NOT NULL DEFAULT 50.0,
+                        yPct REAL NOT NULL DEFAULT 50.0
+                    )"""
                 )
             }
         }

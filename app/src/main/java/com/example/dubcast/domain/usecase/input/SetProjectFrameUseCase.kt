@@ -1,6 +1,7 @@
 package com.example.dubcast.domain.usecase.input
 
 import com.example.dubcast.domain.repository.EditProjectRepository
+import com.example.dubcast.domain.util.isValidHexColor
 import javax.inject.Inject
 
 class SetProjectFrameUseCase @Inject constructor(
@@ -15,7 +16,7 @@ class SetProjectFrameUseCase @Inject constructor(
         require(width > 0) { "frame width must be positive: $width" }
         require(height > 0) { "frame height must be positive: $height" }
         if (backgroundColorHex != null) {
-            require(HEX_COLOR_PATTERN.matches(backgroundColorHex)) {
+            require(isValidHexColor(backgroundColorHex)) {
                 "backgroundColorHex must be #RRGGBB or #AARRGGBB: $backgroundColorHex"
             }
         }
@@ -29,9 +30,5 @@ class SetProjectFrameUseCase @Inject constructor(
                 updatedAt = System.currentTimeMillis()
             )
         )
-    }
-
-    companion object {
-        private val HEX_COLOR_PATTERN = Regex("^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$")
     }
 }
