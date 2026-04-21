@@ -6,7 +6,15 @@ import com.squareup.moshi.JsonClass
 data class RenderConfig(
     val dubClips: List<RenderDubClip>,
     val segments: List<RenderSegment>,
-    val imageClips: List<RenderImageClip> = emptyList()
+    val imageClips: List<RenderImageClip> = emptyList(),
+    val frame: RenderFrame? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class RenderFrame(
+    val width: Int,
+    val height: Int,
+    val backgroundColorHex: String = "#000000"
 )
 
 @JsonClass(generateAdapter = true)

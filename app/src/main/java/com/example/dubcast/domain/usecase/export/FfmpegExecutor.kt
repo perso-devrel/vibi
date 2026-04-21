@@ -44,6 +44,12 @@ data class SegmentInput(
         }
 }
 
+data class FrameInput(
+    val width: Int,
+    val height: Int,
+    val backgroundColorHex: String = "#000000"
+)
+
 interface FfmpegExecutor {
     suspend fun renderProject(
         segments: List<SegmentInput>,
@@ -52,6 +58,7 @@ interface FfmpegExecutor {
         outputPath: String,
         assFilePath: String? = null,
         fontDir: String? = null,
+        frame: FrameInput? = null,
         onProgress: (percent: Int) -> Unit
     ): Result<String>
 }

@@ -52,6 +52,16 @@ class CreateProjectWithInitialVideoSegmentUseCaseTest {
     }
 
     @Test
+    fun `defaults project frame to first video size`() = runTest {
+        val projectId = useCase(videoInfo)
+
+        val project = projectRepo.getProject(projectId)!!
+        assertEquals(videoInfo.width, project.frameWidth)
+        assertEquals(videoInfo.height, project.frameHeight)
+        assertEquals("#000000", project.backgroundColorHex)
+    }
+
+    @Test
     fun `rolls back project when segment insert fails`() = runTest {
         projectRepo.failOnSegmentInsert = true
 

@@ -51,13 +51,19 @@ class EditProjectRepositoryImpl @Inject constructor(
     private fun EditProjectEntity.toDomain() = EditProject(
         projectId = projectId,
         createdAt = createdAt,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        frameWidth = frameWidth,
+        frameHeight = frameHeight,
+        backgroundColorHex = backgroundColorHex
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
         projectId = projectId,
         createdAt = createdAt,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        frameWidth = frameWidth,
+        frameHeight = frameHeight,
+        backgroundColorHex = backgroundColorHex
     )
 
     private fun Segment.toEntity() = SegmentEntity(

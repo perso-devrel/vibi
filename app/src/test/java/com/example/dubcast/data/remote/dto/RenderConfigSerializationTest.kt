@@ -95,6 +95,47 @@ class RenderConfigSerializationTest {
     }
 
     @Test
+    fun `config with explicit frame roundtrips`() {
+        val config = RenderConfig(
+            dubClips = emptyList(),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 10_000L,
+                    width = 1920,
+                    height = 1080
+                )
+            ),
+            frame = RenderFrame(width = 1080, height = 1920, backgroundColorHex = "#FF00FF")
+        )
+        val json = adapter.toJson(config)
+        assertTrue(json.contains("\"frame\""))
+        assertTrue(json.contains("\"backgroundColorHex\":\"#FF00FF\""))
+        assertEquals(config, adapter.fromJson(json)!!)
+    }
+
+    @Test
+    fun `config without frame still roundtrips`() {
+        val config = RenderConfig(
+            dubClips = emptyList(),
+            segments = listOf(
+                RenderSegment(
+                    sourceFileKey = "video_0",
+                    type = "VIDEO",
+                    order = 0,
+                    durationMs = 10_000L,
+                    width = 1920,
+                    height = 1080
+                )
+            )
+        )
+        val json = adapter.toJson(config)
+        assertEquals(config, adapter.fromJson(json)!!)
+    }
+
+    @Test
     fun `config with image clips and segments roundtrips`() {
         val config = RenderConfig(
             dubClips = listOf(

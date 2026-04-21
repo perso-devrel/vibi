@@ -4,11 +4,13 @@ import android.content.Context
 import com.example.dubcast.data.remote.api.BffApiService
 import com.example.dubcast.data.remote.dto.RenderConfig
 import com.example.dubcast.data.remote.dto.RenderDubClip
+import com.example.dubcast.data.remote.dto.RenderFrame
 import com.example.dubcast.data.remote.dto.RenderImageClip
 import com.example.dubcast.data.remote.dto.RenderSegment
 import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.usecase.export.DubClipMixInput
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
+import com.example.dubcast.domain.usecase.export.FrameInput
 import com.example.dubcast.domain.usecase.export.ImageClipMixInput
 import com.example.dubcast.domain.usecase.export.SegmentInput
 import com.squareup.moshi.Moshi
@@ -39,6 +41,7 @@ class RemoteRenderExecutor @Inject constructor(
         outputPath: String,
         assFilePath: String?,
         fontDir: String?,
+        frame: FrameInput?,
         onProgress: (percent: Int) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
@@ -164,7 +167,14 @@ class RemoteRenderExecutor @Inject constructor(
             val config = RenderConfig(
                 dubClips = renderClips,
                 segments = renderSegments,
-                imageClips = renderImageClips
+                imageClips = renderImageClips,
+                frame = frame?.let {
+                    RenderFrame(
+                        width = it.width,
+                        height = it.height,
+                        backgroundColorHex = it.backgroundColorHex
+                    )
+                }
             )
             val configJson = moshi.adapter(RenderConfig::class.java).toJson(config)
             val configBody = configJson.toRequestBody("application/json".toMediaType())

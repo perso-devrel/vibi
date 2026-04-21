@@ -17,6 +17,7 @@ class ExportWithDubbingUseCase @Inject constructor(
         outputPath: String,
         assFilePath: String?,
         fontDir: String?,
+        frame: FrameInput? = null,
         imageClips: List<ImageClip> = emptyList(),
         resolveImagePath: suspend (imageUri: String) -> String? = { null },
         onProgress: (percent: Int) -> Unit
@@ -24,8 +25,8 @@ class ExportWithDubbingUseCase @Inject constructor(
         require(segments.isNotEmpty()) { "segments must not be empty" }
 
         val firstSegment = segments.minByOrNull { it.order } ?: segments.first()
-        val outputWidth = firstSegment.width
-        val outputHeight = firstSegment.height
+        val outputWidth = frame?.width ?: firstSegment.width
+        val outputHeight = frame?.height ?: firstSegment.height
 
         var assPath: String? = null
         if (subtitleClips.isNotEmpty() && assFilePath != null) {
@@ -62,6 +63,7 @@ class ExportWithDubbingUseCase @Inject constructor(
             outputPath = outputPath,
             assFilePath = assPath,
             fontDir = fontDir,
+            frame = frame,
             onProgress = onProgress
         )
     }
