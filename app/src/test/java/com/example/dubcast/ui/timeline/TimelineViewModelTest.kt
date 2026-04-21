@@ -861,4 +861,126 @@ class TimelineViewModelTest {
         assertEquals(0, bgmRepo.all().size)
         assertEquals(null, vm.uiState.value.selectedBgmClipId)
     }
+
+    @Test
+    fun `undo restores frame after onConfirmFrame change`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        seedProject(frameWidth = 1920, frameHeight = 1080)
+        advanceUntilIdle()
+
+        vm.onShowFrameSheet()
+        vm.onFrameWidthInputChanged("1080")
+        vm.onFrameHeightInputChanged("1920")
+        vm.onFrameBackgroundColorChanged("#FF112233")
+        vm.onConfirmFrame()
+        advanceUntilIdle()
+
+        // Confirm change took effect
+        assertEquals(1080, projectRepo.getProject(projectId)!!.frameWidth)
+
+        vm.onUndo()
+        advanceUntilIdle()
+
+        val restored = projectRepo.getProject(projectId)!!
+        assertEquals(1920, restored.frameWidth)
+        assertEquals(1080, restored.frameHeight)
+        assertEquals("#000000", restored.backgroundColorHex)
+    }
+
+    @Test
+    fun `undo removes added text overlay`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        seedProject()
+        advanceUntilIdle()
+
+        vm.onShowTextOverlaySheetForNew()
+        vm.onTextOverlayTextChanged("Hello")
+        vm.onConfirmTextOverlay()
+        advanceUntilIdle()
+        assertEquals(1, textOverlayRepo.all().size)
+
+        vm.onUndo()
+        advanceUntilIdle()
+
+        assertEquals(0, textOverlayRepo.all().size)
+    }
+
+    @Test
+    fun `undo removes added bgm clip`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        seedProject()
+        audioExtractor.nextInfo = com.example.dubcast.domain.usecase.input.AudioInfo(
+            uri = "content://song.mp3", durationMs = 30_000L
+        )
+        advanceUntilIdle()
+
+        vm.onPickBgmAudio("content://song.mp3")
+        advanceUntilIdle()
+        assertEquals(1, bgmRepo.all().size)
+
+        vm.onUndo()
+        advanceUntilIdle()
+
+        assertEquals(0, bgmRepo.all().size)
+    }
+
+    @Test
+    fun `undo restores segment list after delete`() = runTest {
+        seedSegment(id = "seg-a", durationMs = 5_000L)
+        segmentRepo.addSegment(
+            com.example.dubcast.domain.model.Segment(
+                id = "seg-b",
+                projectId = projectId,
+                type = SegmentType.VIDEO,
+                order = 1,
+                sourceUri = "content://b.mp4",
+                durationMs = 5_000L,
+                width = 1920,
+                height = 1080
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+        vm.onSelectSegment("seg-b")
+        advanceUntilIdle()
+        vm.onDeleteSelectedSegment()
+        advanceUntilIdle()
+        assertEquals(1, segmentRepo.getByProjectId(projectId).size)
+
+        vm.onUndo()
+        advanceUntilIdle()
+
+        assertEquals(2, segmentRepo.getByProjectId(projectId).size)
+    }
+
+    @Test
+    fun `undo restores prior dub volume`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        // Seed the clip before the project so the initial undo snapshot
+        // (taken when observeProject first emits) includes it.
+        dubRepo.addClip(
+            com.example.dubcast.domain.model.DubClip(
+                id = "d1",
+                projectId = projectId,
+                text = "hi",
+                voiceId = "v1",
+                voiceName = "v",
+                audioFilePath = "/x.mp3",
+                startMs = 0L,
+                durationMs = 1000L,
+                volume = 1f
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+
+        vm.onUpdateDubClipVolume("d1", 0.3f)
+        advanceUntilIdle()
+
+        vm.onUndo()
+        advanceUntilIdle()
+
+        val first = dubRepo.observeClips(projectId).first().first()
+        assertEquals(1f, first.volume)
+    }
 }

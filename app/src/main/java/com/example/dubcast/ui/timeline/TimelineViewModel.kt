@@ -153,7 +153,10 @@ data class TimelineSnapshot(
     val subtitleClips: List<SubtitleClip>,
     val imageClips: List<ImageClip>,
     val textOverlays: List<TextOverlay> = emptyList(),
-    val bgmClips: List<BgmClip> = emptyList()
+    val bgmClips: List<BgmClip> = emptyList(),
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
+    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX
 )
 
 @HiltViewModel
@@ -210,6 +213,7 @@ class TimelineViewModel @Inject constructor(
     val navigateToExport: SharedFlow<String> = _navigateToExport.asSharedFlow()
 
     private val undoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
+    private var hasSeededUndoSnapshot = false
 
     init {
         loadSegments()
@@ -237,6 +241,10 @@ class TimelineViewModel @Inject constructor(
                         frameHeight = project.frameHeight,
                         backgroundColorHex = project.backgroundColorHex
                     )
+                    if (!hasSeededUndoSnapshot) {
+                        hasSeededUndoSnapshot = true
+                        pushUndoState()
+                    }
                 }
             }
         }
@@ -336,7 +344,21 @@ class TimelineViewModel @Inject constructor(
         val segs = segmentRepository.getByProjectId(projectId)
         val texts = textOverlayRepository.observeOverlays(projectId).first()
         val bgms = bgmClipRepository.observeClips(projectId).first()
-        undoRedoManager.pushState(TimelineSnapshot(segs, dubs, subs, images, texts, bgms))
+        val project = editProjectRepository.getProject(projectId)
+        undoRedoManager.pushState(
+            TimelineSnapshot(
+                segments = segs,
+                dubClips = dubs,
+                subtitleClips = subs,
+                imageClips = images,
+                textOverlays = texts,
+                bgmClips = bgms,
+                frameWidth = project?.frameWidth ?: 0,
+                frameHeight = project?.frameHeight ?: 0,
+                backgroundColorHex = project?.backgroundColorHex
+                    ?: EditProject.DEFAULT_BACKGROUND_COLOR_HEX
+            )
+        )
         updateUndoRedoState()
     }
 
@@ -407,7 +429,6 @@ class TimelineViewModel @Inject constructor(
     fun onInsertPreviewClip(showOnScreen: Boolean = false) {
         val preview = _uiState.value.previewClip ?: return
         viewModelScope.launch {
-            pushUndoState()
             val dubClipId = java.util.UUID.randomUUID().toString()
             val startMs = _uiState.value.playbackPositionMs
             val clip = DubClip(
@@ -439,22 +460,23 @@ class TimelineViewModel @Inject constructor(
                 showDubbingSheet = false,
                 previewClip = null
             )
+            pushUndoState()
         }
     }
 
     fun onAddSubtitle(text: String, startMs: Long, endMs: Long, position: SubtitlePosition) {
         viewModelScope.launch {
-            pushUndoState()
             addSubtitleClip(projectId, text, startMs, endMs, position)
             _uiState.value = _uiState.value.copy(showSubtitleSheet = false)
+            pushUndoState()
         }
     }
 
     fun onMoveDubClip(clipId: String, newStartMs: Long) {
         viewModelScope.launch {
             val clip = _uiState.value.dubClips.find { it.id == clipId } ?: return@launch
-            pushUndoState()
             moveDubClip(clip, newStartMs, _uiState.value.videoDurationMs)
+            pushUndoState()
         }
     }
 
@@ -498,14 +520,16 @@ class TimelineViewModel @Inject constructor(
     fun onUpdateDubClipVolume(clipId: String, volume: Float) {
         viewModelScope.launch {
             val clip = _uiState.value.dubClips.find { it.id == clipId } ?: return@launch
-            dubClipRepository.updateClip(clip.copy(volume = volume.coerceIn(0f, 2f)))
+            val clamped = volume.coerceIn(0f, 2f)
+            if (clamped == clip.volume) return@launch
+            dubClipRepository.updateClip(clip.copy(volume = clamped))
+            pushUndoState()
         }
     }
 
     fun onDeleteSelectedClip() {
         viewModelScope.launch {
             val state = _uiState.value
-            pushUndoState()
             state.selectedDubClipId?.let { dubClipId ->
                 deleteDubClip(dubClipId)
                 subtitleClipRepository.deleteClipsBySourceDubClipId(dubClipId)
@@ -517,12 +541,12 @@ class TimelineViewModel @Inject constructor(
                 selectedSubtitleClipId = null,
                 selectedImageClipId = null
             )
+            pushUndoState()
         }
     }
 
     fun onInsertImage(uri: String, defaultDurationMs: Long = 3000L) {
         viewModelScope.launch {
-            pushUndoState()
             val state = _uiState.value
             val videoDurationMs = state.videoDurationMs
             val maxStart = if (videoDurationMs > 0L) (videoDurationMs - 500L).coerceAtLeast(0L) else Long.MAX_VALUE
@@ -532,32 +556,33 @@ class TimelineViewModel @Inject constructor(
                 .coerceAtMost(maxEnd)
                 .coerceAtLeast(startMs + 500L)
             addImageClip(projectId = projectId, imageUri = uri, startMs = startMs, endMs = endMs)
+            pushUndoState()
         }
     }
 
     fun onMoveImageClip(clipId: String, newStartMs: Long) {
         viewModelScope.launch {
             val clip = _uiState.value.imageClips.find { it.id == clipId } ?: return@launch
-            pushUndoState()
             val duration = clip.endMs - clip.startMs
             val videoDuration = _uiState.value.videoDurationMs
             val coercedStart = newStartMs.coerceAtLeast(0L).let {
                 if (videoDuration > 0L) it.coerceAtMost((videoDuration - duration).coerceAtLeast(0L)) else it
             }
             updateImageClip(clip.copy(startMs = coercedStart, endMs = coercedStart + duration))
+            pushUndoState()
         }
     }
 
     fun onResizeImageClipDuration(clipId: String, newEndMs: Long) {
         viewModelScope.launch {
             val clip = _uiState.value.imageClips.find { it.id == clipId } ?: return@launch
-            pushUndoState()
             val minEnd = clip.startMs + 500L
             val videoDuration = _uiState.value.videoDurationMs
             val coercedEnd = newEndMs.coerceAtLeast(minEnd).let {
                 if (videoDuration > 0L) it.coerceAtMost(videoDuration) else it
             }
             updateImageClip(clip.copy(endMs = coercedEnd))
+            pushUndoState()
         }
     }
 
@@ -573,6 +598,7 @@ class TimelineViewModel @Inject constructor(
             updateImageClip(
                 clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
             )
+            pushUndoState()
         }
     }
 
@@ -588,6 +614,7 @@ class TimelineViewModel @Inject constructor(
             subtitleClipRepository.updateClip(
                 clip.copy(xPct = xPct, yPct = yPct, widthPct = widthPct, heightPct = heightPct)
             )
+            pushUndoState()
         }
     }
 
@@ -631,6 +658,23 @@ class TimelineViewModel @Inject constructor(
         bgmClipRepository.deleteAllByProjectId(projectId)
         for (bgm in snapshot.bgmClips) {
             bgmClipRepository.addClip(bgm)
+        }
+        if (snapshot.frameWidth > 0 && snapshot.frameHeight > 0) {
+            // Frame is restored directly via the repository (not SetProjectFrameUseCase)
+            // because snapshot values already passed validation when first applied;
+            // re-validating could reject a legitimate prior state if validation rules
+            // change in the future.
+            val current = editProjectRepository.getProject(projectId)
+            if (current != null) {
+                editProjectRepository.updateProject(
+                    current.copy(
+                        frameWidth = snapshot.frameWidth,
+                        frameHeight = snapshot.frameHeight,
+                        backgroundColorHex = snapshot.backgroundColorHex,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            }
         }
     }
 
@@ -722,6 +766,7 @@ class TimelineViewModel @Inject constructor(
                 trimStartMs = localTrimStart,
                 trimEndMs = localTrimEnd
             )
+            pushUndoState()
         }
     }
 
@@ -748,6 +793,7 @@ class TimelineViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(showAppendSheet = false, isPlaying = false)
             val info = videoMetadataExtractor.extract(uri) ?: return@launch
             addVideoSegment(projectId = projectId, videoInfo = info)
+            pushUndoState()
         }
     }
 
@@ -756,6 +802,7 @@ class TimelineViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(showAppendSheet = false, isPlaying = false)
             val info = imageMetadataExtractor.extract(uri) ?: return@launch
             addImageSegment(projectId = projectId, imageInfo = info)
+            pushUndoState()
         }
     }
 
@@ -785,12 +832,14 @@ class TimelineViewModel @Inject constructor(
                 isPlaying = false,
                 playbackPositionMs = 0L
             )
+            pushUndoState()
         }
     }
 
     fun onUpdateImageSegmentDuration(segmentId: String, durationMs: Long) {
         viewModelScope.launch {
             updateImageSegmentDuration(segmentId, durationMs)
+            pushUndoState()
         }
     }
 
@@ -800,8 +849,8 @@ class TimelineViewModel @Inject constructor(
             if (seg.type != SegmentType.IMAGE) return@launch
             val clamped = requestedDurationMs.coerceIn(MIN_IMAGE_DURATION_MS, MAX_IMAGE_DURATION_MS)
             if (clamped == seg.durationMs) return@launch
-            pushUndoState()
             updateImageSegmentDuration(segmentId, clamped)
+            pushUndoState()
         }
     }
 
@@ -814,6 +863,7 @@ class TimelineViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             updateImageSegmentPosition(segmentId, xPct, yPct, widthPct, heightPct)
+            pushUndoState()
         }
     }
 
@@ -883,9 +933,9 @@ class TimelineViewModel @Inject constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         viewModelScope.launch {
-            pushUndoState()
             duplicateSegmentRange(segmentId, start, end)
             resetRangeMode()
+            pushUndoState()
         }
     }
 
@@ -896,9 +946,9 @@ class TimelineViewModel @Inject constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         viewModelScope.launch {
-            pushUndoState()
             removeSegmentRange(segmentId, start, end)
             resetRangeMode()
+            pushUndoState()
         }
     }
 
@@ -909,10 +959,10 @@ class TimelineViewModel @Inject constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         viewModelScope.launch {
-            pushUndoState()
             val result = splitSegment(segmentId, start, end)
             updateSegmentVolume(result.middle.id, value)
             resetRangeMode()
+            pushUndoState()
         }
     }
 
@@ -923,10 +973,10 @@ class TimelineViewModel @Inject constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         viewModelScope.launch {
-            pushUndoState()
             val result = splitSegment(segmentId, start, end)
             updateSegmentSpeed(result.middle.id, value)
             resetRangeMode()
+            pushUndoState()
         }
     }
 
@@ -1012,9 +1062,9 @@ class TimelineViewModel @Inject constructor(
         val color = state.pendingBackgroundColorHex.trim()
         viewModelScope.launch {
             try {
-                pushUndoState()
                 setProjectFrame(projectId, width, height, color)
                 _uiState.value = _uiState.value.copy(showFrameSheet = false, frameError = null)
+                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 // SetProjectFrameUseCase is the source of truth for color/dimension
                 // validation; keep its message as-is for the UI.
@@ -1102,7 +1152,6 @@ class TimelineViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                pushUndoState()
                 val editId = state.editingTextOverlayId
                 if (editId == null) {
                     addTextOverlay(
@@ -1129,6 +1178,7 @@ class TimelineViewModel @Inject constructor(
                     showTextOverlaySheet = false,
                     textOverlayError = null
                 )
+                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(
                     textOverlayError = e.message ?: "Invalid text overlay"
@@ -1143,9 +1193,9 @@ class TimelineViewModel @Inject constructor(
 
     fun onDuplicateTextOverlay(overlayId: String) {
         viewModelScope.launch {
-            pushUndoState()
             try {
                 duplicateTextOverlay(overlayId)
+                pushUndoState()
             } catch (_: IllegalArgumentException) {
                 // overlay disappeared between selection and action; safe to ignore
             }
@@ -1154,11 +1204,11 @@ class TimelineViewModel @Inject constructor(
 
     fun onDeleteTextOverlay(overlayId: String) {
         viewModelScope.launch {
-            pushUndoState()
             deleteTextOverlay(overlayId)
             if (_uiState.value.selectedTextOverlayId == overlayId) {
                 _uiState.value = _uiState.value.copy(selectedTextOverlayId = null)
             }
+            pushUndoState()
         }
     }
 
@@ -1175,7 +1225,6 @@ class TimelineViewModel @Inject constructor(
                     return@launch
                 }
                 val startMs = _uiState.value.playbackPositionMs
-                pushUndoState()
                 addBgmClip(
                     projectId = projectId,
                     sourceUri = uri,
@@ -1184,6 +1233,7 @@ class TimelineViewModel @Inject constructor(
                     volumeScale = 1.0f
                 )
                 _uiState.value = _uiState.value.copy(isAddingBgm = false)
+                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(
                     isAddingBgm = false,
@@ -1200,8 +1250,8 @@ class TimelineViewModel @Inject constructor(
     fun onUpdateBgmStartMs(clipId: String, newStartMs: Long) {
         viewModelScope.launch {
             try {
-                pushUndoState()
                 updateBgmClip(clipId, startMs = newStartMs.coerceAtLeast(0L))
+                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(bgmError = e.message)
             }
@@ -1211,8 +1261,8 @@ class TimelineViewModel @Inject constructor(
     fun onUpdateBgmVolume(clipId: String, newVolume: Float) {
         viewModelScope.launch {
             try {
-                pushUndoState()
                 updateBgmClip(clipId, volumeScale = newVolume)
+                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(bgmError = e.message)
             }
@@ -1221,11 +1271,11 @@ class TimelineViewModel @Inject constructor(
 
     fun onDeleteBgmClip(clipId: String) {
         viewModelScope.launch {
-            pushUndoState()
             deleteBgmClip(clipId)
             if (_uiState.value.selectedBgmClipId == clipId) {
                 _uiState.value = _uiState.value.copy(selectedBgmClipId = null)
             }
+            pushUndoState()
         }
     }
 
