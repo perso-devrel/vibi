@@ -1,5 +1,6 @@
 package com.example.dubcast.domain.usecase.export
 
+import com.example.dubcast.domain.model.BgmClip
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.SubtitleClip
@@ -21,7 +22,9 @@ class ExportWithDubbingUseCase @Inject constructor(
         frame: FrameInput? = null,
         imageClips: List<ImageClip> = emptyList(),
         textOverlays: List<TextOverlay> = emptyList(),
+        bgmClips: List<BgmClip> = emptyList(),
         resolveImagePath: suspend (imageUri: String) -> String? = { null },
+        resolveAudioPath: suspend (audioUri: String) -> String? = { null },
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
         require(segments.isNotEmpty()) { "segments must not be empty" }
@@ -64,6 +67,15 @@ class ExportWithDubbingUseCase @Inject constructor(
             )
         }
 
+        val bgmMixInputs = bgmClips.mapNotNull { clip ->
+            val localPath = resolveAudioPath(clip.sourceUri) ?: return@mapNotNull null
+            BgmClipMixInput(
+                audioFilePath = localPath,
+                startMs = clip.startMs,
+                volume = clip.volumeScale
+            )
+        }
+
         return ffmpegExecutor.renderProject(
             segments = segments,
             dubClips = mixInputs,
@@ -72,6 +84,7 @@ class ExportWithDubbingUseCase @Inject constructor(
             assFilePath = assPath,
             fontDir = fontDir,
             frame = frame,
+            bgmClips = bgmMixInputs,
             onProgress = onProgress
         )
     }

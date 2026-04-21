@@ -3,6 +3,7 @@ package com.example.dubcast.di
 import android.content.Context
 import androidx.room.Room
 import com.example.dubcast.data.local.db.DubCastDatabase
+import com.example.dubcast.data.local.db.dao.BgmClipDao
 import com.example.dubcast.data.local.db.dao.DubClipDao
 import com.example.dubcast.data.local.db.dao.EditProjectDao
 import com.example.dubcast.data.local.db.dao.ImageClipDao
@@ -38,7 +39,8 @@ object DatabaseModule {
                 DubCastDatabase.MIGRATION_7_8,
                 DubCastDatabase.MIGRATION_8_9,
                 DubCastDatabase.MIGRATION_9_10,
-                DubCastDatabase.MIGRATION_10_11
+                DubCastDatabase.MIGRATION_10_11,
+                DubCastDatabase.MIGRATION_11_12
             )
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
@@ -61,4 +63,7 @@ object DatabaseModule {
 
     @Provides
     fun provideTextOverlayDao(db: DubCastDatabase): TextOverlayDao = db.textOverlayDao()
+
+    @Provides
+    fun provideBgmClipDao(db: DubCastDatabase): BgmClipDao = db.bgmClipDao()
 }

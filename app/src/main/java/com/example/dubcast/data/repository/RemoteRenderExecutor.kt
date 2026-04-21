@@ -2,12 +2,14 @@ package com.example.dubcast.data.repository
 
 import android.content.Context
 import com.example.dubcast.data.remote.api.BffApiService
+import com.example.dubcast.data.remote.dto.RenderBgmClip
 import com.example.dubcast.data.remote.dto.RenderConfig
 import com.example.dubcast.data.remote.dto.RenderDubClip
 import com.example.dubcast.data.remote.dto.RenderFrame
 import com.example.dubcast.data.remote.dto.RenderImageClip
 import com.example.dubcast.data.remote.dto.RenderSegment
 import com.example.dubcast.domain.model.SegmentType
+import com.example.dubcast.domain.usecase.export.BgmClipMixInput
 import com.example.dubcast.domain.usecase.export.DubClipMixInput
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
 import com.example.dubcast.domain.usecase.export.FrameInput
@@ -42,6 +44,7 @@ class RemoteRenderExecutor @Inject constructor(
         assFilePath: String?,
         fontDir: String?,
         frame: FrameInput?,
+        bgmClips: List<BgmClipMixInput>,
         onProgress: (percent: Int) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
@@ -154,6 +157,27 @@ class RemoteRenderExecutor @Inject constructor(
                 )
             }
 
+            // BGM parts
+            val bgmParts = mutableListOf<MultipartBody.Part>()
+            val renderBgmClips = mutableListOf<RenderBgmClip>()
+            for ((index, clip) in bgmClips.withIndex()) {
+                val key = "bgm_$index"
+                val audioFile = File(clip.audioFilePath)
+                bgmParts.add(
+                    MultipartBody.Part.createFormData(
+                        key, audioFile.name,
+                        audioFile.asRequestBody("audio/*".toMediaType())
+                    )
+                )
+                renderBgmClips.add(
+                    RenderBgmClip(
+                        audioFileKey = key,
+                        startMs = clip.startMs,
+                        volume = clip.volume
+                    )
+                )
+            }
+
             val subtitlePart = if (assFilePath != null) {
                 val assFile = File(assFilePath)
                 if (assFile.exists()) {
@@ -174,7 +198,8 @@ class RemoteRenderExecutor @Inject constructor(
                         height = it.height,
                         backgroundColorHex = it.backgroundColorHex
                     )
-                }
+                },
+                bgmClips = renderBgmClips
             )
             val configJson = moshi.adapter(RenderConfig::class.java).toJson(config)
             val configBody = configJson.toRequestBody("application/json".toMediaType())
@@ -186,6 +211,7 @@ class RemoteRenderExecutor @Inject constructor(
                 subtitles = subtitlePart,
                 imageFiles = imageParts,
                 segmentImageFiles = segmentImageParts,
+                bgmFiles = bgmParts,
                 config = configBody
             )
             val jobId = response.jobId

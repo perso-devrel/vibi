@@ -50,6 +50,12 @@ data class FrameInput(
     val backgroundColorHex: String = "#000000"
 )
 
+data class BgmClipMixInput(
+    val audioFilePath: String,
+    val startMs: Long,
+    val volume: Float = 1.0f
+)
+
 interface FfmpegExecutor {
     suspend fun renderProject(
         segments: List<SegmentInput>,
@@ -59,6 +65,7 @@ interface FfmpegExecutor {
         assFilePath: String? = null,
         fontDir: String? = null,
         frame: FrameInput? = null,
+        bgmClips: List<BgmClipMixInput> = emptyList(),
         onProgress: (percent: Int) -> Unit
     ): Result<String>
 }

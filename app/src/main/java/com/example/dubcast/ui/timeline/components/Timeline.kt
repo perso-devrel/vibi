@@ -88,6 +88,9 @@ fun Timeline(
     selectedTextOverlayId: String? = null,
     onTextOverlaySelected: (String?) -> Unit = {},
     onTextOverlayLongPressed: (String) -> Unit = {},
+    bgmClips: List<com.example.dubcast.domain.model.BgmClip> = emptyList(),
+    selectedBgmClipId: String? = null,
+    onBgmClipSelected: (String?) -> Unit = {},
     onAppendRequested: () -> Unit,
     onSeek: (Long) -> Unit,
     onTrimStartChanged: (Long) -> Unit,
@@ -281,6 +284,24 @@ fun Timeline(
                             isSelected = overlay.id == selectedTextOverlayId,
                             onClick = { onTextOverlaySelected(overlay.id) },
                             onLongPress = { onTextOverlayLongPressed(overlay.id) },
+                            totalWidthDp = totalWidthDp
+                        )
+                    }
+                }
+
+                // BGM track
+                Box(
+                    modifier = Modifier
+                        .width(totalWidthDp)
+                        .height(28.dp)
+                        .padding(vertical = 1.dp)
+                ) {
+                    bgmClips.forEach { clip ->
+                        BgmTrackItem(
+                            clip = clip,
+                            videoDurationMs = totalDurationMs,
+                            isSelected = clip.id == selectedBgmClipId,
+                            onClick = { onBgmClipSelected(clip.id) },
                             totalWidthDp = totalWidthDp
                         )
                     }
@@ -586,6 +607,50 @@ private fun TextOverlayTrackItem(
     ) {
         Text(
             text = overlay.text,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+    }
+}
+
+private val BgmTrackColor = Color(0xFF26A69A)
+
+@Composable
+private fun BgmTrackItem(
+    clip: com.example.dubcast.domain.model.BgmClip,
+    videoDurationMs: Long,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    totalWidthDp: Dp
+) {
+    if (videoDurationMs <= 0L) return
+    val density = LocalDensity.current
+    val totalWidthPx = with(density) { totalWidthDp.toPx() }
+    val pxPerMs = totalWidthPx / videoDurationMs.toFloat()
+    // Cap visible BGM length to remaining timeline (no looping policy).
+    val effectiveEndMs = (clip.startMs + clip.sourceDurationMs).coerceAtMost(videoDurationMs)
+    val widthMs = (effectiveEndMs - clip.startMs).coerceAtLeast(1L)
+    val offsetXDp = with(density) { (clip.startMs * pxPerMs).toDp() }
+    val widthDp = with(density) { (widthMs * pxPerMs).toDp() }
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+
+    Box(
+        modifier = Modifier
+            .offset(x = offsetXDp)
+            .width(widthDp.coerceAtLeast(20.dp))
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(4.dp))
+            .background(BgmTrackColor.copy(alpha = 0.85f))
+            .border(2.dp, borderColor, RoundedCornerShape(4.dp))
+            .pointerInput(clip.id) {
+                detectTapGestures { onClick() }
+            }
+    ) {
+        Text(
+            text = "♪",
             color = Color.White,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,

@@ -1,5 +1,6 @@
 package com.example.dubcast.fake
 
+import com.example.dubcast.domain.usecase.export.BgmClipMixInput
 import com.example.dubcast.domain.usecase.export.DubClipMixInput
 import com.example.dubcast.domain.usecase.export.FfmpegExecutor
 import com.example.dubcast.domain.usecase.export.FrameInput
@@ -13,6 +14,7 @@ class FakeFfmpegExecutor : FfmpegExecutor {
     var lastImageInputs: List<ImageClipMixInput>? = null
     var lastSegments: List<SegmentInput>? = null
     var lastFrame: FrameInput? = null
+    var lastBgmInputs: List<BgmClipMixInput>? = null
 
     override suspend fun renderProject(
         segments: List<SegmentInput>,
@@ -22,12 +24,14 @@ class FakeFfmpegExecutor : FfmpegExecutor {
         assFilePath: String?,
         fontDir: String?,
         frame: FrameInput?,
+        bgmClips: List<BgmClipMixInput>,
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
         lastSegments = segments
         lastMixInputs = dubClips
         lastImageInputs = imageClips
         lastFrame = frame
+        lastBgmInputs = bgmClips
         progressSteps.forEach { onProgress(it) }
         return mixResult
     }

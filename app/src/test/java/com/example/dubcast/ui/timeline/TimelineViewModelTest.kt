@@ -13,6 +13,9 @@ import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
 import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
+import com.example.dubcast.domain.usecase.bgm.AddBgmClipUseCase
+import com.example.dubcast.domain.usecase.bgm.DeleteBgmClipUseCase
+import com.example.dubcast.domain.usecase.bgm.UpdateBgmClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.text.AddTextOverlayUseCase
@@ -35,6 +38,8 @@ import com.example.dubcast.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
+import com.example.dubcast.fake.FakeAudioMetadataExtractor
+import com.example.dubcast.fake.FakeBgmClipRepository
 import com.example.dubcast.fake.FakeDubClipRepository
 import com.example.dubcast.fake.FakeEditProjectRepository
 import com.example.dubcast.fake.FakeImageClipRepository
@@ -68,9 +73,11 @@ class TimelineViewModelTest {
     private lateinit var segmentRepo: FakeSegmentRepository
     private lateinit var projectRepo: FakeEditProjectRepository
     private lateinit var textOverlayRepo: FakeTextOverlayRepository
+    private lateinit var bgmRepo: FakeBgmClipRepository
     private lateinit var ttsRepo: FakeTtsRepository
     private lateinit var videoExtractor: FakeVideoMetadataExtractor
     private lateinit var imageExtractor: FakeImageMetadataExtractor
+    private lateinit var audioExtractor: FakeAudioMetadataExtractor
     private lateinit var vm: TimelineViewModel
 
     private val projectId = "proj-1"
@@ -83,9 +90,11 @@ class TimelineViewModelTest {
         segmentRepo = FakeSegmentRepository()
         projectRepo = FakeEditProjectRepository(segmentRepo)
         textOverlayRepo = FakeTextOverlayRepository()
+        bgmRepo = FakeBgmClipRepository()
         ttsRepo = FakeTtsRepository()
         videoExtractor = FakeVideoMetadataExtractor()
         imageExtractor = FakeImageMetadataExtractor()
+        audioExtractor = FakeAudioMetadataExtractor()
         vm = TimelineViewModel(
             savedStateHandle = SavedStateHandle(mapOf("projectId" to projectId)),
             segmentRepository = segmentRepo,
@@ -94,6 +103,7 @@ class TimelineViewModelTest {
             imageClipRepository = imageRepo,
             editProjectRepository = projectRepo,
             textOverlayRepository = textOverlayRepo,
+            bgmClipRepository = bgmRepo,
             ttsRepository = ttsRepo,
             synthesizeDubClip = SynthesizeDubClipUseCase(ttsRepo, dubRepo),
             getVoiceList = GetVoiceListUseCase(ttsRepo),
@@ -121,8 +131,12 @@ class TimelineViewModelTest {
             updateTextOverlay = UpdateTextOverlayUseCase(textOverlayRepo),
             deleteTextOverlay = DeleteTextOverlayUseCase(textOverlayRepo),
             duplicateTextOverlay = DuplicateTextOverlayUseCase(textOverlayRepo),
+            addBgmClip = AddBgmClipUseCase(bgmRepo),
+            updateBgmClip = UpdateBgmClipUseCase(bgmRepo),
+            deleteBgmClip = DeleteBgmClipUseCase(bgmRepo),
             videoMetadataExtractor = videoExtractor,
-            imageMetadataExtractor = imageExtractor
+            imageMetadataExtractor = imageExtractor,
+            audioMetadataExtractor = audioExtractor
         )
     }
 
@@ -763,5 +777,88 @@ class TimelineViewModelTest {
 
         assertEquals(0, textOverlayRepo.all().size)
         assertEquals(null, vm.uiState.value.selectedTextOverlayId)
+    }
+
+    @Test
+    fun `onPickBgmAudio extracts duration and adds clip at current playhead`() = runTest {
+        seedSegment(durationMs = 30_000L)
+        advanceUntilIdle()
+        vm.onUpdatePlaybackPosition(7_500L)
+        audioExtractor.nextInfo = com.example.dubcast.domain.usecase.input.AudioInfo(
+            uri = "content://song.mp3", durationMs = 90_000L
+        )
+
+        vm.onPickBgmAudio("content://song.mp3")
+        advanceUntilIdle()
+
+        val all = bgmRepo.all()
+        assertEquals(1, all.size)
+        assertEquals("content://song.mp3", all[0].sourceUri)
+        assertEquals(90_000L, all[0].sourceDurationMs)
+        assertEquals(7_500L, all[0].startMs)
+        assertEquals(false, vm.uiState.value.isAddingBgm)
+    }
+
+    @Test
+    fun `onPickBgmAudio sets error when extractor returns null`() = runTest {
+        seedSegment(durationMs = 30_000L)
+        advanceUntilIdle()
+        audioExtractor.nextInfo = null
+
+        vm.onPickBgmAudio("content://broken.mp3")
+        advanceUntilIdle()
+
+        assertNotNull(vm.uiState.value.bgmError)
+        assertEquals(0, bgmRepo.all().size)
+    }
+
+    @Test
+    fun `onUpdateBgmStartMs persists clamped non-negative start`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        bgmRepo.addClip(
+            com.example.dubcast.domain.model.BgmClip(
+                "b1", projectId, "content://x", 60_000L, 0L
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onUpdateBgmStartMs("b1", -100L)
+        advanceUntilIdle()
+
+        assertEquals(0L, bgmRepo.getClip("b1")!!.startMs)
+    }
+
+    @Test
+    fun `onUpdateBgmVolume clamps to allowed range`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        bgmRepo.addClip(
+            com.example.dubcast.domain.model.BgmClip(
+                "b1", projectId, "content://x", 60_000L, 0L
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onUpdateBgmVolume("b1", 5f)
+        advanceUntilIdle()
+
+        assertEquals(2f, bgmRepo.getClip("b1")!!.volumeScale)
+    }
+
+    @Test
+    fun `onDeleteBgmClip removes clip and clears selection`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        bgmRepo.addClip(
+            com.example.dubcast.domain.model.BgmClip(
+                "b1", projectId, "content://x", 60_000L, 0L
+            )
+        )
+        advanceUntilIdle()
+        vm.onSelectBgmClip("b1")
+
+        vm.onDeleteBgmClip("b1")
+        advanceUntilIdle()
+
+        assertEquals(0, bgmRepo.all().size)
+        assertEquals(null, vm.uiState.value.selectedBgmClipId)
     }
 }

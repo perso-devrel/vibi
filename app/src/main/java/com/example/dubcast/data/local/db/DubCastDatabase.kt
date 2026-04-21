@@ -4,12 +4,14 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.dubcast.data.local.db.dao.BgmClipDao
 import com.example.dubcast.data.local.db.dao.DubClipDao
 import com.example.dubcast.data.local.db.dao.EditProjectDao
 import com.example.dubcast.data.local.db.dao.ImageClipDao
 import com.example.dubcast.data.local.db.dao.SegmentDao
 import com.example.dubcast.data.local.db.dao.SubtitleClipDao
 import com.example.dubcast.data.local.db.dao.TextOverlayDao
+import com.example.dubcast.data.local.db.entity.BgmClipEntity
 import com.example.dubcast.data.local.db.entity.DubClipEntity
 import com.example.dubcast.data.local.db.entity.EditProjectEntity
 import com.example.dubcast.data.local.db.entity.ImageClipEntity
@@ -24,9 +26,10 @@ import com.example.dubcast.data.local.db.entity.TextOverlayEntity
         SubtitleClipEntity::class,
         ImageClipEntity::class,
         SegmentEntity::class,
-        TextOverlayEntity::class
+        TextOverlayEntity::class,
+        BgmClipEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -36,6 +39,7 @@ abstract class DubCastDatabase : RoomDatabase() {
     abstract fun imageClipDao(): ImageClipDao
     abstract fun segmentDao(): SegmentDao
     abstract fun textOverlayDao(): TextOverlayDao
+    abstract fun bgmClipDao(): BgmClipDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -215,6 +219,21 @@ abstract class DubCastDatabase : RoomDatabase() {
                         endMs INTEGER NOT NULL,
                         xPct REAL NOT NULL DEFAULT 50.0,
                         yPct REAL NOT NULL DEFAULT 50.0
+                    )"""
+                )
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS bgm_clips (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        projectId TEXT NOT NULL,
+                        sourceUri TEXT NOT NULL,
+                        sourceDurationMs INTEGER NOT NULL,
+                        startMs INTEGER NOT NULL,
+                        volumeScale REAL NOT NULL DEFAULT 1.0
                     )"""
                 )
             }

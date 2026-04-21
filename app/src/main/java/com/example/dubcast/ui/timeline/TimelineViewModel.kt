@@ -9,9 +9,11 @@ import com.example.dubcast.domain.model.ImageClip
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
+import com.example.dubcast.domain.model.BgmClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.model.TextOverlay
 import com.example.dubcast.domain.model.Voice
+import com.example.dubcast.domain.repository.BgmClipRepository
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
@@ -22,6 +24,10 @@ import com.example.dubcast.domain.repository.TtsRepository
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
+import com.example.dubcast.domain.usecase.bgm.AddBgmClipUseCase
+import com.example.dubcast.domain.usecase.bgm.DeleteBgmClipUseCase
+import com.example.dubcast.domain.usecase.bgm.UpdateBgmClipUseCase
+import com.example.dubcast.domain.usecase.input.AudioMetadataExtractor
 import com.example.dubcast.domain.usecase.input.ImageMetadataExtractor
 import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
 import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
@@ -128,7 +134,11 @@ data class TimelineUiState(
     val pendingOverlayColorHex: String = TextOverlay.DEFAULT_COLOR_HEX,
     val pendingOverlayStartMs: Long = 0L,
     val pendingOverlayEndMs: Long = 0L,
-    val textOverlayError: String? = null
+    val textOverlayError: String? = null,
+    val bgmClips: List<BgmClip> = emptyList(),
+    val selectedBgmClipId: String? = null,
+    val isAddingBgm: Boolean = false,
+    val bgmError: String? = null
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -142,7 +152,8 @@ data class TimelineSnapshot(
     val dubClips: List<DubClip>,
     val subtitleClips: List<SubtitleClip>,
     val imageClips: List<ImageClip>,
-    val textOverlays: List<TextOverlay> = emptyList()
+    val textOverlays: List<TextOverlay> = emptyList(),
+    val bgmClips: List<BgmClip> = emptyList()
 )
 
 @HiltViewModel
@@ -154,6 +165,7 @@ class TimelineViewModel @Inject constructor(
     private val imageClipRepository: ImageClipRepository,
     private val editProjectRepository: EditProjectRepository,
     private val textOverlayRepository: TextOverlayRepository,
+    private val bgmClipRepository: BgmClipRepository,
     private val ttsRepository: TtsRepository,
     private val synthesizeDubClip: SynthesizeDubClipUseCase,
     private val getVoiceList: GetVoiceListUseCase,
@@ -181,8 +193,12 @@ class TimelineViewModel @Inject constructor(
     private val updateTextOverlay: UpdateTextOverlayUseCase,
     private val deleteTextOverlay: DeleteTextOverlayUseCase,
     private val duplicateTextOverlay: DuplicateTextOverlayUseCase,
+    private val addBgmClip: AddBgmClipUseCase,
+    private val updateBgmClip: UpdateBgmClipUseCase,
+    private val deleteBgmClip: DeleteBgmClipUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
-    private val imageMetadataExtractor: ImageMetadataExtractor
+    private val imageMetadataExtractor: ImageMetadataExtractor,
+    private val audioMetadataExtractor: AudioMetadataExtractor
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -201,6 +217,15 @@ class TimelineViewModel @Inject constructor(
         observeClips()
         observeProject()
         observeTextOverlays()
+        observeBgmClips()
+    }
+
+    private fun observeBgmClips() {
+        viewModelScope.launch {
+            bgmClipRepository.observeClips(projectId).collect { clips ->
+                _uiState.value = _uiState.value.copy(bgmClips = clips)
+            }
+        }
     }
 
     private fun observeProject() {
@@ -310,7 +335,8 @@ class TimelineViewModel @Inject constructor(
         val images = imageClipRepository.observeClips(projectId).first()
         val segs = segmentRepository.getByProjectId(projectId)
         val texts = textOverlayRepository.observeOverlays(projectId).first()
-        undoRedoManager.pushState(TimelineSnapshot(segs, dubs, subs, images, texts))
+        val bgms = bgmClipRepository.observeClips(projectId).first()
+        undoRedoManager.pushState(TimelineSnapshot(segs, dubs, subs, images, texts, bgms))
         updateUndoRedoState()
     }
 
@@ -601,6 +627,10 @@ class TimelineViewModel @Inject constructor(
         textOverlayRepository.deleteAllByProjectId(projectId)
         for (overlay in snapshot.textOverlays) {
             textOverlayRepository.addOverlay(overlay)
+        }
+        bgmClipRepository.deleteAllByProjectId(projectId)
+        for (bgm in snapshot.bgmClips) {
+            bgmClipRepository.addClip(bgm)
         }
     }
 
@@ -1128,6 +1158,73 @@ class TimelineViewModel @Inject constructor(
             deleteTextOverlay(overlayId)
             if (_uiState.value.selectedTextOverlayId == overlayId) {
                 _uiState.value = _uiState.value.copy(selectedTextOverlayId = null)
+            }
+        }
+    }
+
+    fun onPickBgmAudio(uri: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAddingBgm = true, bgmError = null)
+            try {
+                val info = audioMetadataExtractor.extract(uri)
+                if (info == null || info.durationMs <= 0L) {
+                    _uiState.value = _uiState.value.copy(
+                        isAddingBgm = false,
+                        bgmError = "오디오 메타데이터를 읽지 못함"
+                    )
+                    return@launch
+                }
+                val startMs = _uiState.value.playbackPositionMs
+                pushUndoState()
+                addBgmClip(
+                    projectId = projectId,
+                    sourceUri = uri,
+                    sourceDurationMs = info.durationMs,
+                    startMs = startMs,
+                    volumeScale = 1.0f
+                )
+                _uiState.value = _uiState.value.copy(isAddingBgm = false)
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(
+                    isAddingBgm = false,
+                    bgmError = e.message ?: "BGM을 추가하지 못함"
+                )
+            }
+        }
+    }
+
+    fun onSelectBgmClip(clipId: String?) {
+        _uiState.value = _uiState.value.copy(selectedBgmClipId = clipId)
+    }
+
+    fun onUpdateBgmStartMs(clipId: String, newStartMs: Long) {
+        viewModelScope.launch {
+            try {
+                pushUndoState()
+                updateBgmClip(clipId, startMs = newStartMs.coerceAtLeast(0L))
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(bgmError = e.message)
+            }
+        }
+    }
+
+    fun onUpdateBgmVolume(clipId: String, newVolume: Float) {
+        viewModelScope.launch {
+            try {
+                pushUndoState()
+                updateBgmClip(clipId, volumeScale = newVolume)
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(bgmError = e.message)
+            }
+        }
+    }
+
+    fun onDeleteBgmClip(clipId: String) {
+        viewModelScope.launch {
+            pushUndoState()
+            deleteBgmClip(clipId)
+            if (_uiState.value.selectedBgmClipId == clipId) {
+                _uiState.value = _uiState.value.copy(selectedBgmClipId = null)
             }
         }
     }
