@@ -278,7 +278,9 @@ class TimelineViewModelTest {
         assertEquals(1920, state.videoWidth)
         assertEquals(1080, state.videoHeight)
         assertEquals("content://video.mp4", state.videoUri)
-        assertEquals("seg-1", state.selectedSegmentId)
+        // Initial state is intentionally unselected — the user must tap a
+        // segment to enter the inline edit panel. (See loadSegments.)
+        assertEquals(null, state.selectedSegmentId)
     }
 
     @Test
@@ -741,12 +743,12 @@ class TimelineViewModelTest {
     }
 
     @Test
-    fun `onDuplicateTextOverlay places duplicate after source`() = runTest {
+    fun `onDuplicateTextOverlay places duplicate at same time on next free lane`() = runTest {
         seedSegment(durationMs = 30_000L)
         textOverlayRepo.addOverlay(
             com.example.dubcast.domain.model.TextOverlay(
                 id = "t1", projectId = projectId, text = "x",
-                startMs = 1000L, endMs = 3000L
+                startMs = 1000L, endMs = 3000L, lane = 0
             )
         )
         advanceUntilIdle()
@@ -754,10 +756,14 @@ class TimelineViewModelTest {
         vm.onDuplicateTextOverlay("t1")
         advanceUntilIdle()
 
-        val all = textOverlayRepo.all().sortedBy { it.startMs }
+        val all = textOverlayRepo.all()
         assertEquals(2, all.size)
-        assertEquals(3000L, all[1].startMs)
-        assertEquals(5000L, all[1].endMs)
+        // Duplicate retains the original time window — auto-lane drops it on
+        // the next free row instead of pushing it forward in time.
+        val dup = all.first { it.id != "t1" }
+        assertEquals(1000L, dup.startMs)
+        assertEquals(3000L, dup.endMs)
+        assertEquals(1, dup.lane)
     }
 
     @Test
@@ -982,5 +988,123 @@ class TimelineViewModelTest {
 
         val first = dubRepo.observeClips(projectId).first().first()
         assertEquals(1f, first.volume)
+    }
+
+    @Test
+    fun `selecting an image clip clears every other selection`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        imageRepo.addClip(
+            com.example.dubcast.domain.model.ImageClip(
+                id = "i1", projectId = projectId,
+                imageUri = "content://x", startMs = 0L, endMs = 1_000L
+            )
+        )
+        textOverlayRepo.addOverlay(
+            com.example.dubcast.domain.model.TextOverlay(
+                id = "t1", projectId = projectId, text = "x",
+                startMs = 0L, endMs = 1_000L
+            )
+        )
+        bgmRepo.addClip(
+            com.example.dubcast.domain.model.BgmClip(
+                id = "b1", projectId = projectId,
+                sourceUri = "content://m.mp3", sourceDurationMs = 1_000L, startMs = 0L
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+        vm.onSelectTextOverlay("t1")
+        vm.onSelectBgmClip("b1")
+        advanceUntilIdle()
+
+        vm.onSelectImageClip("i1")
+        val s = vm.uiState.value
+        assertEquals("i1", s.selectedImageClipId)
+        assertEquals(null, s.selectedTextOverlayId)
+        assertEquals(null, s.selectedBgmClipId)
+        assertEquals(null, s.selectedSegmentId)
+        assertEquals(null, s.selectedDubClipId)
+        assertEquals(null, s.selectedSubtitleClipId)
+    }
+
+    @Test
+    fun `adding image lands on a lane already free of text overlay collisions`() = runTest {
+        seedSegment(durationMs = 30_000L)
+        textOverlayRepo.addOverlay(
+            com.example.dubcast.domain.model.TextOverlay(
+                id = "t1", projectId = projectId, text = "x",
+                startMs = 0L, endMs = 2_000L, lane = 0
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+
+        vm.onInsertImage("content://img.jpg", defaultDurationMs = 1_000L)
+        advanceUntilIdle()
+
+        val img = imageRepo.observeClips(projectId).first().first()
+        assertEquals(1, img.lane)
+    }
+
+    @Test
+    fun `onChangeImageClipLane clamps below zero`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        imageRepo.addClip(
+            com.example.dubcast.domain.model.ImageClip(
+                id = "i1", projectId = projectId,
+                imageUri = "content://x", startMs = 0L, endMs = 1_000L, lane = 0
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+
+        vm.onChangeImageClipLane("i1", -3)
+        advanceUntilIdle()
+
+        assertEquals(0, imageRepo.observeClips(projectId).first().first().lane)
+    }
+
+    @Test
+    fun `onDuplicateImageClip places copy at same time on next free lane`() = runTest {
+        seedSegment(durationMs = 30_000L)
+        imageRepo.addClip(
+            com.example.dubcast.domain.model.ImageClip(
+                id = "i1", projectId = projectId,
+                imageUri = "content://x", startMs = 1_000L, endMs = 3_000L,
+                xPct = 60f, yPct = 40f, widthPct = 25f, heightPct = 25f, lane = 0
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+
+        vm.onDuplicateImageClip("i1")
+        advanceUntilIdle()
+
+        val all = imageRepo.observeClips(projectId).first()
+        assertEquals(2, all.size)
+        val dup = all.first { it.id != "i1" }
+        assertEquals(1_000L, dup.startMs)
+        assertEquals(3_000L, dup.endMs)
+        assertEquals(1, dup.lane)
+        assertEquals(60f, dup.xPct)
+        assertEquals(25f, dup.widthPct)
+    }
+
+    @Test
+    fun `onChangeTextOverlayLane increments persisted lane`() = runTest {
+        seedSegment(durationMs = 10_000L)
+        textOverlayRepo.addOverlay(
+            com.example.dubcast.domain.model.TextOverlay(
+                id = "t1", projectId = projectId, text = "x",
+                startMs = 0L, endMs = 1_000L, lane = 0
+            )
+        )
+        seedProject()
+        advanceUntilIdle()
+
+        vm.onChangeTextOverlayLane("t1", 2)
+        advanceUntilIdle()
+
+        assertEquals(2, textOverlayRepo.getOverlay("t1")!!.lane)
     }
 }

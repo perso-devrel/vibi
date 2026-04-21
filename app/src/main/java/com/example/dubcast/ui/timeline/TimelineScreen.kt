@@ -6,7 +6,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -37,8 +42,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -163,21 +170,42 @@ fun TimelineScreen(
         segmentStartOffset(state.segments, currentSegmentId)
     }
 
-    // Swap ExoPlayer to the current VIDEO segment's media and toggle
-    // playWhenReady in a single coordinated effect so the two signals
-    // cannot race across segment transitions.
-    LaunchedEffect(currentSegmentId, currentSegment?.sourceUri, state.isPlaying) {
+    // Track the currently loaded source URI in ExoPlayer separately from the
+    // segment id. When the next segment plays the same underlying file (which
+    // is the common case after split/duplicate operations), seek instead of
+    // reloading — that eliminates the brief stutter at segment boundaries.
+    val loadedSourceUri = remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(
+        currentSegmentId,
+        currentSegment?.sourceUri,
+        currentSegment?.volumeScale,
+        currentSegment?.speedScale,
+        state.isPlaying
+    ) {
         val seg = currentSegment
         if (seg == null) {
             exoPlayer.clearMediaItems()
             exoPlayer.playWhenReady = false
+            loadedSourceUri.value = null
             return@LaunchedEffect
         }
         if (seg.type == SegmentType.VIDEO) {
             val localMs = (state.playbackPositionMs - currentSegmentStart + seg.trimStartMs)
                 .coerceAtLeast(0L)
-            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(seg.sourceUri)), localMs)
-            exoPlayer.prepare()
+            if (loadedSourceUri.value == seg.sourceUri) {
+                exoPlayer.seekTo(localMs)
+            } else {
+                exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(seg.sourceUri)), localMs)
+                exoPlayer.prepare()
+                loadedSourceUri.value = seg.sourceUri
+            }
+            // Apply per-segment volume + speed to the preview. ExoPlayer's
+            // volume is 0f..1f (clip values above 1 — the BFF render still
+            // honours them); playbackParameters carries the speed scaling.
+            exoPlayer.volume = seg.volumeScale.coerceIn(0f, 1f)
+            exoPlayer.playbackParameters = androidx.media3.common.PlaybackParameters(
+                seg.speedScale.coerceIn(0.25f, 4f)
+            )
             exoPlayer.playWhenReady = state.isPlaying
         } else {
             exoPlayer.playWhenReady = false
@@ -305,7 +333,10 @@ fun TimelineScreen(
     ) { innerPadding ->
 
         val density = LocalDensity.current
-        var timelineHeightDp by remember { mutableStateOf(120f) }
+        // Compact default — only the video track is shown until the user
+        // adds dubs/photos/text/bgm. Each track row appears below the video
+        // when it actually has content. Resize handle still allows expanding.
+        var timelineHeightDp by remember { mutableStateOf(110f) }
 
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             val frameBackgroundColor = remember(state.backgroundColorHex) {
@@ -319,12 +350,17 @@ fun TimelineScreen(
                     .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
+                // Thin border so the user can see exactly where the export
+                // frame ends (esp. against the matching black backdrop).
+                val frameBorderColor = Color.White.copy(alpha = 0.5f)
                 val frameModifier = if (state.frameAspectRatio > 0f) {
                     Modifier.fillMaxWidth()
                         .aspectRatio(state.frameAspectRatio)
                         .background(frameBackgroundColor)
+                        .border(1.dp, frameBorderColor)
                 } else {
                     Modifier.matchParentSize()
+                        .border(1.dp, frameBorderColor)
                 }
                 Box(modifier = frameModifier) {
                     if (currentSegment?.type == SegmentType.IMAGE) {
@@ -374,16 +410,29 @@ fun TimelineScreen(
                     playbackPositionMs = state.playbackPositionMs,
                     selectedOverlayId = state.selectedTextOverlayId,
                     onSelect = { viewModel.onSelectTextOverlay(it) },
+                    onPositionChanged = { id, x, y ->
+                        viewModel.onUpdateTextOverlayScreenPosition(id, x, y)
+                    },
+                    onFontSizeChanged = { id, sp ->
+                        viewModel.onUpdateTextOverlayFontSize(id, sp)
+                    },
                     modifier = Modifier.matchParentSize()
                 )
                 }
             }
 
+            // Action bars + timeline live in their own surfaceVariant-tinted
+            // column so they read as separate from the (black) video preview
+            // area instead of bleeding into it.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
             if (state.isTrimming) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -433,25 +482,17 @@ fun TimelineScreen(
                     IconButton(onClick = { viewModel.onShowDubbingSheet() }) {
                         Icon(Icons.Default.MicExternalOn, contentDescription = "Insert Dubbing")
                     }
-                    IconButton(onClick = {
-                        imagePickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    }) {
-                        Icon(Icons.Default.Image, contentDescription = "Insert Image")
-                    }
-                    IconButton(onClick = { viewModel.onShowFrameSheet() }) {
-                        Icon(Icons.Default.AspectRatio, contentDescription = "Frame")
-                    }
-                    IconButton(onClick = { viewModel.onShowTextOverlaySheetForNew() }) {
-                        Icon(Icons.Default.TextFields, contentDescription = "Insert Text")
-                    }
-                    IconButton(
-                        onClick = { bgmPickerLauncher.launch(arrayOf("audio/*")) },
-                        enabled = !state.isAddingBgm
-                    ) {
-                        Icon(Icons.Default.MusicNote, contentDescription = "Add Background Music")
-                    }
+                    InsertMenu(
+                        bgmEnabled = !state.isAddingBgm,
+                        onInsertText = { viewModel.onShowTextOverlaySheetForNew() },
+                        onInsertImage = {
+                            imagePickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onInsertBgm = { bgmPickerLauncher.launch(arrayOf("audio/*")) },
+                        onShowFrameSheet = { viewModel.onShowFrameSheet() }
+                    )
                     Spacer(modifier = Modifier.weight(1f))
                     IconButton(
                         onClick = { viewModel.onUndo() },
@@ -519,6 +560,9 @@ fun TimelineScreen(
                         .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(onClick = { viewModel.onDuplicateImageClip(selectedImageClip.id) }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate Image")
+                    }
                     IconButton(onClick = { viewModel.onDeleteSelectedClip() }) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete")
                     }
@@ -592,16 +636,40 @@ fun TimelineScreen(
             }
 
             val selectedSegment = state.segments.find { it.id == state.selectedSegmentId }
+            // Auto-enter range mode for VIDEO selection, auto-exit when nothing
+            // is selected or a non-VIDEO segment is selected, so the green
+            // handles and edit panel only appear while editing a video clip.
+            LaunchedEffect(selectedSegment?.id, selectedSegment?.type) {
+                if (selectedSegment?.type == SegmentType.VIDEO) {
+                    if (state.rangeTargetSegmentId != selectedSegment.id) {
+                        viewModel.onEnterRangeMode(selectedSegment.id)
+                    }
+                } else if (state.isRangeSelecting) {
+                    viewModel.onCancelRangeMode()
+                }
+            }
             if (selectedSegment != null && !state.isTrimming) {
                 SelectedSegmentActionBar(
                     segment = selectedSegment,
                     canDelete = state.segments.size > 1,
-                    onEnterTrim = { viewModel.onEnterTrimMode() },
-                    onEnterRange = { viewModel.onEnterRangeMode(selectedSegment.id) },
                     onUpdateDuration = { ms ->
                         viewModel.onUpdateImageSegmentDuration(selectedSegment.id, ms)
                     },
-                    onDelete = { viewModel.onDeleteSelectedSegment() }
+                    onDelete = { viewModel.onDeleteSelectedSegment() },
+                    rangeStartMs = state.pendingRangeStartMs,
+                    rangeEndMs = state.pendingRangeEndMs,
+                    rangeVolume = state.pendingRangeVolume,
+                    rangeSpeed = state.pendingRangeSpeed,
+                    onRangeChange = { s, e ->
+                        viewModel.onSetPendingRangeEnd(e)
+                        viewModel.onSetPendingRangeStart(s)
+                    },
+                    onDuplicateRange = { viewModel.onDuplicateRange() },
+                    onDeleteRange = { viewModel.onDeleteRange() },
+                    onRangeVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                    onRangeSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                    onApplyRangeVolume = { viewModel.onApplyRangeVolume(it) },
+                    onApplyRangeSpeed = { viewModel.onApplyRangeSpeed(it) }
                 )
             }
 
@@ -612,7 +680,7 @@ fun TimelineScreen(
                     .pointerInput(Unit) {
                         detectVerticalDragGestures { _, dragAmount ->
                             val deltaDp = with(density) { dragAmount.toDp().value }
-                            timelineHeightDp = (timelineHeightDp - deltaDp).coerceIn(60f, 300f)
+                            timelineHeightDp = (timelineHeightDp - deltaDp).coerceIn(60f, 400f)
                         }
                     },
                 contentAlignment = Alignment.Center
@@ -652,6 +720,7 @@ fun TimelineScreen(
                 onDubClipMoved = { clipId, newStartMs -> viewModel.onMoveDubClip(clipId, newStartMs) },
                 onImageClipMoved = { clipId, newStartMs -> viewModel.onMoveImageClip(clipId, newStartMs) },
                 onImageClipResized = { clipId, newEndMs -> viewModel.onResizeImageClipDuration(clipId, newEndMs) },
+                onImageClipLaneChanged = { clipId, delta -> viewModel.onChangeImageClipLane(clipId, delta) },
                 onImageSegmentResized = { segmentId, newDurationMs ->
                     viewModel.onResizeImageSegmentByDrag(segmentId, newDurationMs)
                 },
@@ -659,9 +728,24 @@ fun TimelineScreen(
                 selectedTextOverlayId = state.selectedTextOverlayId,
                 onTextOverlaySelected = { viewModel.onSelectTextOverlay(it) },
                 onTextOverlayLongPressed = { viewModel.onDuplicateTextOverlay(it) },
+                onTextOverlayResized = { id, newEndMs -> viewModel.onResizeTextOverlay(id, newEndMs) },
+                onTextOverlayMoved = { id, newStartMs -> viewModel.onMoveTextOverlay(id, newStartMs) },
+                onTextOverlayLaneChanged = { id, delta -> viewModel.onChangeTextOverlayLane(id, delta) },
                 bgmClips = state.bgmClips,
                 selectedBgmClipId = state.selectedBgmClipId,
                 onBgmClipSelected = { viewModel.onSelectBgmClip(it) },
+                isRangeSelecting = state.isRangeSelecting,
+                rangeTargetSegmentId = state.rangeTargetSegmentId,
+                // Range coords are now GLOBAL timeline ms — selection can span
+                // multiple consecutive video segments. Pass identity offsets
+                // so Timeline.kt's local→global conversion is a no-op.
+                rangeTargetSegmentStartMs = 0L,
+                rangeTargetTrimStartMs = 0L,
+                rangeTargetTrimEndMs = state.videoDurationMs,
+                pendingRangeStartMs = state.pendingRangeStartMs,
+                pendingRangeEndMs = state.pendingRangeEndMs,
+                onRangeStartChanged = { viewModel.onSetPendingRangeStart(it) },
+                onRangeEndChanged = { viewModel.onSetPendingRangeEnd(it) },
                 onAppendRequested = { viewModel.onShowAppendSheet() },
                 onSeek = { posMs ->
                     val clamped = posMs.coerceIn(0L, state.videoDurationMs)
@@ -679,6 +763,7 @@ fun TimelineScreen(
                     .fillMaxWidth()
                     .height(timelineHeightDp.dp)
             )
+            } // end of action-bar/timeline surfaceVariant Column
         }
     }
 
@@ -710,29 +795,8 @@ fun TimelineScreen(
         )
     }
 
-    if (state.isRangeSelecting) {
-        val rangeSeg = state.segments.find { it.id == state.rangeTargetSegmentId }
-        if (rangeSeg != null) {
-            RangeActionSheet(
-                segment = rangeSeg,
-                pendingStartMs = state.pendingRangeStartMs,
-                pendingEndMs = state.pendingRangeEndMs,
-                pendingVolume = state.pendingRangeVolume,
-                pendingSpeed = state.pendingRangeSpeed,
-                onRangeChange = { s, e ->
-                    viewModel.onSetPendingRangeEnd(e)
-                    viewModel.onSetPendingRangeStart(s)
-                },
-                onDuplicate = { viewModel.onDuplicateRange() },
-                onDelete = { viewModel.onDeleteRange() },
-                onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
-                onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
-                onApplyVolume = { viewModel.onApplyRangeVolume(it) },
-                onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
-                onDismiss = { viewModel.onCancelRangeMode() }
-            )
-        }
-    }
+    // Range edit modal removed: contents are now inline in SelectedSegmentActionBar
+    // for any selected VIDEO segment.
 
     if (state.showTextOverlaySheet) {
         InsertTextOverlaySheet(
@@ -849,26 +913,22 @@ private fun FrameSettingsSheet(
 private fun SelectedSegmentActionBar(
     segment: Segment,
     canDelete: Boolean,
-    onEnterTrim: () -> Unit,
-    onEnterRange: () -> Unit,
     onUpdateDuration: (Long) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    rangeStartMs: Long,
+    rangeEndMs: Long,
+    rangeVolume: Float,
+    rangeSpeed: Float,
+    onRangeChange: (Long, Long) -> Unit,
+    onDuplicateRange: () -> Unit,
+    onDeleteRange: () -> Unit,
+    onRangeVolumeChange: (Float) -> Unit,
+    onRangeSpeedChange: (Float) -> Unit,
+    onApplyRangeVolume: (Float) -> Unit,
+    onApplyRangeSpeed: (Float) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (segment.type == SegmentType.VIDEO) {
-                IconButton(onClick = onEnterTrim) {
-                    Icon(Icons.Default.ContentCut, contentDescription = "Trim")
-                }
-                IconButton(onClick = onEnterRange) {
-                    Icon(Icons.Default.Tune, contentDescription = "Range edit")
-                }
-            }
-            if (canDelete) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete")
-                }
-            }
             Spacer(modifier = Modifier.weight(1f))
             val extras = buildString {
                 if (segment.speedScale != 1f) append(" · ${"%.2f".format(segment.speedScale)}x")
@@ -878,6 +938,23 @@ private fun SelectedSegmentActionBar(
                 text = "${segment.type.name} · ${formatTime(segment.effectiveDurationMs)}$extras",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (segment.type == SegmentType.VIDEO) {
+            VideoRangeEditPanel(
+                segment = segment,
+                rangeStartMs = rangeStartMs,
+                rangeEndMs = rangeEndMs,
+                rangeVolume = rangeVolume,
+                rangeSpeed = rangeSpeed,
+                onRangeChange = onRangeChange,
+                onDuplicateRange = onDuplicateRange,
+                onDeleteRange = onDeleteRange,
+                onRangeVolumeChange = onRangeVolumeChange,
+                onRangeSpeedChange = onRangeSpeedChange,
+                onApplyRangeVolume = onApplyRangeVolume,
+                onApplyRangeSpeed = onApplyRangeSpeed
             )
         }
 
@@ -903,6 +980,165 @@ private fun SelectedSegmentActionBar(
                     modifier = Modifier.width(56.dp)
                 )
             }
+        }
+    }
+}
+
+private enum class VideoEditTool { NONE, VOLUME, SPEED }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VideoRangeEditPanel(
+    segment: Segment,
+    rangeStartMs: Long,
+    rangeEndMs: Long,
+    rangeVolume: Float,
+    rangeSpeed: Float,
+    onRangeChange: (Long, Long) -> Unit,
+    onDuplicateRange: () -> Unit,
+    onDeleteRange: () -> Unit,
+    onRangeVolumeChange: (Float) -> Unit,
+    onRangeSpeedChange: (Float) -> Unit,
+    onApplyRangeVolume: (Float) -> Unit,
+    onApplyRangeSpeed: (Float) -> Unit
+) {
+    val trimStart = segment.trimStartMs
+    val trimEnd = if (segment.trimEndMs <= 0L) segment.durationMs else segment.trimEndMs
+    val canAct = rangeEndMs - rangeStartMs >= 100L
+    var activeTool by remember(segment.id) { mutableStateOf(VideoEditTool.NONE) }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        // Range start/end are adjusted by dragging the green handles directly
+        // on the timeline track above. Show the current selection as text.
+        Text(
+            text = "구간 ${formatTime(rangeStartMs)} ~ ${formatTime(rangeEndMs)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+
+        // CapCut-style horizontal tool row: tap to focus a tool (volume/speed)
+        // or fire an immediate action (duplicate/delete range).
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ToolButton(
+                icon = Icons.Default.ContentCopy,
+                label = "복제",
+                enabled = canAct,
+                onClick = { onDuplicateRange(); activeTool = VideoEditTool.NONE }
+            )
+            ToolButton(
+                icon = Icons.Default.ContentCut,
+                label = "구간 삭제",
+                enabled = canAct,
+                onClick = { onDeleteRange(); activeTool = VideoEditTool.NONE }
+            )
+            ToolButton(
+                icon = Icons.Default.VolumeUp,
+                label = "볼륨",
+                selected = activeTool == VideoEditTool.VOLUME,
+                onClick = {
+                    activeTool = if (activeTool == VideoEditTool.VOLUME)
+                        VideoEditTool.NONE else VideoEditTool.VOLUME
+                }
+            )
+            ToolButton(
+                icon = Icons.Default.Speed,
+                label = "속도",
+                selected = activeTool == VideoEditTool.SPEED,
+                onClick = {
+                    activeTool = if (activeTool == VideoEditTool.SPEED)
+                        VideoEditTool.NONE else VideoEditTool.SPEED
+                }
+            )
+        }
+
+        // Active tool panel — only the focused control is shown to keep the
+        // bottom panel light, mirroring CapCut's expand-on-tap behaviour.
+        when (activeTool) {
+            VideoEditTool.VOLUME -> ToolSliderPanel(
+                value = rangeVolume,
+                valueRange = 0f..2f,
+                steps = 0,
+                label = "볼륨",
+                valueText = "${(rangeVolume * 100).toInt()}%",
+                applyEnabled = canAct,
+                onValueChange = onRangeVolumeChange,
+                onApply = { onApplyRangeVolume(rangeVolume) }
+            )
+            VideoEditTool.SPEED -> ToolSliderPanel(
+                value = rangeSpeed,
+                valueRange = 0.25f..4f,
+                steps = 14,
+                label = "속도",
+                valueText = "${"%.2f".format(rangeSpeed)}x",
+                applyEnabled = canAct,
+                onValueChange = onRangeSpeedChange,
+                onApply = { onApplyRangeSpeed(rangeSpeed) }
+            )
+            VideoEditTool.NONE -> Unit
+        }
+    }
+}
+
+@Composable
+private fun ToolButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean = true,
+    selected: Boolean = false,
+    onClick: () -> Unit
+) {
+    val tint = when {
+        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        selected -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    // Use Modifier.clickable so onClick is re-bound on each recomposition.
+    // pointerInput-based handlers stale-captured the closure and made repeated
+    // taps no-ops (e.g. could not toggle the speed tool back off).
+    Column(
+        modifier = Modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = label, tint = tint)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+    }
+}
+
+@Composable
+private fun ToolSliderPanel(
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    label: String,
+    valueText: String,
+    applyEnabled: Boolean,
+    onValueChange: (Float) -> Unit,
+    onApply: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(40.dp))
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps,
+            modifier = Modifier.weight(1f)
+        )
+        Text(valueText, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(48.dp))
+        androidx.compose.material3.TextButton(onClick = onApply, enabled = applyEnabled) {
+            Text("적용")
         }
     }
 }
@@ -935,4 +1171,51 @@ private fun formatTime(ms: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return "%d:%02d".format(minutes, seconds)
+}
+
+/**
+ * Single + button on the action bar that expands into a vertical menu of
+ * insert options (text / image / music / frame ratio). Picking an option
+ * fires its callback and dismisses the menu.
+ */
+@Composable
+private fun InsertMenu(
+    bgmEnabled: Boolean,
+    onInsertText: () -> Unit,
+    onInsertImage: () -> Unit,
+    onInsertBgm: () -> Unit,
+    onShowFrameSheet: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.Add, contentDescription = "Insert")
+        }
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("텍스트") },
+                leadingIcon = { Icon(Icons.Default.TextFields, contentDescription = null) },
+                onClick = { expanded = false; onInsertText() }
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("이미지") },
+                leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
+                onClick = { expanded = false; onInsertImage() }
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("음악") },
+                leadingIcon = { Icon(Icons.Default.MusicNote, contentDescription = null) },
+                enabled = bgmEnabled,
+                onClick = { expanded = false; onInsertBgm() }
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("영상비율") },
+                leadingIcon = { Icon(Icons.Default.AspectRatio, contentDescription = null) },
+                onClick = { expanded = false; onShowFrameSheet() }
+            )
+        }
+    }
 }

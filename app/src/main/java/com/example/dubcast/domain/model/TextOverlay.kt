@@ -10,7 +10,8 @@ data class TextOverlay(
     val startMs: Long,
     val endMs: Long,
     val xPct: Float = 50f,
-    val yPct: Float = 50f
+    val yPct: Float = 50f,
+    val lane: Int = 0
 ) {
     companion object {
         const val DEFAULT_FONT_FAMILY = "noto_sans_kr"

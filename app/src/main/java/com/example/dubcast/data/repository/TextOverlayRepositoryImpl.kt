@@ -45,7 +45,8 @@ class TextOverlayRepositoryImpl @Inject constructor(
         startMs = startMs,
         endMs = endMs,
         xPct = xPct,
-        yPct = yPct
+        yPct = yPct,
+        lane = lane
     )
 
     private fun TextOverlay.toEntity() = TextOverlayEntity(
@@ -58,6 +59,7 @@ class TextOverlayRepositoryImpl @Inject constructor(
         startMs = startMs,
         endMs = endMs,
         xPct = xPct,
-        yPct = yPct
+        yPct = yPct,
+        lane = lane
     )
 }

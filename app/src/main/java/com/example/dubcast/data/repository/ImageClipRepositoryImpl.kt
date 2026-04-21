@@ -44,7 +44,8 @@ class ImageClipRepositoryImpl @Inject constructor(
         xPct = xPct,
         yPct = yPct,
         widthPct = widthPct,
-        heightPct = heightPct
+        heightPct = heightPct,
+        lane = lane
     )
 
     private fun ImageClip.toEntity() = ImageClipEntity(
@@ -56,6 +57,7 @@ class ImageClipRepositoryImpl @Inject constructor(
         xPct = xPct,
         yPct = yPct,
         widthPct = widthPct,
-        heightPct = heightPct
+        heightPct = heightPct,
+        lane = lane
     )
 }
