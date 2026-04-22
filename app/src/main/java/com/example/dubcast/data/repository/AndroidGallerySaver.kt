@@ -2,7 +2,6 @@ package com.example.dubcast.data.repository
 
 import android.content.ContentValues
 import android.content.Context
-import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -15,7 +14,7 @@ class AndroidGallerySaver @Inject constructor(
     @ApplicationContext private val context: Context
 ) : GallerySaver {
 
-    override suspend fun saveVideo(sourcePath: String, displayName: String): Result<Uri> = runCatching {
+    override suspend fun saveVideo(sourcePath: String, displayName: String): Result<Unit> = runCatching {
         val sourceFile = File(sourcePath)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -42,16 +41,12 @@ class AndroidGallerySaver @Inject constructor(
                 context.contentResolver.delete(uri, null, null)
                 throw e
             }
-
-            uri
         } else {
             val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
             val destDir = File(moviesDir, "DubCast")
             destDir.mkdirs()
             val destFile = File(destDir, displayName)
             sourceFile.copyTo(destFile, overwrite = true)
-
-            Uri.fromFile(destFile)
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.example.dubcast.ui.share
 
-import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,7 +14,6 @@ import javax.inject.Inject
 data class ShareUiState(
     val isSaving: Boolean = false,
     val savedToGallery: Boolean = false,
-    val galleryUri: Uri? = null,
     val error: String? = null
 )
 
@@ -38,11 +36,10 @@ class ShareViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isSaving = true, error = null)
 
             gallerySaver.saveVideo(outputPath, displayName).fold(
-                onSuccess = { uri ->
+                onSuccess = {
                     _uiState.value = _uiState.value.copy(
                         isSaving = false,
-                        savedToGallery = true,
-                        galleryUri = uri
+                        savedToGallery = true
                     )
                 },
                 onFailure = { e ->
