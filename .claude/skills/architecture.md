@@ -12,7 +12,7 @@ trigger: 아키텍처
 ## 계층 구조
 
 - **UI** (`ui/`): Compose 스크린 + ViewModel. 화면: Input, Timeline, Export, Share. 각 화면은 `StateFlow<UiState>` 노출.
-- **Domain** (`domain/`): 순수 Kotlin use case / repository 인터페이스. 기능별 폴더: `input/`, `tts/`, `timeline/`, `subtitle/`, `lipsync/`, `export/`.
+- **Domain** (`domain/`): 순수 Kotlin use case / repository 인터페이스. 기능별 폴더: `input/`, `timeline/`, `tts/`, `subtitle/`, `image/`, `text/`, `bgm/`, `lipsync/`, `separation/`, `export/`, `share/`.
 - **Data** (`data/`): Room DB (`local/db/`), Retrofit API (`remote/api/`), repository 구현 (`repository/`).
 
 ## 핵심 설계 결정
@@ -27,6 +27,6 @@ trigger: 아키텍처
 ## Dependency Injection (Hilt)
 
 `di/` 하위 3개 모듈:
-- `DatabaseModule` — Room singleton + 마이그레이션 (v1→v2→v3→v4)
+- `DatabaseModule` — Room singleton + 점진적 마이그레이션 (현재 v14)
 - `NetworkModule` — Retrofit + OkHttp + Moshi + logging
 - `RepositoryModule` — repository 인터페이스 ↔ 구현 바인딩

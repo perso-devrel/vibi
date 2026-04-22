@@ -68,11 +68,11 @@
 │  ├─ ExportScreen / ExportViewModel (옵션 선택, ffmpeg 렌더링)
 │  └─ ShareScreen / ShareViewModel (갤러리 저장)
 ├─ Domain Layer
-│  ├─ Models: EditProject, DubClip, SubtitleClip, ImageClip, Voice, SubtitlePosition
-│  ├─ Use Cases: tts/, timeline/, subtitle/, image/, lipsync/, export/, input/
+│  ├─ Models: EditProject, Segment, DubClip, SubtitleClip, ImageClip, TextOverlay, BgmClip, Stem, Voice, SubtitlePosition
+│  ├─ Use Cases: input/, timeline/, tts/, subtitle/, image/, text/, bgm/, lipsync/, separation/, export/, share/
 │  └─ Repository Interfaces
 ├─ Data Layer
-│  ├─ Room DB (v7): EditProject, DubClip, SubtitleClip, ImageClip 테이블
+│  ├─ Room DB (v14): EditProject, Segment, DubClip, SubtitleClip, ImageClip, TextOverlay, BgmClip 테이블
 │  ├─ Retrofit + Moshi: BFF v2 API
 │  └─ Repository Implementations
 └─ DI: Hilt (DatabaseModule, NetworkModule, RepositoryModule)
@@ -87,7 +87,11 @@
 
 ## 7. 데이터 모델
 ```kotlin
-EditProject { projectId, videoUri, videoDurationMs, videoWidth, videoHeight, trimStartMs, trimEndMs, createdAt, updatedAt }
+EditProject { projectId, frameWidth, frameHeight, backgroundColorHex, createdAt, updatedAt }
+Segment {
+    id, projectId, type: VIDEO|IMAGE, order, sourceUri, durationMs,
+    width, height, trimStartMs, trimEndMs, volumeScale, speedScale
+}  // 타임라인의 단일 영상/이미지 세그먼트 (trim/split/range 편집 단위)
 DubClip { id, projectId, text, voiceId, voiceName, audioFilePath, startMs, durationMs, volume }
 SubtitleClip {
     id, projectId, text, startMs, endMs, position: SubtitlePosition,
@@ -95,7 +99,10 @@ SubtitleClip {
     sourceDubClipId: String?, xPct: Float?, yPct: Float?, widthPct: Float?, heightPct: Float?
 }
 SubtitlePosition { anchor: Anchor(TOP|MIDDLE|BOTTOM), yOffsetPct: Float }
-ImageClip { id, projectId, imageUri, startMs, endMs, xPct, yPct, widthPct, heightPct }  // 영상 위 스티커 오버레이
+ImageClip { id, projectId, imageUri, startMs, endMs, xPct, yPct, widthPct, heightPct, lane }  // 영상 위 스티커 오버레이
+TextOverlay { id, projectId, text, fontFamily, fontSizeSp, colorHex, startMs, endMs, xPct, yPct, lane }
+BgmClip { id, projectId, sourceUri, sourceDurationMs, startMs, volumeScale }
+Stem { stemId, displayName, downloadUrl, kind: BACKGROUND|VOICE_ALL|SPEAKER }  // 오디오 분리 결과 stem
 Voice { voiceId, name, previewUrl, language }
 ```
 
