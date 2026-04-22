@@ -19,7 +19,7 @@ DubCast — Android 비디오 더빙/로컬라이제이션 앱. 타임라인 에
 상세 컨텍스트는 `.claude/skills/` 에 주제별로 분리:
 - `build` — 빌드/테스트 명령어, SDK 타겟
 - `architecture` — 계층 구조, DI 모듈, 핵심 설계 결정(FFmpeg, ASS 자막, 오디오 믹싱, Undo/Redo)
-- `test-patterns` — 테스트 작성 레퍼런스(MockK/Turbine/Fake)
+- `test-patterns` — 테스트 작성 레퍼런스(Turbine/Fake)
 - `api` — BFF v2 엔드포인트
 - `domain` — 도메인 모델
 - `test` — 유닛 테스트 실행 스킬 (API 비용 관리)

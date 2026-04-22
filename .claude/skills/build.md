@@ -15,7 +15,7 @@ trigger: 빌드
 ./gradlew connectedAndroidTest         # 계측 테스트 (device/emulator 필요)
 ```
 
-API 통합 테스트(`BffApiIntegrationTest`)는 `@ApiTest` JUnit 카테고리로 기본 제외됨.
+API 통합 테스트(`BffApiIntegrationTest`)는 `ApiTest` 마커 인터페이스로 기본 제외됨 (`-Pinclude.api.tests` 플래그로 포함).
 
 ## SDK
 
