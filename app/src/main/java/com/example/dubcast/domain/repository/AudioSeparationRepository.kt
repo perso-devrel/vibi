@@ -67,5 +67,14 @@ interface AudioSeparationRepository {
 
     suspend fun pollMixStatus(mixJobId: String): Result<MixStatus>
 
-    suspend fun downloadMix(downloadUrl: String, outputFileName: String): Result<String>
+    /**
+     * Download a finished mix. If [downloadUrl] has been signed-URL-expired
+     * (HTTP 403), the repository re-polls [mixJobId] to obtain a fresh URL and
+     * retries the download once.
+     */
+    suspend fun downloadMix(
+        mixJobId: String,
+        downloadUrl: String,
+        outputFileName: String
+    ): Result<String>
 }

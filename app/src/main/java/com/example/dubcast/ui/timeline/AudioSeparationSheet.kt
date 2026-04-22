@@ -33,6 +33,7 @@ fun AudioSeparationSheet(
     onStart: () -> Unit,
     onToggleStem: (stemId: String) -> Unit,
     onStemVolumeChange: (stemId: String, volume: Float) -> Unit,
+    onToggleMuteOriginal: () -> Unit,
     onConfirmMix: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -58,6 +59,7 @@ fun AudioSeparationSheet(
                     state = state,
                     onToggleStem = onToggleStem,
                     onStemVolumeChange = onStemVolumeChange,
+                    onToggleMuteOriginal = onToggleMuteOriginal,
                     onConfirmMix = onConfirmMix,
                     onDismiss = onDismiss
                 )
@@ -135,6 +137,7 @@ private fun PickStemsStep(
     state: AudioSeparationUiState,
     onToggleStem: (stemId: String) -> Unit,
     onStemVolumeChange: (stemId: String, volume: Float) -> Unit,
+    onToggleMuteOriginal: () -> Unit,
     onConfirmMix: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -150,6 +153,17 @@ private fun PickStemsStep(
             selection = state.selections[stem.stemId],
             onToggle = { onToggleStem(stem.stemId) },
             onVolumeChange = { onStemVolumeChange(stem.stemId, it) }
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(
+            checked = state.muteOriginalSegmentAudio,
+            onCheckedChange = { onToggleMuteOriginal() }
+        )
+        Text(
+            text = "원본 세그먼트 오디오 음소거",
+            style = MaterialTheme.typography.bodySmall
         )
     }
     Spacer(Modifier.height(12.dp))

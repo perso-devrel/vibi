@@ -18,6 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import retrofit2.HttpException
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -123,11 +124,22 @@ class AudioSeparationRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun downloadMix(downloadUrl: String, outputFileName: String): Result<String> =
-        runCatching {
-            val responseBody = apiService.downloadMix(downloadUrl)
-            writeToFile(responseBody, "separation_mixes", outputFileName)
+    override suspend fun downloadMix(
+        mixJobId: String,
+        downloadUrl: String,
+        outputFileName: String
+    ): Result<String> = runCatching {
+        val body = try {
+            apiService.downloadMix(downloadUrl)
+        } catch (e: HttpException) {
+            if (e.code() != HTTP_FORBIDDEN) throw e
+            val refreshed = apiService.getMixStatus(mixJobId)
+            val freshUrl = refreshed.downloadUrl
+                ?: throw IllegalStateException("mix $mixJobId has no downloadUrl to refresh")
+            apiService.downloadMix(freshUrl)
         }
+        writeToFile(body, "separation_mixes", outputFileName)
+    }
 
     private fun writeToFile(
         body: okhttp3.ResponseBody,
@@ -147,5 +159,6 @@ class AudioSeparationRepositoryImpl @Inject constructor(
         const val STATUS_FAILED = "FAILED"
         const val MIX_STATUS_COMPLETED = "COMPLETED"
         const val MIX_STATUS_FAILED = "FAILED"
+        const val HTTP_FORBIDDEN = 403
     }
 }

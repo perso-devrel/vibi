@@ -27,6 +27,7 @@ data class AudioSeparationUiState(
     val progressReason: String? = null,
     val stems: List<Stem> = emptyList(),
     val selections: Map<String, StemSelectionUi> = emptyMap(),
+    val muteOriginalSegmentAudio: Boolean = true,
     val mixJobId: String? = null,
     val mixProgress: Int = 0,
     val errorMessage: String? = null

@@ -63,6 +63,9 @@ class FakeAudioSeparationRepository : AudioSeparationRepository {
         return result
     }
 
-    override suspend fun downloadMix(downloadUrl: String, outputFileName: String): Result<String> =
-        mixDownloadResult
+    override suspend fun downloadMix(
+        mixJobId: String,
+        downloadUrl: String,
+        outputFileName: String
+    ): Result<String> = mixDownloadResult
 }

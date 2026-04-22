@@ -1184,6 +1184,40 @@ class TimelineViewModelTest {
         val bgms = bgmRepo.all()
         assertEquals(1, bgms.size)
         assertEquals("/cache/mix-2.mp3", bgms[0].sourceUri)
+        // Mute flag defaults to true — the segment's volume should be 0 so the
+        // original audio does not play over the mixed BGM.
+        assertEquals(0f, segmentRepo.getSegment("seg-1")!!.volumeScale, 0.0001f)
+    }
+
+    @Test
+    fun `mix keeps original audio when mute flag is disabled`() = runTest {
+        seedSegment(durationMs = 20_000L)
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-3")
+        separationRepo.statusResults = mutableListOf(
+            Result.success(
+                SeparationStatus.Ready(
+                    "sep-3",
+                    listOf(Stem("voice_all", "모든 화자", "/u/v", StemKind.VOICE_ALL))
+                )
+            )
+        )
+        separationRepo.mixRequestResult = Result.success("mix-3")
+        separationRepo.mixStatusResults = mutableListOf(
+            Result.success(MixStatus.Completed("mix-3", "/dl/mix?token=y"))
+        )
+        separationRepo.mixDownloadResult = Result.success("/cache/mix-3.mp3")
+        audioExtractor.nextInfo = AudioInfo(uri = "placeholder", durationMs = 8_000L)
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+        vm.onToggleMuteOriginalSegmentAudio() // flip default-on → off
+        vm.onToggleStemSelection("voice_all")
+        vm.onConfirmStemMix()
+        advanceUntilIdle()
+
+        assertEquals(1f, segmentRepo.getSegment("seg-1")!!.volumeScale, 0.0001f)
     }
 
     @Test

@@ -1625,6 +1625,10 @@ class TimelineViewModel @Inject constructor(
         updateSeparation { it.copy(selections = next) }
     }
 
+    fun onToggleMuteOriginalSegmentAudio() {
+        updateSeparation { it.copy(muteOriginalSegmentAudio = !it.muteOriginalSegmentAudio) }
+    }
+
     fun onConfirmStemMix() {
         val state = _uiState.value
         val sep = state.audioSeparation ?: return
@@ -1664,6 +1668,9 @@ class TimelineViewModel @Inject constructor(
                                 startMs = segStart
                             ).fold(
                                 onSuccess = {
+                                    if (sep.muteOriginalSegmentAudio && segment != null) {
+                                        updateSegmentVolume(segment.id, 0f)
+                                    }
                                     updateSeparation { it.copy(step = AudioSeparationStep.DONE) }
                                     pushUndoState()
                                 },

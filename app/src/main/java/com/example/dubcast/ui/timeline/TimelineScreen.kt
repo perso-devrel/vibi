@@ -844,6 +844,7 @@ fun TimelineScreen(
             onStart = { viewModel.onStartSeparation() },
             onToggleStem = { viewModel.onToggleStemSelection(it) },
             onStemVolumeChange = { id, vol -> viewModel.onUpdateStemVolume(id, vol) },
+            onToggleMuteOriginal = { viewModel.onToggleMuteOriginalSegmentAudio() },
             onConfirmMix = { viewModel.onConfirmStemMix() }
         )
     }

@@ -19,7 +19,9 @@ class ApplyMixAsBgmUseCase @Inject constructor(
         volumeScale: Float = 1.0f
     ): Result<BgmClip> = runCatching {
         val outputFile = "mix_$mixJobId.mp3"
-        val localPath = separationRepository.downloadMix(downloadUrl, outputFile).getOrThrow()
+        val localPath = separationRepository
+            .downloadMix(mixJobId, downloadUrl, outputFile)
+            .getOrThrow()
         val info = audioMetadataExtractor.extract(localPath)
             ?: throw IllegalStateException("Cannot read audio metadata: $localPath")
         addBgmClipUseCase(
