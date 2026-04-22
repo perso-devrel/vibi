@@ -17,10 +17,14 @@ import com.example.dubcast.domain.repository.BgmClipRepository
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
 import com.example.dubcast.domain.repository.ImageClipRepository
+import com.example.dubcast.domain.repository.MixStatus
 import com.example.dubcast.domain.repository.SegmentRepository
+import com.example.dubcast.domain.repository.SeparationStatus
+import com.example.dubcast.domain.repository.StemSelection
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import com.example.dubcast.domain.repository.TextOverlayRepository
 import com.example.dubcast.domain.repository.TtsRepository
+import com.example.dubcast.domain.model.SeparationMediaType
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
@@ -31,6 +35,11 @@ import com.example.dubcast.domain.usecase.input.AudioMetadataExtractor
 import com.example.dubcast.domain.usecase.input.ImageMetadataExtractor
 import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
 import com.example.dubcast.domain.usecase.input.VideoMetadataExtractor
+import com.example.dubcast.domain.usecase.separation.ApplyMixAsBgmUseCase
+import com.example.dubcast.domain.usecase.separation.PollMixUseCase
+import com.example.dubcast.domain.usecase.separation.PollSeparationUseCase
+import com.example.dubcast.domain.usecase.separation.RequestStemMixUseCase
+import com.example.dubcast.domain.usecase.separation.StartAudioSeparationUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
@@ -140,7 +149,8 @@ data class TimelineUiState(
     val bgmClips: List<BgmClip> = emptyList(),
     val selectedBgmClipId: String? = null,
     val isAddingBgm: Boolean = false,
-    val bgmError: String? = null
+    val bgmError: String? = null,
+    val audioSeparation: AudioSeparationUiState? = null
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -203,7 +213,12 @@ class TimelineViewModel @Inject constructor(
     private val deleteBgmClip: DeleteBgmClipUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
     private val imageMetadataExtractor: ImageMetadataExtractor,
-    private val audioMetadataExtractor: AudioMetadataExtractor
+    private val audioMetadataExtractor: AudioMetadataExtractor,
+    private val startAudioSeparation: StartAudioSeparationUseCase,
+    private val pollSeparation: PollSeparationUseCase,
+    private val requestStemMix: RequestStemMixUseCase,
+    private val pollMix: PollMixUseCase,
+    private val applyMixAsBgm: ApplyMixAsBgmUseCase
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -1503,6 +1518,188 @@ class TimelineViewModel @Inject constructor(
             }
             pushUndoState()
         }
+    }
+
+    // --- Audio separation (per-segment voice/background split) ---
+
+    fun onShowAudioSeparationSheet(segmentId: String) {
+        val seg = _uiState.value.segments.firstOrNull { it.id == segmentId } ?: return
+        if (seg.type != SegmentType.VIDEO) return
+        _uiState.value = _uiState.value.copy(
+            audioSeparation = AudioSeparationUiState(segmentId = segmentId),
+            isPlaying = false
+        )
+    }
+
+    fun onDismissAudioSeparationSheet() {
+        _uiState.value = _uiState.value.copy(audioSeparation = null)
+    }
+
+    fun onUpdateSeparationSpeakers(count: Int) {
+        val sep = _uiState.value.audioSeparation ?: return
+        _uiState.value = _uiState.value.copy(
+            audioSeparation = sep.copy(numberOfSpeakers = count.coerceIn(1, 10))
+        )
+    }
+
+    fun onUpdateSeparationLanguage(code: String) {
+        val sep = _uiState.value.audioSeparation ?: return
+        _uiState.value = _uiState.value.copy(
+            audioSeparation = sep.copy(sourceLanguageCode = code)
+        )
+    }
+
+    fun onStartSeparation() {
+        val state = _uiState.value
+        val sep = state.audioSeparation ?: return
+        val segment = state.segments.firstOrNull { it.id == sep.segmentId } ?: return
+        viewModelScope.launch {
+            updateSeparation { it.copy(step = AudioSeparationStep.PROCESSING, errorMessage = null) }
+            val startResult = startAudioSeparation(
+                sourceUri = segment.sourceUri,
+                mediaType = SeparationMediaType.VIDEO,
+                numberOfSpeakers = sep.numberOfSpeakers,
+                sourceLanguageCode = sep.sourceLanguageCode
+            )
+            val jobId = startResult.getOrElse { err ->
+                updateSeparation {
+                    it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message)
+                }
+                return@launch
+            }
+            updateSeparation { it.copy(jobId = jobId) }
+            pollSeparationFlow(jobId)
+        }
+    }
+
+    private suspend fun pollSeparationFlow(jobId: String) {
+        try {
+            pollSeparation(jobId).collect { status ->
+                when (status) {
+                    is SeparationStatus.Processing -> updateSeparation {
+                        it.copy(progress = status.progress, progressReason = status.progressReason)
+                    }
+                    is SeparationStatus.Ready -> updateSeparation {
+                        val defaults = status.stems.associate { stem ->
+                            stem.stemId to StemSelectionUi(stem.stemId, selected = false, volume = 1.0f)
+                        }
+                        it.copy(
+                            step = AudioSeparationStep.PICK_STEMS,
+                            progress = 100,
+                            progressReason = null,
+                            stems = status.stems,
+                            selections = defaults
+                        )
+                    }
+                    is SeparationStatus.Failed -> updateSeparation {
+                        it.copy(
+                            step = AudioSeparationStep.FAILED,
+                            errorMessage = status.progressReason ?: "분리에 실패했습니다"
+                        )
+                    }
+                    is SeparationStatus.Consumed -> updateSeparation {
+                        it.copy(
+                            step = AudioSeparationStep.FAILED,
+                            errorMessage = "이 작업은 이미 합성에 사용되어 더 이상 사용할 수 없습니다"
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = e.message) }
+        }
+    }
+
+    fun onToggleStemSelection(stemId: String) {
+        val sep = _uiState.value.audioSeparation ?: return
+        val current = sep.selections[stemId] ?: return
+        val next = sep.selections + (stemId to current.copy(selected = !current.selected))
+        updateSeparation { it.copy(selections = next) }
+    }
+
+    fun onUpdateStemVolume(stemId: String, volume: Float) {
+        val sep = _uiState.value.audioSeparation ?: return
+        val current = sep.selections[stemId] ?: return
+        val clamped = volume.coerceIn(0f, 2f)
+        val next = sep.selections + (stemId to current.copy(volume = clamped))
+        updateSeparation { it.copy(selections = next) }
+    }
+
+    fun onToggleMuteOriginalSegmentAudio() {
+        updateSeparation { it.copy(muteOriginalSegmentAudio = !it.muteOriginalSegmentAudio) }
+    }
+
+    fun onConfirmStemMix() {
+        val state = _uiState.value
+        val sep = state.audioSeparation ?: return
+        val jobId = sep.jobId ?: return
+        val segment = state.segments.firstOrNull { it.id == sep.segmentId }
+        val selections = sep.selections.values
+            .filter { it.selected }
+            .map { StemSelection(it.stemId, it.volume) }
+        if (selections.isEmpty()) return
+        viewModelScope.launch {
+            updateSeparation { it.copy(step = AudioSeparationStep.MIXING, mixProgress = 0) }
+            val mixIdResult = requestStemMix(jobId, selections)
+            val mixJobId = mixIdResult.getOrElse { err ->
+                updateSeparation {
+                    it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message)
+                }
+                return@launch
+            }
+            updateSeparation { it.copy(mixJobId = mixJobId) }
+            try {
+                pollMix(mixJobId).collect { status ->
+                    when (status) {
+                        is MixStatus.Processing -> updateSeparation {
+                            it.copy(mixProgress = status.progress)
+                        }
+                        is MixStatus.Completed -> {
+                            // Anchor the mix to the segment's global offset so the
+                            // resulting BGM clip starts at the same moment as the
+                            // source video segment. The BGM lane plays on top of
+                            // the segment's original audio; muting that audio is
+                            // a follow-up UX choice handled elsewhere.
+                            val segStart = segment?.let { s -> segmentStartOffsetMs(state.segments, s.id) } ?: 0L
+                            applyMixAsBgm(
+                                projectId = projectId,
+                                mixJobId = mixJobId,
+                                downloadUrl = status.downloadUrl,
+                                startMs = segStart
+                            ).fold(
+                                onSuccess = {
+                                    if (sep.muteOriginalSegmentAudio && segment != null) {
+                                        updateSegmentVolume(segment.id, 0f)
+                                    }
+                                    updateSeparation { it.copy(step = AudioSeparationStep.DONE) }
+                                    pushUndoState()
+                                },
+                                onFailure = { err ->
+                                    updateSeparation {
+                                        it.copy(
+                                            step = AudioSeparationStep.FAILED,
+                                            errorMessage = err.message
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                        is MixStatus.Failed -> updateSeparation {
+                            it.copy(step = AudioSeparationStep.FAILED, errorMessage = "합성 실패")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                updateSeparation {
+                    it.copy(step = AudioSeparationStep.FAILED, errorMessage = e.message)
+                }
+            }
+        }
+    }
+
+    private fun updateSeparation(transform: (AudioSeparationUiState) -> AudioSeparationUiState) {
+        val current = _uiState.value.audioSeparation ?: return
+        _uiState.value = _uiState.value.copy(audioSeparation = transform(current))
     }
 
     companion object {

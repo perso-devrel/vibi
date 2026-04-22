@@ -4,6 +4,7 @@ import com.example.dubcast.data.repository.AndroidAudioMetadataExtractor
 import com.example.dubcast.data.repository.AndroidGallerySaver
 import com.example.dubcast.data.repository.AndroidImageMetadataExtractor
 import com.example.dubcast.data.repository.AndroidVideoMetadataExtractor
+import com.example.dubcast.data.repository.AudioSeparationRepositoryImpl
 import com.example.dubcast.data.repository.BgmClipRepositoryImpl
 import com.example.dubcast.data.repository.DubClipRepositoryImpl
 import com.example.dubcast.data.repository.EditProjectRepositoryImpl
@@ -14,6 +15,7 @@ import com.example.dubcast.data.repository.SegmentRepositoryImpl
 import com.example.dubcast.data.repository.SubtitleClipRepositoryImpl
 import com.example.dubcast.data.repository.TextOverlayRepositoryImpl
 import com.example.dubcast.data.repository.TtsRepositoryImpl
+import com.example.dubcast.domain.repository.AudioSeparationRepository
 import com.example.dubcast.domain.repository.BgmClipRepository
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
@@ -93,4 +95,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindBgmClipRepository(impl: BgmClipRepositoryImpl): BgmClipRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAudioSeparationRepository(impl: AudioSeparationRepositoryImpl): AudioSeparationRepository
 }

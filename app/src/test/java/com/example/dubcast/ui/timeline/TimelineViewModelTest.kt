@@ -5,10 +5,15 @@ import com.example.dubcast.domain.model.Anchor
 import com.example.dubcast.domain.model.ImageInfo
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
+import com.example.dubcast.domain.model.Stem
+import com.example.dubcast.domain.model.StemKind
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
 import com.example.dubcast.domain.model.VideoInfo
+import com.example.dubcast.domain.repository.MixStatus
+import com.example.dubcast.domain.repository.SeparationStatus
 import com.example.dubcast.domain.repository.TtsResult
+import com.example.dubcast.domain.usecase.input.AudioInfo
 import com.example.dubcast.domain.usecase.image.AddImageClipUseCase
 import com.example.dubcast.domain.usecase.image.DeleteImageClipUseCase
 import com.example.dubcast.domain.usecase.image.UpdateImageClipUseCase
@@ -16,6 +21,11 @@ import com.example.dubcast.domain.usecase.input.SetProjectFrameUseCase
 import com.example.dubcast.domain.usecase.bgm.AddBgmClipUseCase
 import com.example.dubcast.domain.usecase.bgm.DeleteBgmClipUseCase
 import com.example.dubcast.domain.usecase.bgm.UpdateBgmClipUseCase
+import com.example.dubcast.domain.usecase.separation.ApplyMixAsBgmUseCase
+import com.example.dubcast.domain.usecase.separation.PollMixUseCase
+import com.example.dubcast.domain.usecase.separation.PollSeparationUseCase
+import com.example.dubcast.domain.usecase.separation.RequestStemMixUseCase
+import com.example.dubcast.domain.usecase.separation.StartAudioSeparationUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.text.AddTextOverlayUseCase
@@ -39,6 +49,7 @@ import com.example.dubcast.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.example.dubcast.domain.usecase.tts.GetVoiceListUseCase
 import com.example.dubcast.domain.usecase.tts.SynthesizeDubClipUseCase
 import com.example.dubcast.fake.FakeAudioMetadataExtractor
+import com.example.dubcast.fake.FakeAudioSeparationRepository
 import com.example.dubcast.fake.FakeBgmClipRepository
 import com.example.dubcast.fake.FakeDubClipRepository
 import com.example.dubcast.fake.FakeEditProjectRepository
@@ -78,6 +89,7 @@ class TimelineViewModelTest {
     private lateinit var videoExtractor: FakeVideoMetadataExtractor
     private lateinit var imageExtractor: FakeImageMetadataExtractor
     private lateinit var audioExtractor: FakeAudioMetadataExtractor
+    private lateinit var separationRepo: FakeAudioSeparationRepository
     private lateinit var vm: TimelineViewModel
 
     private val projectId = "proj-1"
@@ -95,6 +107,7 @@ class TimelineViewModelTest {
         videoExtractor = FakeVideoMetadataExtractor()
         imageExtractor = FakeImageMetadataExtractor()
         audioExtractor = FakeAudioMetadataExtractor()
+        separationRepo = FakeAudioSeparationRepository()
         vm = TimelineViewModel(
             savedStateHandle = SavedStateHandle(mapOf("projectId" to projectId)),
             segmentRepository = segmentRepo,
@@ -136,7 +149,16 @@ class TimelineViewModelTest {
             deleteBgmClip = DeleteBgmClipUseCase(bgmRepo),
             videoMetadataExtractor = videoExtractor,
             imageMetadataExtractor = imageExtractor,
-            audioMetadataExtractor = audioExtractor
+            audioMetadataExtractor = audioExtractor,
+            startAudioSeparation = StartAudioSeparationUseCase(separationRepo),
+            pollSeparation = PollSeparationUseCase(separationRepo),
+            requestStemMix = RequestStemMixUseCase(separationRepo),
+            pollMix = PollMixUseCase(separationRepo),
+            applyMixAsBgm = ApplyMixAsBgmUseCase(
+                separationRepository = separationRepo,
+                audioMetadataExtractor = audioExtractor,
+                addBgmClipUseCase = AddBgmClipUseCase(bgmRepo)
+            )
         )
     }
 
@@ -1106,5 +1128,110 @@ class TimelineViewModelTest {
         advanceUntilIdle()
 
         assertEquals(2, textOverlayRepo.getOverlay("t1")!!.lane)
+    }
+
+    @Test
+    fun `audio separation reaches PICK_STEMS after polling`() = runTest {
+        seedSegment()
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-1")
+        val stems = listOf(
+            Stem("background", "배경음", "/u/bg", StemKind.BACKGROUND),
+            Stem("voice_all", "모든 화자", "/u/v", StemKind.VOICE_ALL)
+        )
+        separationRepo.statusResults = mutableListOf(
+            Result.success(SeparationStatus.Processing("sep-1", 40, "Transcribing")),
+            Result.success(SeparationStatus.Ready("sep-1", stems))
+        )
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+
+        val ui = vm.uiState.value.audioSeparation
+        assertNotNull(ui)
+        assertEquals(AudioSeparationStep.PICK_STEMS, ui!!.step)
+        assertEquals(2, ui.stems.size)
+        assertEquals(2, ui.selections.size)
+        assertTrue(ui.selections.values.none { it.selected })
+    }
+
+    @Test
+    fun `confirming mix adds a BGM clip at segment offset`() = runTest {
+        seedSegment(durationMs = 20_000L)
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-2")
+        val stems = listOf(Stem("background", "배경음", "/u/bg", StemKind.BACKGROUND))
+        separationRepo.statusResults = mutableListOf(
+            Result.success(SeparationStatus.Ready("sep-2", stems))
+        )
+        separationRepo.mixRequestResult = Result.success("mix-2")
+        separationRepo.mixStatusResults = mutableListOf(
+            Result.success(MixStatus.Completed("mix-2", "/dl/mix?token=x"))
+        )
+        separationRepo.mixDownloadResult = Result.success("/cache/mix-2.mp3")
+        audioExtractor.nextInfo = AudioInfo(uri = "placeholder", durationMs = 12_000L)
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+        vm.onToggleStemSelection("background")
+        vm.onConfirmStemMix()
+        advanceUntilIdle()
+
+        val ui = vm.uiState.value.audioSeparation!!
+        assertEquals(AudioSeparationStep.DONE, ui.step)
+        val bgms = bgmRepo.all()
+        assertEquals(1, bgms.size)
+        assertEquals("/cache/mix-2.mp3", bgms[0].sourceUri)
+        // Mute flag defaults to true — the segment's volume should be 0 so the
+        // original audio does not play over the mixed BGM.
+        assertEquals(0f, segmentRepo.getSegment("seg-1")!!.volumeScale, 0.0001f)
+    }
+
+    @Test
+    fun `mix keeps original audio when mute flag is disabled`() = runTest {
+        seedSegment(durationMs = 20_000L)
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-3")
+        separationRepo.statusResults = mutableListOf(
+            Result.success(
+                SeparationStatus.Ready(
+                    "sep-3",
+                    listOf(Stem("voice_all", "모든 화자", "/u/v", StemKind.VOICE_ALL))
+                )
+            )
+        )
+        separationRepo.mixRequestResult = Result.success("mix-3")
+        separationRepo.mixStatusResults = mutableListOf(
+            Result.success(MixStatus.Completed("mix-3", "/dl/mix?token=y"))
+        )
+        separationRepo.mixDownloadResult = Result.success("/cache/mix-3.mp3")
+        audioExtractor.nextInfo = AudioInfo(uri = "placeholder", durationMs = 8_000L)
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+        vm.onToggleMuteOriginalSegmentAudio() // flip default-on → off
+        vm.onToggleStemSelection("voice_all")
+        vm.onConfirmStemMix()
+        advanceUntilIdle()
+
+        assertEquals(1f, segmentRepo.getSegment("seg-1")!!.volumeScale, 0.0001f)
+    }
+
+    @Test
+    fun `separation failure surfaces error`() = runTest {
+        seedSegment()
+        advanceUntilIdle()
+        separationRepo.startResult = Result.failure(RuntimeException("402 payment required"))
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+
+        val ui = vm.uiState.value.audioSeparation!!
+        assertEquals(AudioSeparationStep.FAILED, ui.step)
+        assertTrue(ui.errorMessage!!.contains("402"))
     }
 }

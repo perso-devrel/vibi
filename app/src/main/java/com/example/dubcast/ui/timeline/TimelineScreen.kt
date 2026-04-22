@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.MicExternalOn
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -669,7 +670,10 @@ fun TimelineScreen(
                     onRangeVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
                     onRangeSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
                     onApplyRangeVolume = { viewModel.onApplyRangeVolume(it) },
-                    onApplyRangeSpeed = { viewModel.onApplyRangeSpeed(it) }
+                    onApplyRangeSpeed = { viewModel.onApplyRangeSpeed(it) },
+                    onRequestAudioSeparation = {
+                        viewModel.onShowAudioSeparationSheet(selectedSegment.id)
+                    }
                 )
             }
 
@@ -829,6 +833,21 @@ fun TimelineScreen(
             onDismiss = { viewModel.onDismissFrameSheet() }
         )
     }
+
+    val separationState = state.audioSeparation
+    if (separationState != null) {
+        AudioSeparationSheet(
+            state = separationState,
+            onDismiss = { viewModel.onDismissAudioSeparationSheet() },
+            onSpeakersChange = { viewModel.onUpdateSeparationSpeakers(it) },
+            onLanguageChange = { viewModel.onUpdateSeparationLanguage(it) },
+            onStart = { viewModel.onStartSeparation() },
+            onToggleStem = { viewModel.onToggleStemSelection(it) },
+            onStemVolumeChange = { id, vol -> viewModel.onUpdateStemVolume(id, vol) },
+            onToggleMuteOriginal = { viewModel.onToggleMuteOriginalSegmentAudio() },
+            onConfirmMix = { viewModel.onConfirmStemMix() }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -925,7 +944,8 @@ private fun SelectedSegmentActionBar(
     onRangeVolumeChange: (Float) -> Unit,
     onRangeSpeedChange: (Float) -> Unit,
     onApplyRangeVolume: (Float) -> Unit,
-    onApplyRangeSpeed: (Float) -> Unit
+    onApplyRangeSpeed: (Float) -> Unit,
+    onRequestAudioSeparation: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -954,7 +974,8 @@ private fun SelectedSegmentActionBar(
                 onRangeVolumeChange = onRangeVolumeChange,
                 onRangeSpeedChange = onRangeSpeedChange,
                 onApplyRangeVolume = onApplyRangeVolume,
-                onApplyRangeSpeed = onApplyRangeSpeed
+                onApplyRangeSpeed = onApplyRangeSpeed,
+                onRequestAudioSeparation = onRequestAudioSeparation
             )
         }
 
@@ -1000,7 +1021,8 @@ private fun VideoRangeEditPanel(
     onRangeVolumeChange: (Float) -> Unit,
     onRangeSpeedChange: (Float) -> Unit,
     onApplyRangeVolume: (Float) -> Unit,
-    onApplyRangeSpeed: (Float) -> Unit
+    onApplyRangeSpeed: (Float) -> Unit,
+    onRequestAudioSeparation: () -> Unit
 ) {
     val trimStart = segment.trimStartMs
     val trimEnd = if (segment.trimEndMs <= 0L) segment.durationMs else segment.trimEndMs
@@ -1055,6 +1077,11 @@ private fun VideoRangeEditPanel(
                     activeTool = if (activeTool == VideoEditTool.SPEED)
                         VideoEditTool.NONE else VideoEditTool.SPEED
                 }
+            )
+            ToolButton(
+                icon = Icons.Default.Hearing,
+                label = "음원분리",
+                onClick = { onRequestAudioSeparation(); activeTool = VideoEditTool.NONE }
             )
         }
 
