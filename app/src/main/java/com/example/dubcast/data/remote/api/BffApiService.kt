@@ -2,8 +2,13 @@ package com.example.dubcast.data.remote.api
 
 import com.example.dubcast.data.remote.dto.LipSyncResponse
 import com.example.dubcast.data.remote.dto.LipSyncStatusResponse
+import com.example.dubcast.data.remote.dto.MixJobResponse
+import com.example.dubcast.data.remote.dto.MixRequest
+import com.example.dubcast.data.remote.dto.MixStatusResponse
 import com.example.dubcast.data.remote.dto.RenderJobResponse
 import com.example.dubcast.data.remote.dto.RenderStatusResponse
+import com.example.dubcast.data.remote.dto.SeparationJobResponse
+import com.example.dubcast.data.remote.dto.SeparationStatusResponse
 import com.example.dubcast.data.remote.dto.TtsRequest
 import com.example.dubcast.data.remote.dto.TtsResponse
 import com.example.dubcast.data.remote.dto.VoiceListResponse
@@ -17,6 +22,7 @@ import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Streaming
+import retrofit2.http.Url
 
 interface BffApiService {
 
@@ -61,4 +67,33 @@ interface BffApiService {
     @Streaming
     @GET("api/v2/render/{jobId}/download")
     suspend fun downloadRenderResult(@Path("jobId") jobId: String): ResponseBody
+
+    // Audio separation
+
+    @Multipart
+    @POST("api/v2/separate")
+    suspend fun startSeparation(
+        @Part file: MultipartBody.Part,
+        @Part("spec") spec: RequestBody
+    ): SeparationJobResponse
+
+    @GET("api/v2/separate/{jobId}")
+    suspend fun getSeparationStatus(@Path("jobId") jobId: String): SeparationStatusResponse
+
+    @Streaming
+    @GET
+    suspend fun downloadStem(@Url tokenizedUrl: String): ResponseBody
+
+    @POST("api/v2/separate/{jobId}/mix")
+    suspend fun requestStemMix(
+        @Path("jobId") jobId: String,
+        @Body body: MixRequest
+    ): MixJobResponse
+
+    @GET("api/v2/separate/mix/{mixJobId}")
+    suspend fun getMixStatus(@Path("mixJobId") mixJobId: String): MixStatusResponse
+
+    @Streaming
+    @GET
+    suspend fun downloadMix(@Url tokenizedUrl: String): ResponseBody
 }
