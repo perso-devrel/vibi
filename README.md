@@ -1,7 +1,7 @@
-# DubCast Android — 영상 하나로 AI 더빙 · 립싱크 · 자막까지
+# DubCast Android — 영상 하나로 AI 더빙 · 자막까지
 
 ## 1. 한 줄 정의
-안드로이드 폰에서 영상 하나만 올리면 AI 더빙 + 립싱크 + 자동자막을 생성하고, 타임라인 에디터로 편집한 뒤 ffmpeg로 완성본 영상 파일로 내보내는 앱.
+안드로이드 폰에서 영상 하나만 올리면 AI 더빙 + 자동자막을 생성하고, 타임라인 에디터로 편집한 뒤 ffmpeg로 완성본 영상 파일로 내보내는 앱.
 
 ## 2. 타깃 유저
 - 안드로이드 비중이 높은 동남아/인도/한국 크리에이터.
@@ -29,7 +29,6 @@
   - 번역 언어 선택 (한국어/English/日本語/中文/Español/Français/Deutsch).
   - 더빙 ON/OFF — AI 보이스 더빙 적용.
     - 동영상에 삽입한 더빙: 원어 유지 / 더빙 언어로 변경.
-  - 립싱크 ON/OFF — 더빙 음성에 맞춰 입 모양 동기화.
   - 자동 자막 ON/OFF — 번역 언어로 자막 자동 생성 및 번인.
 
 온디바이스 ffmpeg-kit으로 렌더링:
@@ -53,9 +52,6 @@
 |------|-----------|
 | 보이스 목록 | `GET /api/v2/voices` |
 | TTS 합성 | `POST /api/v2/tts` |
-| 립싱크 요청 | `POST /api/v2/lipsync` (multipart) |
-| 립싱크 상태 | `GET /api/v2/lipsync/{jobId}/status` |
-| 립싱크 다운로드 | `GET /api/v2/lipsync/{jobId}/download` |
 
 모든 빌드에서 실제 BFF 서버에 연결. `local.properties`의 `BFF_BASE_URL`을 실제 서버 주소로 설정 필요.
 
@@ -69,7 +65,7 @@
 │  └─ ShareScreen / ShareViewModel (갤러리 저장)
 ├─ Domain Layer
 │  ├─ Models: EditProject, Segment, DubClip, SubtitleClip, ImageClip, TextOverlay, BgmClip, Stem, Voice, SubtitlePosition
-│  ├─ Use Cases: input/, timeline/, tts/, subtitle/, image/, text/, bgm/, lipsync/, separation/, export/, share/
+│  ├─ Use Cases: input/, timeline/, tts/, subtitle/, image/, text/, bgm/, separation/, export/, share/
 │  └─ Repository Interfaces
 ├─ Data Layer
 │  ├─ Room DB (v14): EditProject, Segment, DubClip, SubtitleClip, ImageClip, TextOverlay, BgmClip 테이블
@@ -79,7 +75,7 @@
         │
         ▼
 [BFF (자체 서버)]
-├─ TTS / 립싱크 / 보이스 API 프록시
+├─ TTS / 보이스 / 오디오 분리 / 렌더 API 프록시
 └─ BFF_BASE_URL은 local.properties에서 BuildConfig으로 주입
 ```
 

@@ -57,7 +57,10 @@ class EditProjectRepositoryImpl @Inject constructor(
         backgroundColorHex = backgroundColorHex,
         videoScale = videoScale,
         videoOffsetXPct = videoOffsetXPct,
-        videoOffsetYPct = videoOffsetYPct
+        videoOffsetYPct = videoOffsetYPct,
+        targetLanguageCode = targetLanguageCode,
+        enableAutoDubbing = enableAutoDubbing,
+        enableAutoSubtitles = enableAutoSubtitles
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
@@ -69,7 +72,10 @@ class EditProjectRepositoryImpl @Inject constructor(
         backgroundColorHex = backgroundColorHex,
         videoScale = videoScale,
         videoOffsetXPct = videoOffsetXPct,
-        videoOffsetYPct = videoOffsetYPct
+        videoOffsetYPct = videoOffsetYPct,
+        targetLanguageCode = targetLanguageCode,
+        enableAutoDubbing = enableAutoDubbing,
+        enableAutoSubtitles = enableAutoSubtitles
     )
 
     private fun Segment.toEntity() = SegmentEntity(
