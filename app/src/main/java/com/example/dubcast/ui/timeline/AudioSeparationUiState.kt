@@ -21,7 +21,6 @@ data class AudioSeparationUiState(
     val segmentId: String,
     val step: AudioSeparationStep = AudioSeparationStep.SETUP,
     val numberOfSpeakers: Int = 2,
-    val sourceLanguageCode: String = "auto",
     val jobId: String? = null,
     val progress: Int = 0,
     val progressReason: String? = null,

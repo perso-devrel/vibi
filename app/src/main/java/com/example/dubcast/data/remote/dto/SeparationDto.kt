@@ -6,7 +6,9 @@ import com.squareup.moshi.JsonClass
 data class SeparationSpec(
     val mediaType: String,
     val numberOfSpeakers: Int,
-    val sourceLanguageCode: String
+    val sourceLanguageCode: String,
+    val trimStartMs: Long? = null,
+    val trimEndMs: Long? = null
 )
 
 @JsonClass(generateAdapter = true)

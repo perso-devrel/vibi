@@ -56,7 +56,9 @@ interface AudioSeparationRepository {
         sourceUri: String,
         mediaType: SeparationMediaType,
         numberOfSpeakers: Int,
-        sourceLanguageCode: String = "auto"
+        sourceLanguageCode: String = "auto",
+        trimStartMs: Long? = null,
+        trimEndMs: Long? = null
     ): Result<String>
 
     suspend fun pollStatus(jobId: String): Result<SeparationStatus>

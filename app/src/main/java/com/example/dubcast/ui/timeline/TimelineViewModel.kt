@@ -1542,24 +1542,19 @@ class TimelineViewModel @Inject constructor(
         )
     }
 
-    fun onUpdateSeparationLanguage(code: String) {
-        val sep = _uiState.value.audioSeparation ?: return
-        _uiState.value = _uiState.value.copy(
-            audioSeparation = sep.copy(sourceLanguageCode = code)
-        )
-    }
-
     fun onStartSeparation() {
         val state = _uiState.value
         val sep = state.audioSeparation ?: return
         val segment = state.segments.firstOrNull { it.id == sep.segmentId } ?: return
+        val hasTrim = segment.trimStartMs > 0L || segment.trimEndMs > 0L
         viewModelScope.launch {
             updateSeparation { it.copy(step = AudioSeparationStep.PROCESSING, errorMessage = null) }
             val startResult = startAudioSeparation(
                 sourceUri = segment.sourceUri,
                 mediaType = SeparationMediaType.VIDEO,
                 numberOfSpeakers = sep.numberOfSpeakers,
-                sourceLanguageCode = sep.sourceLanguageCode
+                trimStartMs = if (hasTrim) segment.trimStartMs else null,
+                trimEndMs = if (hasTrim) segment.effectiveTrimEndMs else null
             )
             val jobId = startResult.getOrElse { err ->
                 updateSeparation {
@@ -1672,6 +1667,11 @@ class TimelineViewModel @Inject constructor(
                                         updateSegmentVolume(segment.id, 0f)
                                     }
                                     updateSeparation { it.copy(step = AudioSeparationStep.DONE) }
+                                    // Audio separation is a paid one-way commit: undoing past
+                                    // this point would strand the BGM clip and invite re-runs
+                                    // that re-charge BFF credits. Freeze everything up to here
+                                    // as the new baseline.
+                                    undoRedoManager.clear()
                                     pushUndoState()
                                 },
                                 onFailure = { err ->

@@ -1234,4 +1234,135 @@ class TimelineViewModelTest {
         assertEquals(AudioSeparationStep.FAILED, ui.step)
         assertTrue(ui.errorMessage!!.contains("402"))
     }
+
+    @Test
+    fun `starting separation forwards segment trim range to repository`() = runTest {
+        segmentRepo.addSegment(
+            Segment(
+                id = "seg-1",
+                projectId = projectId,
+                type = SegmentType.VIDEO,
+                order = 0,
+                sourceUri = "content://video.mp4",
+                durationMs = 60_000L,
+                width = 1920,
+                height = 1080,
+                trimStartMs = 2_000L,
+                trimEndMs = 8_500L
+            )
+        )
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-trim")
+        separationRepo.statusResults = mutableListOf(
+            Result.success(SeparationStatus.Ready("sep-trim", emptyList()))
+        )
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+
+        assertEquals(2_000L, separationRepo.lastStartArgs?.trimStartMs)
+        assertEquals(8_500L, separationRepo.lastStartArgs?.trimEndMs)
+    }
+
+    @Test
+    fun `starting separation forwards effective end when only end is trimmed`() = runTest {
+        segmentRepo.addSegment(
+            Segment(
+                id = "seg-1",
+                projectId = projectId,
+                type = SegmentType.VIDEO,
+                order = 0,
+                sourceUri = "content://video.mp4",
+                durationMs = 60_000L,
+                width = 1920,
+                height = 1080,
+                trimStartMs = 0L,
+                trimEndMs = 12_000L
+            )
+        )
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-end-only")
+        separationRepo.statusResults = mutableListOf(
+            Result.success(SeparationStatus.Ready("sep-end-only", emptyList()))
+        )
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+
+        assertEquals(0L, separationRepo.lastStartArgs?.trimStartMs)
+        assertEquals(12_000L, separationRepo.lastStartArgs?.trimEndMs)
+    }
+
+    @Test
+    fun `starting separation omits trim range when segment is untrimmed`() = runTest {
+        seedSegment()
+        advanceUntilIdle()
+        separationRepo.startResult = Result.success("sep-full")
+        separationRepo.statusResults = mutableListOf(
+            Result.success(SeparationStatus.Ready("sep-full", emptyList()))
+        )
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+
+        assertEquals(null, separationRepo.lastStartArgs?.trimStartMs)
+        assertEquals(null, separationRepo.lastStartArgs?.trimEndMs)
+    }
+
+    @Test
+    fun `confirming mix clears undo history so prior edits cannot be undone`() = runTest {
+        seedSegment(durationMs = 20_000L)
+        seedProject()
+        advanceUntilIdle()
+
+        // Two edits that would normally be undoable
+        vm.onEnterTrimMode()
+        vm.onSetPendingTrimStart(1_000L)
+        vm.onSetPendingTrimEnd(10_000L)
+        vm.onConfirmTrim()
+        advanceUntilIdle()
+        vm.onUpdatePlaybackPosition(2_000L)
+        vm.onInsertImage("content://x.jpg")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.canUndo)
+
+        // Run a complete separation -> mix flow
+        separationRepo.startResult = Result.success("sep-commit")
+        separationRepo.statusResults = mutableListOf(
+            Result.success(
+                SeparationStatus.Ready(
+                    "sep-commit",
+                    listOf(Stem("background", "배경음", "/u/bg", StemKind.BACKGROUND))
+                )
+            )
+        )
+        separationRepo.mixRequestResult = Result.success("mix-commit")
+        separationRepo.mixStatusResults = mutableListOf(
+            Result.success(MixStatus.Completed("mix-commit", "/dl/mix?token=z"))
+        )
+        separationRepo.mixDownloadResult = Result.success("/cache/mix-commit.mp3")
+        audioExtractor.nextInfo = AudioInfo(uri = "placeholder", durationMs = 9_000L)
+
+        vm.onShowAudioSeparationSheet("seg-1")
+        vm.onStartSeparation()
+        advanceUntilIdle()
+        vm.onToggleStemSelection("background")
+        vm.onConfirmStemMix()
+        advanceUntilIdle()
+
+        // Undo history has been cleared; the single baseline snapshot is the
+        // post-separation state, so nothing can be rolled back from here.
+        assertEquals(false, vm.uiState.value.canUndo)
+
+        // Calling undo is a no-op: image clip and trim changes stay put
+        vm.onUndo()
+        advanceUntilIdle()
+        assertEquals(1, imageRepo.observeClips(projectId).first().size)
+        val segAfterUndo = segmentRepo.getSegment("seg-1")!!
+        assertEquals(1_000L, segAfterUndo.trimStartMs)
+        assertEquals(10_000L, segAfterUndo.trimEndMs)
+    }
 }

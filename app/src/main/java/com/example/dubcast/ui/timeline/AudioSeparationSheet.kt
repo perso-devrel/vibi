@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -15,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -29,7 +31,6 @@ fun AudioSeparationSheet(
     state: AudioSeparationUiState,
     onDismiss: () -> Unit,
     onSpeakersChange: (Int) -> Unit,
-    onLanguageChange: (String) -> Unit,
     onStart: () -> Unit,
     onToggleStem: (stemId: String) -> Unit,
     onStemVolumeChange: (stemId: String, volume: Float) -> Unit,
@@ -50,7 +51,6 @@ fun AudioSeparationSheet(
                 AudioSeparationStep.SETUP -> SetupStep(
                     state = state,
                     onSpeakersChange = onSpeakersChange,
-                    onLanguageChange = onLanguageChange,
                     onStart = onStart,
                     onDismiss = onDismiss
                 )
@@ -76,7 +76,6 @@ fun AudioSeparationSheet(
 private fun SetupStep(
     state: AudioSeparationUiState,
     onSpeakersChange: (Int) -> Unit,
-    onLanguageChange: (String) -> Unit,
     onStart: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -90,21 +89,19 @@ private fun SetupStep(
         valueRange = 1f..10f,
         steps = 8
     )
-    Spacer(Modifier.height(8.dp))
-    Text("언어", style = MaterialTheme.typography.bodyMedium)
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("auto" to "자동", "ko" to "한국어", "en" to "영어").forEach { (code, label) ->
-            val selected = state.sourceLanguageCode == code
-            OutlinedButton(
-                onClick = { onLanguageChange(code) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = if (selected) "● $label" else label,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        }
+    Spacer(Modifier.height(12.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = "⚠ 음원 분리를 진행하면 현재까지의 편집이 기준점으로 확정되어 되돌릴 수 없습니다. " +
+                "분리 이후의 편집만 실행취소가 가능합니다.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+        )
     }
     Spacer(Modifier.height(16.dp))
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

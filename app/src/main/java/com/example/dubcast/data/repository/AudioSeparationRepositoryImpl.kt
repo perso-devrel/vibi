@@ -35,7 +35,9 @@ class AudioSeparationRepositoryImpl @Inject constructor(
         sourceUri: String,
         mediaType: SeparationMediaType,
         numberOfSpeakers: Int,
-        sourceLanguageCode: String
+        sourceLanguageCode: String,
+        trimStartMs: Long?,
+        trimEndMs: Long?
     ): Result<String> = runCatching {
         val (ext, contentType) = when (mediaType) {
             SeparationMediaType.VIDEO -> "mp4" to "video/mp4"
@@ -54,7 +56,13 @@ class AudioSeparationRepositoryImpl @Inject constructor(
                 tempFile.asRequestBody(contentType.toMediaType())
             )
             val specJson = specAdapter.toJson(
-                SeparationSpec(mediaType.wireName, numberOfSpeakers, sourceLanguageCode)
+                SeparationSpec(
+                    mediaType = mediaType.wireName,
+                    numberOfSpeakers = numberOfSpeakers,
+                    sourceLanguageCode = sourceLanguageCode,
+                    trimStartMs = trimStartMs,
+                    trimEndMs = trimEndMs
+                )
             )
             val specBody = specJson.toRequestBody("application/json".toMediaType())
 

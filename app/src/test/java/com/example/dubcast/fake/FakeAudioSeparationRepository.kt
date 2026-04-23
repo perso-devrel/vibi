@@ -25,16 +25,27 @@ class FakeAudioSeparationRepository : AudioSeparationRepository {
         val sourceUri: String,
         val mediaType: SeparationMediaType,
         val numberOfSpeakers: Int,
-        val sourceLanguageCode: String
+        val sourceLanguageCode: String,
+        val trimStartMs: Long?,
+        val trimEndMs: Long?
     )
 
     override suspend fun startSeparation(
         sourceUri: String,
         mediaType: SeparationMediaType,
         numberOfSpeakers: Int,
-        sourceLanguageCode: String
+        sourceLanguageCode: String,
+        trimStartMs: Long?,
+        trimEndMs: Long?
     ): Result<String> {
-        lastStartArgs = StartArgs(sourceUri, mediaType, numberOfSpeakers, sourceLanguageCode)
+        lastStartArgs = StartArgs(
+            sourceUri = sourceUri,
+            mediaType = mediaType,
+            numberOfSpeakers = numberOfSpeakers,
+            sourceLanguageCode = sourceLanguageCode,
+            trimStartMs = trimStartMs,
+            trimEndMs = trimEndMs
+        )
         return startResult
     }
 

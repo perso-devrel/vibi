@@ -11,11 +11,28 @@ class StartAudioSeparationUseCase @Inject constructor(
         sourceUri: String,
         mediaType: SeparationMediaType,
         numberOfSpeakers: Int,
-        sourceLanguageCode: String = "auto"
+        sourceLanguageCode: String = "auto",
+        trimStartMs: Long? = null,
+        trimEndMs: Long? = null
     ): Result<String> {
         if (numberOfSpeakers !in 1..10) {
             return Result.failure(IllegalArgumentException("numberOfSpeakers must be in 1..10"))
         }
-        return repository.startSeparation(sourceUri, mediaType, numberOfSpeakers, sourceLanguageCode)
+        if (trimStartMs != null || trimEndMs != null) {
+            if (trimStartMs == null || trimEndMs == null) {
+                return Result.failure(IllegalArgumentException("trimStartMs and trimEndMs must be set together"))
+            }
+            if (trimStartMs < 0L || trimEndMs <= trimStartMs) {
+                return Result.failure(IllegalArgumentException("invalid trim range"))
+            }
+        }
+        return repository.startSeparation(
+            sourceUri = sourceUri,
+            mediaType = mediaType,
+            numberOfSpeakers = numberOfSpeakers,
+            sourceLanguageCode = sourceLanguageCode,
+            trimStartMs = trimStartMs,
+            trimEndMs = trimEndMs
+        )
     }
 }

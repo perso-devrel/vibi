@@ -840,7 +840,6 @@ fun TimelineScreen(
             state = separationState,
             onDismiss = { viewModel.onDismissAudioSeparationSheet() },
             onSpeakersChange = { viewModel.onUpdateSeparationSpeakers(it) },
-            onLanguageChange = { viewModel.onUpdateSeparationLanguage(it) },
             onStart = { viewModel.onStartSeparation() },
             onToggleStem = { viewModel.onToggleStemSelection(it) },
             onStemVolumeChange = { id, vol -> viewModel.onUpdateStemVolume(id, vol) },
