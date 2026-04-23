@@ -54,7 +54,10 @@ class EditProjectRepositoryImpl @Inject constructor(
         updatedAt = updatedAt,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
-        backgroundColorHex = backgroundColorHex
+        backgroundColorHex = backgroundColorHex,
+        videoScale = videoScale,
+        videoOffsetXPct = videoOffsetXPct,
+        videoOffsetYPct = videoOffsetYPct
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
@@ -63,7 +66,10 @@ class EditProjectRepositoryImpl @Inject constructor(
         updatedAt = updatedAt,
         frameWidth = frameWidth,
         frameHeight = frameHeight,
-        backgroundColorHex = backgroundColorHex
+        backgroundColorHex = backgroundColorHex,
+        videoScale = videoScale,
+        videoOffsetXPct = videoOffsetXPct,
+        videoOffsetYPct = videoOffsetYPct
     )
 
     private fun Segment.toEntity() = SegmentEntity(

@@ -11,5 +11,8 @@ data class EditProjectEntity(
     val updatedAt: Long,
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
-    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX
+    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+    val videoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
+    val videoOffsetXPct: Float = 0f,
+    val videoOffsetYPct: Float = 0f
 )

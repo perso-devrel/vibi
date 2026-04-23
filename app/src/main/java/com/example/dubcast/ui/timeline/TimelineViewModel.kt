@@ -129,10 +129,16 @@ data class TimelineUiState(
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
     val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+    val videoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
+    val videoOffsetXPct: Float = 0f,
+    val videoOffsetYPct: Float = 0f,
     val showFrameSheet: Boolean = false,
     val pendingFrameWidth: String = "",
     val pendingFrameHeight: String = "",
     val pendingBackgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+    val pendingVideoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
+    val pendingVideoOffsetXPct: Float = 0f,
+    val pendingVideoOffsetYPct: Float = 0f,
     val frameError: String? = null,
     val textOverlays: List<TextOverlay> = emptyList(),
     val selectedTextOverlayId: String? = null,
@@ -167,7 +173,10 @@ data class TimelineSnapshot(
     val bgmClips: List<BgmClip> = emptyList(),
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
-    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX
+    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+    val videoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
+    val videoOffsetXPct: Float = 0f,
+    val videoOffsetYPct: Float = 0f
 )
 
 @HiltViewModel
@@ -254,7 +263,10 @@ class TimelineViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         frameWidth = project.frameWidth,
                         frameHeight = project.frameHeight,
-                        backgroundColorHex = project.backgroundColorHex
+                        backgroundColorHex = project.backgroundColorHex,
+                        videoScale = project.videoScale,
+                        videoOffsetXPct = project.videoOffsetXPct,
+                        videoOffsetYPct = project.videoOffsetYPct
                     )
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
@@ -387,7 +399,10 @@ class TimelineViewModel @Inject constructor(
                 frameWidth = project?.frameWidth ?: 0,
                 frameHeight = project?.frameHeight ?: 0,
                 backgroundColorHex = project?.backgroundColorHex
-                    ?: EditProject.DEFAULT_BACKGROUND_COLOR_HEX
+                    ?: EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
+                videoScale = project?.videoScale ?: EditProject.DEFAULT_VIDEO_SCALE,
+                videoOffsetXPct = project?.videoOffsetXPct ?: 0f,
+                videoOffsetYPct = project?.videoOffsetYPct ?: 0f
             )
         )
         updateUndoRedoState()
@@ -768,6 +783,9 @@ class TimelineViewModel @Inject constructor(
                         frameWidth = snapshot.frameWidth,
                         frameHeight = snapshot.frameHeight,
                         backgroundColorHex = snapshot.backgroundColorHex,
+                        videoScale = snapshot.videoScale,
+                        videoOffsetXPct = snapshot.videoOffsetXPct,
+                        videoOffsetYPct = snapshot.videoOffsetYPct,
                         updatedAt = System.currentTimeMillis()
                     )
                 )
@@ -1144,13 +1162,80 @@ class TimelineViewModel @Inject constructor(
 
     fun onShowFrameSheet() {
         val state = _uiState.value
+        // Seed width/height with a sensible default when the project has no
+        // frame yet so Apply doesn't fail with "Width/Height required" if the
+        // user tapped Apply without touching a preset.
+        val basis = state.frameLongestSidePx().coerceAtLeast(MIN_FRAME_DIMENSION)
+        val (defaultW, defaultH) = FramePreset.LANDSCAPE_16_9.toDimensions(basis)
         _uiState.value = state.copy(
             showFrameSheet = true,
-            pendingFrameWidth = if (state.frameWidth > 0) state.frameWidth.toString() else "",
-            pendingFrameHeight = if (state.frameHeight > 0) state.frameHeight.toString() else "",
+            pendingFrameWidth = if (state.frameWidth > 0) state.frameWidth.toString()
+                else defaultW.toString(),
+            pendingFrameHeight = if (state.frameHeight > 0) state.frameHeight.toString()
+                else defaultH.toString(),
             pendingBackgroundColorHex = state.backgroundColorHex,
+            pendingVideoScale = state.videoScale,
+            pendingVideoOffsetXPct = state.videoOffsetXPct,
+            pendingVideoOffsetYPct = state.videoOffsetYPct,
             frameError = null
         )
+    }
+
+    fun onConfirmFrameWithPlacement(
+        scale: Float,
+        offsetXPct: Float,
+        offsetYPct: Float
+    ) {
+        // Single write path: validate + persist in one atomic state update so
+        // UI never observes a half-applied placement (old confirm() re-read
+        // _uiState.value and implicitly depended on copy ordering).
+        val state = _uiState.value
+        val width = state.pendingFrameWidth.toIntOrNull()
+        val height = state.pendingFrameHeight.toIntOrNull()
+        if (width == null || width <= 0 || height == null || height <= 0) {
+            _uiState.value = state.copy(frameError = "Width와 Height는 양의 정수")
+            return
+        }
+        if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
+            _uiState.value = state.copy(frameError = "최대 ${MAX_FRAME_DIMENSION}px")
+            return
+        }
+        val color = state.pendingBackgroundColorHex.trim()
+        val clampedScale = scale.coerceIn(
+            EditProject.MIN_VIDEO_SCALE,
+            EditProject.MAX_VIDEO_SCALE
+        )
+        val clampedX = offsetXPct.coerceIn(
+            -EditProject.MAX_VIDEO_OFFSET_PCT,
+            EditProject.MAX_VIDEO_OFFSET_PCT
+        )
+        val clampedY = offsetYPct.coerceIn(
+            -EditProject.MAX_VIDEO_OFFSET_PCT,
+            EditProject.MAX_VIDEO_OFFSET_PCT
+        )
+        viewModelScope.launch {
+            try {
+                setProjectFrame(
+                    projectId = projectId,
+                    width = width,
+                    height = height,
+                    backgroundColorHex = color,
+                    videoScale = clampedScale,
+                    videoOffsetXPct = clampedX,
+                    videoOffsetYPct = clampedY
+                )
+                _uiState.value = _uiState.value.copy(
+                    showFrameSheet = false,
+                    pendingVideoScale = clampedScale,
+                    pendingVideoOffsetXPct = clampedX,
+                    pendingVideoOffsetYPct = clampedY,
+                    frameError = null
+                )
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(frameError = e.message ?: "Invalid frame")
+            }
+        }
     }
 
     fun onDismissFrameSheet() {
@@ -1195,7 +1280,15 @@ class TimelineViewModel @Inject constructor(
         val color = state.pendingBackgroundColorHex.trim()
         viewModelScope.launch {
             try {
-                setProjectFrame(projectId, width, height, color)
+                setProjectFrame(
+                    projectId = projectId,
+                    width = width,
+                    height = height,
+                    backgroundColorHex = color,
+                    videoScale = state.pendingVideoScale,
+                    videoOffsetXPct = state.pendingVideoOffsetXPct,
+                    videoOffsetYPct = state.pendingVideoOffsetYPct
+                )
                 _uiState.value = _uiState.value.copy(showFrameSheet = false, frameError = null)
                 pushUndoState()
             } catch (e: IllegalArgumentException) {

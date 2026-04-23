@@ -1,7 +1,11 @@
 package com.example.dubcast.ui.timeline
 
+import com.example.dubcast.R
+import com.example.dubcast.domain.util.isValidHexColor
+
 import android.media.MediaPlayer
 import android.net.Uri
+import android.view.LayoutInflater
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,8 +25,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -46,8 +53,8 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -56,6 +63,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -75,7 +83,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -340,10 +350,7 @@ fun TimelineScreen(
         var timelineHeightDp by remember { mutableStateOf(110f) }
 
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            val frameBackgroundColor = remember(state.backgroundColorHex) {
-                runCatching { Color(android.graphics.Color.parseColor(state.backgroundColorHex)) }
-                    .getOrDefault(Color.Black)
-            }
+            val frameBackgroundColor = rememberParsedColor(state.backgroundColorHex)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -359,11 +366,23 @@ fun TimelineScreen(
                         .aspectRatio(state.frameAspectRatio)
                         .background(frameBackgroundColor)
                         .border(1.dp, frameBorderColor)
+                        .clipToBounds()
                 } else {
                     Modifier.matchParentSize()
                         .border(1.dp, frameBorderColor)
+                        .clipToBounds()
                 }
                 Box(modifier = frameModifier) {
+                    // Committed project placement (main preview is read-only;
+                    // live editing happens inside the Frame sheet's own preview).
+                    val placementTransformModifier = Modifier.graphicsLayer {
+                        val frameW = size.width.coerceAtLeast(1f)
+                        val frameH = size.height.coerceAtLeast(1f)
+                        scaleX = state.videoScale
+                        scaleY = state.videoScale
+                        translationX = state.videoOffsetXPct / 100f * frameW
+                        translationY = state.videoOffsetYPct / 100f * frameH
+                    }
                     if (currentSegment?.type == SegmentType.IMAGE) {
                     AsyncImage(
                         model = currentSegment.sourceUri,
@@ -371,9 +390,13 @@ fun TimelineScreen(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .matchParentSize()
+                            .then(placementTransformModifier)
                             .background(Color.Black)
                     )
-                } else {
+                } else if (!state.showFrameSheet) {
+                    // Detach the PlayerView while the Frame sheet owns the
+                    // ExoPlayer. One PlayerView per player: mounting in both
+                    // places at once leaves one surface black.
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
@@ -381,7 +404,9 @@ fun TimelineScreen(
                                 useController = false
                             }
                         },
-                        modifier = Modifier.matchParentSize()
+                        modifier = Modifier
+                            .matchParentSize()
+                            .then(placementTransformModifier)
                     )
                 }
                 SubtitlePreviewLayer(
@@ -820,16 +845,30 @@ fun TimelineScreen(
     }
 
     if (state.showFrameSheet) {
+        val pendingAspectRatio = run {
+            val w = state.pendingFrameWidth.toIntOrNull()
+            val h = state.pendingFrameHeight.toIntOrNull()
+            if (w != null && h != null && w > 0 && h > 0) {
+                w.toFloat() / h.toFloat()
+            } else {
+                state.frameAspectRatio.takeIf { it > 0f } ?: (16f / 9f)
+            }
+        }
         FrameSettingsSheet(
-            pendingWidth = state.pendingFrameWidth,
-            pendingHeight = state.pendingFrameHeight,
             pendingBackgroundColorHex = state.pendingBackgroundColorHex,
             error = state.frameError,
-            onWidthChange = { viewModel.onFrameWidthInputChanged(it) },
-            onHeightChange = { viewModel.onFrameHeightInputChanged(it) },
+            aspectRatio = pendingAspectRatio,
+            backgroundColorHex = state.pendingBackgroundColorHex,
+            currentSegment = currentSegment,
+            exoPlayer = exoPlayer,
+            initialVideoScale = state.pendingVideoScale,
+            initialVideoOffsetXPct = state.pendingVideoOffsetXPct,
+            initialVideoOffsetYPct = state.pendingVideoOffsetYPct,
             onColorChange = { viewModel.onFrameBackgroundColorChanged(it) },
             onPreset = { viewModel.onApplyFramePreset(it) },
-            onConfirm = { viewModel.onConfirmFrame() },
+            onConfirm = { scale, x, y ->
+                viewModel.onConfirmFrameWithPlacement(scale, x, y)
+            },
             onDismiss = { viewModel.onDismissFrameSheet() }
         )
     }
@@ -849,27 +888,200 @@ fun TimelineScreen(
     }
 }
 
+@Composable
+private fun BackgroundColorPicker(
+    currentHex: String,
+    onColorChange: (String) -> Unit
+) {
+    var showDialog by remember { mutableStateOf(false) }
+    val swatchColor = rememberParsedColor(currentHex)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "Background",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(swatchColor)
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline,
+                    CircleShape
+                )
+                .clickable { showDialog = true }
+        )
+    }
+    if (showDialog) {
+        ColorPickerDialog(
+            currentHex = currentHex,
+            onPick = {
+                onColorChange(it)
+                showDialog = false
+            },
+            onDismiss = { showDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun ColorPickerDialog(
+    currentHex: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val presets = listOf(
+        "#000000", "#FFFFFF", "#808080", "#C62828",
+        "#EF6C00", "#F9A825", "#2E7D32", "#1565C0",
+        "#6A1B9A", "#00838F", "#6D4C41", "#37474F"
+    )
+    var hexInput by remember(currentHex) { mutableStateOf(currentHex) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Background 색상") },
+        text = {
+            Column {
+                // Preset swatches grid (4 x 3)
+                presets.chunked(4).forEach { row ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        row.forEach { hex ->
+                            val color = rememberParsedColor(hex)
+                            val isSelected = hex.equals(hexInput, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .border(
+                                        if (isSelected) 3.dp else 1.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.outline,
+                                        CircleShape
+                                    )
+                                    .clickable { onPick(hex) }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = hexInput,
+                    onValueChange = { hexInput = it },
+                    label = { Text("직접 입력 (#RRGGBB)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (isValidHexColor(hexInput.trim())) onPick(hexInput.trim())
+            }) { Text("적용") }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("취소") }
+        }
+    )
+}
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FrameSettingsSheet(
-    pendingWidth: String,
-    pendingHeight: String,
     pendingBackgroundColorHex: String,
     error: String?,
-    onWidthChange: (String) -> Unit,
-    onHeightChange: (String) -> Unit,
+    aspectRatio: Float,
+    backgroundColorHex: String,
+    currentSegment: Segment?,
+    exoPlayer: ExoPlayer,
+    initialVideoScale: Float,
+    initialVideoOffsetXPct: Float,
+    initialVideoOffsetYPct: Float,
     onColorChange: (String) -> Unit,
     onPreset: (FramePreset) -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (scale: Float, offsetXPct: Float, offsetYPct: Float) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState()
+    val bgColor = rememberParsedColor(backgroundColorHex)
+    // Local gesture state: drives graphicsLayer directly for 60fps drag/pinch.
+    // Routing per-frame updates through the VM was noticeably laggy because
+    // each event caused a full-screen recomposition.
+    var scale by remember { mutableStateOf(initialVideoScale) }
+    var offsetX by remember { mutableStateOf(initialVideoOffsetXPct) }
+    var offsetY by remember { mutableStateOf(initialVideoOffsetYPct) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
             Text("Frame", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
-            Text("Preset", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(6.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(aspectRatio)
+                    .background(bgColor)
+                    .border(1.dp, Color.White.copy(alpha = 0.5f))
+                    .clipToBounds()
+                    // Gesture lives on the OUTER (untransformed) Box so pan
+                    // deltas are in raw finger pixels. Putting it on the
+                    // graphicsLayer-transformed child caused pan to scale with
+                    // the zoom factor, making drag feel too fast.
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            val h = size.height.toFloat().coerceAtLeast(1f)
+                            scale = (scale * zoom).coerceIn(0.25f, 4f)
+                            offsetX = (offsetX + pan.x / w * 100f).coerceIn(-100f, 100f)
+                            offsetY = (offsetY + pan.y / h * 100f).coerceIn(-100f, 100f)
+                        }
+                    }
+            ) {
+                val transform = Modifier.graphicsLayer {
+                    val w = size.width.coerceAtLeast(1f)
+                    val h = size.height.coerceAtLeast(1f)
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offsetX / 100f * w
+                    translationY = offsetY / 100f * h
+                }
+                if (currentSegment?.type == SegmentType.IMAGE) {
+                    AsyncImage(
+                        model = currentSegment.sourceUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.matchParentSize().then(transform)
+                    )
+                } else {
+                    // Inflate the TextureView-backed PlayerView so placement
+                    // transforms clip to the sheet bounds. A SurfaceView-backed
+                    // player (the default) would punch through the clip.
+                    AndroidView(
+                        factory = { ctx ->
+                            val view = LayoutInflater.from(ctx)
+                                .inflate(R.layout.exo_player_texture, null) as PlayerView
+                            view.player = exoPlayer
+                            view.useController = false
+                            view
+                        },
+                        modifier = Modifier.matchParentSize().then(transform)
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "드래그로 이동, 두 손가락으로 확대/축소하세요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
                 FramePreset.entries.forEach { preset ->
                     AssistChip(
@@ -881,34 +1093,9 @@ private fun FrameSettingsSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = pendingWidth,
-                    onValueChange = onWidthChange,
-                    label = { Text("Width") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("×")
-                Spacer(Modifier.width(8.dp))
-                OutlinedTextField(
-                    value = pendingHeight,
-                    onValueChange = onHeightChange,
-                    label = { Text("Height") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = pendingBackgroundColorHex,
-                onValueChange = onColorChange,
-                label = { Text("Background (#RRGGBB)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+            BackgroundColorPicker(
+                currentHex = pendingBackgroundColorHex,
+                onColorChange = onColorChange
             )
             if (error != null) {
                 Spacer(Modifier.height(8.dp))
@@ -919,8 +1106,16 @@ private fun FrameSettingsSheet(
                 )
             }
             Spacer(Modifier.height(16.dp))
-            Row(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.CenterEnd)) {
-                Button(onClick = onConfirm) { Text("Apply") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+            ) {
+                OutlinedButton(onClick = {
+                    scale = 1f
+                    offsetX = 0f
+                    offsetY = 0f
+                }) { Text("원상 복구") }
+                Button(onClick = { onConfirm(scale, offsetX, offsetY) }) { Text("Apply") }
             }
             Spacer(Modifier.height(8.dp))
         }
