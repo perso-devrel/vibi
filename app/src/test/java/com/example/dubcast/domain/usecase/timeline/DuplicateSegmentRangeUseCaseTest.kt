@@ -6,6 +6,7 @@ import com.example.dubcast.fake.FakeSegmentRepository
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
@@ -52,6 +53,14 @@ class DuplicateSegmentRangeUseCaseTest {
         assertEquals(10_000L, all[3].trimEndMs)
 
         assertNotEquals(all[1].id, all[2].id)
+
+        // The duplicate carries a pointer to its source middle segment;
+        // surrounding pieces stay unmarked so the timeline only highlights
+        // the newly-inserted clone.
+        assertEquals(all[1].id, all[2].duplicatedFromId)
+        assertNull(all[0].duplicatedFromId)
+        assertNull(all[1].duplicatedFromId)
+        assertNull(all[3].duplicatedFromId)
     }
 
     @Test

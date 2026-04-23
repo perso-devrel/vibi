@@ -26,7 +26,8 @@ class DuplicateSegmentRangeUseCase @Inject constructor(
 
         val duplicate = middle.copy(
             id = UUID.randomUUID().toString(),
-            order = middle.order + 1
+            order = middle.order + 1,
+            duplicatedFromId = middle.id
         )
         segmentRepository.addSegment(duplicate)
         return duplicate

@@ -18,7 +18,8 @@ data class Segment(
     val imageWidthPct: Float = 50f,
     val imageHeightPct: Float = 50f,
     val volumeScale: Float = 1.0f,
-    val speedScale: Float = 1.0f
+    val speedScale: Float = 1.0f,
+    val duplicatedFromId: String? = null
 ) {
     val effectiveTrimEndMs: Long
         get() = if (type == SegmentType.VIDEO && trimEndMs <= 0L) durationMs else trimEndMs

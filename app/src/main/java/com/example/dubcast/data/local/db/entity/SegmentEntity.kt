@@ -21,5 +21,6 @@ data class SegmentEntity(
     val imageWidthPct: Float = 50f,
     val imageHeightPct: Float = 50f,
     val volumeScale: Float = 1f,
-    val speedScale: Float = 1f
+    val speedScale: Float = 1f,
+    val duplicatedFromId: String? = null
 )

@@ -54,7 +54,6 @@ import com.example.dubcast.domain.usecase.timeline.DuplicateSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.RemoveSegmentUseCase
-import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
@@ -188,7 +187,6 @@ class TimelineViewModel @Inject constructor(
     private val deleteDubClip: DeleteDubClipUseCase,
     private val addSubtitleClip: AddSubtitleClipUseCase,
     private val deleteSubtitleClip: DeleteSubtitleClipUseCase,
-    private val splitDubTextToSubtitles: SplitDubTextToSubtitlesUseCase,
     private val addImageClip: AddImageClipUseCase,
     private val updateImageClip: UpdateImageClipUseCase,
     private val deleteImageClip: DeleteImageClipUseCase,
@@ -470,7 +468,7 @@ class TimelineViewModel @Inject constructor(
         }
     }
 
-    fun onInsertPreviewClip(showOnScreen: Boolean = false) {
+    fun onInsertPreviewClip() {
         val preview = _uiState.value.previewClip ?: return
         viewModelScope.launch {
             val dubClipId = java.util.UUID.randomUUID().toString()
@@ -486,19 +484,6 @@ class TimelineViewModel @Inject constructor(
                 durationMs = preview.durationMs
             )
             dubClipRepository.addClip(clip)
-
-            if (showOnScreen) {
-                val autoSubtitles = splitDubTextToSubtitles(
-                    text = preview.text,
-                    startMs = startMs,
-                    durationMs = preview.durationMs,
-                    dubClipId = dubClipId,
-                    projectId = projectId
-                )
-                for (subtitle in autoSubtitles) {
-                    subtitleClipRepository.addClip(subtitle)
-                }
-            }
 
             _uiState.value = _uiState.value.copy(
                 showDubbingSheet = false,
@@ -979,17 +964,18 @@ class TimelineViewModel @Inject constructor(
         val state = _uiState.value
         val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
-        // Default range begins at the playhead so a tap on a specific spot
-        // opens the 1s window right there (not at the leftmost segment edge).
-        val total = state.videoDurationMs.coerceAtLeast(1L)
-        val defaultStart = state.playbackPositionMs.coerceIn(0L, (total - 1L).coerceAtLeast(0L))
-        val defaultEnd = (defaultStart + 1000L).coerceAtMost(total)
+        // Default range covers the full tapped segment in GLOBAL timeline ms
+        // (TimelineScreen passes identity offsets). Using segment-local ms
+        // here would place the range at 0 instead of the segment's on-screen
+        // position after deletes/splits shift later segments rightward.
+        val segStart = segmentStartOffsetMs(state.segments, seg.id)
+        val segEnd = segStart + seg.effectiveDurationMs
         _uiState.value = state.copy(
             isRangeSelecting = true,
             rangeTargetSegmentId = seg.id,
             selectedSegmentId = seg.id,
-            pendingRangeStartMs = defaultStart,
-            pendingRangeEndMs = defaultEnd,
+            pendingRangeStartMs = segStart,
+            pendingRangeEndMs = segEnd,
             showRangeActionSheet = false,
             pendingRangeVolume = seg.volumeScale,
             pendingRangeSpeed = seg.speedScale,

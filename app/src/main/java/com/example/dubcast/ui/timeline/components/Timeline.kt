@@ -62,6 +62,8 @@ private val IMAGE_RESIZE_HANDLE_WIDTH = 6.dp
 private val IMAGE_RESIZE_HIT_WIDTH = 20.dp
 private val VideoSegmentColor = Color(0xFF4A4A4A)
 private val ImageSegmentColor = Color(0xFF5B5BD6)
+private val DuplicatedSegmentColor = Color(0xFFB45309)
+private val SegmentBoundaryColor = Color(0xFF1A1A1A)
 private val ImageResizeHandleColor = Color(0xFFFFD080)
 
 @Composable
@@ -423,10 +425,11 @@ private fun RenderSegments(
     val density = LocalDensity.current
     val totalWidthPx = with(density) { totalWidthDp.toPx() }
     var runningOffsetMs = 0L
-    for (segment in segments) {
+    segments.forEachIndexed { index, segment ->
         val segStart = runningOffsetMs
         val segDuration = segment.effectiveDurationMs
         runningOffsetMs += segDuration
+        val isLast = index == segments.lastIndex
         val leftDp = with(density) {
             (segStart.toFloat() / totalDurationMs * totalWidthPx).toDp()
         }
@@ -435,14 +438,16 @@ private fun RenderSegments(
         val widthDp = with(density) {
             (segDuration.toFloat() / totalDurationMs * totalWidthPx).toDp()
         }
-        val baseColor = when (segment.type) {
-            SegmentType.VIDEO -> VideoSegmentColor
-            SegmentType.IMAGE -> ImageSegmentColor
+        val baseColor = when {
+            segment.duplicatedFromId != null -> DuplicatedSegmentColor
+            segment.type == SegmentType.VIDEO -> VideoSegmentColor
+            else -> ImageSegmentColor
         }
         // Visual indicator: tint VIDEO segments that have non-default speed
         // or volume so the user can immediately tell which pieces have been
-        // modified after applying a range edit.
-        val color = if (segment.type == SegmentType.VIDEO) {
+        // modified after applying a range edit. Duplicated segments keep
+        // their amber base color regardless — the duplicate marker dominates.
+        val color = if (segment.type == SegmentType.VIDEO && segment.duplicatedFromId == null) {
             val speedAccent = segment.speedScale != 1f
             val volumeAccent = segment.volumeScale != 1f
             when {
@@ -486,6 +491,19 @@ private fun RenderSegments(
                     isSelected = segment.id == selectedSegmentId,
                     onCommit = onImageSegmentResized,
                     modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
+
+            // Boundary divider at the right edge of every non-trailing segment.
+            // Makes split/duplicate/range-edit breakpoints visible even when
+            // neighboring segments share the same tint.
+            if (!isLast) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .width(1.dp)
+                        .background(SegmentBoundaryColor)
                 )
             }
         }

@@ -781,7 +781,7 @@ fun TimelineScreen(
             onSynthesize = { text, voiceId, voiceName ->
                 viewModel.onSynthesize(text, voiceId, voiceName)
             },
-            onInsert = { showOnScreen -> viewModel.onInsertPreviewClip(showOnScreen) }
+            onInsert = { viewModel.onInsertPreviewClip() }
         )
     }
 

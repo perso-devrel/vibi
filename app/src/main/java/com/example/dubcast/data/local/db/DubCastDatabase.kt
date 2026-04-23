@@ -29,7 +29,7 @@ import com.example.dubcast.data.local.db.entity.TextOverlayEntity
         TextOverlayEntity::class,
         BgmClipEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -248,6 +248,12 @@ abstract class DubCastDatabase : RoomDatabase() {
         val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE text_overlays ADD COLUMN lane INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE segments ADD COLUMN duplicatedFromId TEXT")
             }
         }
     }

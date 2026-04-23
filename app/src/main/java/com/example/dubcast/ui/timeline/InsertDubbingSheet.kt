@@ -24,7 +24,6 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -47,12 +46,11 @@ fun InsertDubbingSheet(
     previewClip: PreviewDubClip?,
     onDismiss: () -> Unit,
     onSynthesize: (text: String, voiceId: String, voiceName: String) -> Unit,
-    onInsert: (showOnScreen: Boolean) -> Unit
+    onInsert: () -> Unit
 ) {
     var text by remember { mutableStateOf("") }
     var selectedVoice by remember { mutableStateOf(voices.firstOrNull()) }
     var expanded by remember { mutableStateOf(false) }
-    var showOnScreen by remember { mutableStateOf(false) }
 
     // MediaPlayer for preview playback
     var isPreviewPlaying by remember { mutableStateOf(false) }
@@ -137,26 +135,6 @@ fun InsertDubbingSheet(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Show on screen toggle
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Show on screen",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                Switch(
-                    checked = showOnScreen,
-                    onCheckedChange = { showOnScreen = it }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
             // Generate button
             Button(
                 onClick = {
@@ -224,7 +202,7 @@ fun InsertDubbingSheet(
                     onClick = {
                         mediaPlayer.reset()
                         isPreviewPlaying = false
-                        onInsert(showOnScreen)
+                        onInsert()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {

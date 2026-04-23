@@ -39,7 +39,6 @@ import com.example.dubcast.domain.usecase.timeline.DuplicateSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.MoveDubClipUseCase
 import com.example.dubcast.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.example.dubcast.domain.usecase.timeline.RemoveSegmentUseCase
-import com.example.dubcast.domain.usecase.timeline.SplitDubTextToSubtitlesUseCase
 import com.example.dubcast.domain.usecase.timeline.SplitSegmentUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentDurationUseCase
 import com.example.dubcast.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
@@ -124,7 +123,6 @@ class TimelineViewModelTest {
             deleteDubClip = DeleteDubClipUseCase(dubRepo),
             addSubtitleClip = AddSubtitleClipUseCase(subRepo),
             deleteSubtitleClip = DeleteSubtitleClipUseCase(subRepo),
-            splitDubTextToSubtitles = SplitDubTextToSubtitlesUseCase(),
             addImageClip = AddImageClipUseCase(imageRepo),
             updateImageClip = UpdateImageClipUseCase(imageRepo),
             deleteImageClip = DeleteImageClipUseCase(imageRepo),
@@ -181,35 +179,18 @@ class TimelineViewModelTest {
     }
 
     @Test
-    fun `showOnScreen true creates auto subtitles for each line`() = runTest {
-        ttsRepo.synthesizeResult = Result.success(TtsResult("/fake/audio.mp3", 6000L))
-
-        vm.onSynthesize("Line one\nLine two", "voice-1", "Rachel")
-        advanceUntilIdle()
-
-        assertNotNull(vm.uiState.value.previewClip)
-
-        vm.onInsertPreviewClip(showOnScreen = true)
-        advanceUntilIdle()
-
-        val subs = subRepo.observeClips(projectId).first()
-        assertEquals(2, subs.size)
-        assertTrue(subs.all { it.isAuto })
-        assertTrue(subs.all { it.sourceDubClipId != null })
-    }
-
-    @Test
-    fun `showOnScreen false creates no subtitles`() = runTest {
+    fun `onInsertPreviewClip drops dub clip and never creates subtitles`() = runTest {
         ttsRepo.synthesizeResult = Result.success(TtsResult("/fake/audio.mp3", 3000L))
 
         vm.onSynthesize("Some text", "voice-1", "Rachel")
         advanceUntilIdle()
+        assertNotNull(vm.uiState.value.previewClip)
 
-        vm.onInsertPreviewClip(showOnScreen = false)
+        vm.onInsertPreviewClip()
         advanceUntilIdle()
 
-        val subs = subRepo.observeClips(projectId).first()
-        assertEquals(0, subs.size)
+        assertEquals(1, dubRepo.observeClips(projectId).first().size)
+        assertEquals(0, subRepo.observeClips(projectId).first().size)
     }
 
     @Test
@@ -361,46 +342,6 @@ class TimelineViewModelTest {
         assertEquals(0, imageRepo.observeClips(projectId).first().size)
     }
 
-    @Test
-    fun `deleting dub clip removes its auto subtitles but keeps manual subtitle`() = runTest {
-        // Pre-existing manual subtitle
-        val manualSub = SubtitleClip(
-            id = "manual-1",
-            projectId = projectId,
-            text = "Manual caption",
-            startMs = 0L,
-            endMs = 1000L,
-            position = SubtitlePosition(anchor = Anchor.BOTTOM, yOffsetPct = 90f)
-        )
-        subRepo.addClip(manualSub)
-
-        // Synthesize a 2-line dub with showOnScreen=true
-        ttsRepo.synthesizeResult = Result.success(TtsResult("/fake/audio.mp3", 6000L))
-        vm.onSynthesize("Line one\nLine two", "voice-1", "Rachel")
-        advanceUntilIdle()
-
-        vm.onInsertPreviewClip(showOnScreen = true)
-        advanceUntilIdle()
-
-        // Verify 2 auto-subtitles were created
-        val subsAfterInsert = subRepo.observeClips(projectId).first()
-        assertEquals(3, subsAfterInsert.size)  // 1 manual + 2 auto
-
-        // Get the dub clip ID
-        val dubs = dubRepo.observeClips(projectId).first()
-        assertEquals(1, dubs.size)
-        val dubClipId = dubs.first().id
-
-        // Select and delete the dub clip
-        vm.onSelectDubClip(dubClipId)
-        vm.onDeleteSelectedClip()
-        advanceUntilIdle()
-
-        // Only manual subtitle should remain
-        val subsAfterDelete = subRepo.observeClips(projectId).first()
-        assertEquals(1, subsAfterDelete.size)
-        assertEquals("manual-1", subsAfterDelete.first().id)
-    }
 
     @Test
     fun `onEnterRangeMode activates range state for VIDEO segment`() = runTest {
@@ -411,8 +352,36 @@ class TimelineViewModelTest {
         val s = vm.uiState.value
         assertTrue(s.isRangeSelecting)
         assertEquals("seg-1", s.rangeTargetSegmentId)
+        // Global timeline ms: single 10s segment starts at 0, ends at 10_000.
         assertEquals(0L, s.pendingRangeStartMs)
-        assertEquals(1_000L, s.pendingRangeEndMs)
+        assertEquals(10_000L, s.pendingRangeEndMs)
+    }
+
+    @Test
+    fun `onEnterRangeMode on second segment uses its global timeline offset`() = runTest {
+        // After a delete/duplicate, later segments live at non-zero global ms.
+        // Tapping one should open the range handles over that clip, not at
+        // the start of the timeline.
+        seedSegment(id = "seg-1", durationMs = 10_000L)
+        segmentRepo.addSegment(
+            Segment(
+                id = "seg-2",
+                projectId = projectId,
+                type = SegmentType.VIDEO,
+                order = 1,
+                sourceUri = "content://video2",
+                durationMs = 5_000L,
+                width = 1920,
+                height = 1080
+            )
+        )
+        advanceUntilIdle()
+
+        vm.onEnterRangeMode("seg-2")
+        val s = vm.uiState.value
+        assertEquals("seg-2", s.rangeTargetSegmentId)
+        assertEquals(10_000L, s.pendingRangeStartMs)
+        assertEquals(15_000L, s.pendingRangeEndMs)
     }
 
     @Test
