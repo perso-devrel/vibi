@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.model.SegmentType
+import com.example.dubcast.domain.model.TargetLanguage
 import com.example.dubcast.domain.repository.BgmClipRepository
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
@@ -40,23 +41,15 @@ enum class VoiceLanguage(val label: String) {
     DUBBING_LANGUAGE("Use dub language")
 }
 
-data class TargetLanguage(val code: String, val label: String)
-
-val AVAILABLE_LANGUAGES = listOf(
-    TargetLanguage("ko", "한국어"),
-    TargetLanguage("en", "English"),
-    TargetLanguage("ja", "日本語"),
-    TargetLanguage("zh", "中文"),
-    TargetLanguage("es", "Español"),
-    TargetLanguage("fr", "Français"),
-    TargetLanguage("de", "Deutsch")
-)
+// Export 화면에서 "원본 그대로(ORIGINAL)" 는 exportMode 로 표현되므로
+// 언어 드롭다운 옵션은 번역 가능 언어만 노출한다.
+val EXPORT_TARGET_LANGUAGES: List<TargetLanguage> = TargetLanguage.AVAILABLE
+    .filter { it.code != TargetLanguage.CODE_ORIGINAL }
 
 data class ExportUiState(
     val exportMode: ExportMode = ExportMode.ORIGINAL_ONLY,
-    val targetLanguage: TargetLanguage = AVAILABLE_LANGUAGES[1],
+    val targetLanguage: TargetLanguage = EXPORT_TARGET_LANGUAGES[1],
     val enableDubbing: Boolean = true,
-    val enableLipSync: Boolean = false,
     val enableAutoSubtitles: Boolean = true,
     val voiceLanguage: VoiceLanguage = VoiceLanguage.KEEP_ORIGINAL,
     val videoUri: String = "",
@@ -93,10 +86,26 @@ class ExportViewModel @Inject constructor(
 
     private fun loadPreviewData() {
         viewModelScope.launch {
-            editProjectRepository.getProject(projectId) ?: return@launch
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
             val firstVideo = segmentRepository.getByProjectId(projectId)
                 .firstOrNull { it.type == SegmentType.VIDEO }
-            _uiState.value = _uiState.value.copy(videoUri = firstVideo?.sourceUri.orEmpty())
+
+            // Input/Timeline 에서 결정된 프로젝트 옵션을 Export 초기값으로 hydrate.
+            // ORIGINAL 언어코드면 ORIGINAL_ONLY 모드로 자동 매핑, 그 외엔 WITH_TRANSLATION.
+            val isTranslation = project.targetLanguageCode != TargetLanguage.CODE_ORIGINAL
+            val hydratedLanguage = if (isTranslation) {
+                EXPORT_TARGET_LANGUAGES.firstOrNull { it.code == project.targetLanguageCode }
+                    ?: _uiState.value.targetLanguage
+            } else {
+                _uiState.value.targetLanguage
+            }
+            _uiState.value = _uiState.value.copy(
+                videoUri = firstVideo?.sourceUri.orEmpty(),
+                exportMode = if (isTranslation) ExportMode.WITH_TRANSLATION else ExportMode.ORIGINAL_ONLY,
+                targetLanguage = hydratedLanguage,
+                enableDubbing = project.enableAutoDubbing,
+                enableAutoSubtitles = project.enableAutoSubtitles
+            )
 
             dubClipRepository.observeClips(projectId).collect { clips ->
                 _uiState.value = _uiState.value.copy(dubClips = clips)
@@ -113,14 +122,7 @@ class ExportViewModel @Inject constructor(
     }
 
     fun onToggleDubbing(enabled: Boolean) {
-        _uiState.value = _uiState.value.copy(
-            enableDubbing = enabled,
-            enableLipSync = if (!enabled) false else _uiState.value.enableLipSync
-        )
-    }
-
-    fun onToggleLipSync(enabled: Boolean) {
-        _uiState.value = _uiState.value.copy(enableLipSync = enabled)
+        _uiState.value = _uiState.value.copy(enableDubbing = enabled)
     }
 
     fun onToggleAutoSubtitles(enabled: Boolean) {
@@ -165,11 +167,6 @@ class ExportViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(statusMessage = "Making subs...")
                     subtitleClipRepository.observeClips(projectId).first()
                 } else emptyList()
-
-                if (isTranslation && options.enableLipSync && dubClips.isNotEmpty()) {
-                    _uiState.value = _uiState.value.copy(statusMessage = "Syncing lips...")
-                    // TODO: Lip sync processing
-                }
 
                 _uiState.value = _uiState.value.copy(statusMessage = "Rendering...")
 

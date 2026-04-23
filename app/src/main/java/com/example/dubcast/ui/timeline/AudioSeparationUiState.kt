@@ -52,8 +52,6 @@ fun localizeProgressReason(reason: String?): String = when (reason) {
     "Transcribing" -> "음성 전사 중"
     "Translating" -> "번역 중"
     "Generating Voice" -> "음성 분리 중"
-    "Analyzing Lip Sync" -> "립싱크 분석 중"
-    "Applying Lip Sync" -> "립싱크 적용 중"
     "Completed" -> "완료"
     "Failed" -> "실패"
     else -> reason

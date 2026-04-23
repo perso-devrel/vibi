@@ -1,7 +1,5 @@
 package com.example.dubcast.data.remote.api
 
-import com.example.dubcast.data.remote.dto.LipSyncResponse
-import com.example.dubcast.data.remote.dto.LipSyncStatusResponse
 import com.example.dubcast.data.remote.dto.MixJobResponse
 import com.example.dubcast.data.remote.dto.MixRequest
 import com.example.dubcast.data.remote.dto.MixStatusResponse
@@ -31,21 +29,6 @@ interface BffApiService {
 
     @POST("api/v2/tts")
     suspend fun synthesize(@Body request: TtsRequest): TtsResponse
-
-    @Multipart
-    @POST("api/v2/lipsync")
-    suspend fun requestLipSync(
-        @Part video: MultipartBody.Part,
-        @Part audio: MultipartBody.Part,
-        @Part("startMs") startMs: RequestBody,
-        @Part("durationMs") durationMs: RequestBody
-    ): LipSyncResponse
-
-    @GET("api/v2/lipsync/{jobId}/status")
-    suspend fun getLipSyncStatus(@Path("jobId") jobId: String): LipSyncStatusResponse
-
-    @GET("api/v2/lipsync/{jobId}/download")
-    suspend fun downloadLipSyncResult(@Path("jobId") jobId: String): ResponseBody
 
     // Render (server-side FFmpeg)
 

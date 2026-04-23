@@ -350,6 +350,14 @@ fun TimelineScreen(
         var timelineHeightDp by remember { mutableStateOf(110f) }
 
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            ExportOptionsBar(
+                summary = summarizeExportOptions(
+                    languageCode = state.targetLanguageCode,
+                    autoSubtitles = state.enableAutoSubtitles,
+                    autoDubbing = state.enableAutoDubbing
+                ),
+                onEditClick = { viewModel.onOpenExportOptionsSheet() }
+            )
             val frameBackgroundColor = rememberParsedColor(state.backgroundColorHex)
             Box(
                 modifier = Modifier
@@ -885,6 +893,45 @@ fun TimelineScreen(
             onToggleMuteOriginal = { viewModel.onToggleMuteOriginalSegmentAudio() },
             onConfirmMix = { viewModel.onConfirmStemMix() }
         )
+    }
+
+    if (state.showExportOptionsSheet) {
+        EditExportOptionsSheet(
+            initialLanguageCode = state.targetLanguageCode,
+            initialAutoSubtitles = state.enableAutoSubtitles,
+            initialAutoDubbing = state.enableAutoDubbing,
+            onDismiss = { viewModel.onCloseExportOptionsSheet() },
+            onSave = { lang, subs, dub ->
+                viewModel.onUpdateExportOptions(lang, subs, dub)
+            }
+        )
+    }
+}
+
+@Composable
+private fun ExportOptionsBar(
+    summary: String,
+    onEditClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = summary,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+        OutlinedButton(
+            onClick = onEditClick,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            Text("편집", style = MaterialTheme.typography.labelMedium)
+        }
     }
 }
 

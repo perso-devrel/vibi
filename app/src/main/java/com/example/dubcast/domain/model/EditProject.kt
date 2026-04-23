@@ -9,7 +9,10 @@ data class EditProject(
     val backgroundColorHex: String = DEFAULT_BACKGROUND_COLOR_HEX,
     val videoScale: Float = DEFAULT_VIDEO_SCALE,
     val videoOffsetXPct: Float = 0f,
-    val videoOffsetYPct: Float = 0f
+    val videoOffsetYPct: Float = 0f,
+    val targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
+    val enableAutoDubbing: Boolean = false,
+    val enableAutoSubtitles: Boolean = false
 ) {
     companion object {
         const val DEFAULT_BACKGROUND_COLOR_HEX = "#000000"

@@ -62,6 +62,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.dubcast.domain.model.DubClip
+import com.example.dubcast.domain.model.TargetLanguage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -418,16 +419,6 @@ private fun TranslationOptionsCard(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             OptionRow(
-                label = "Lip Sync",
-                description = "Match mouth to voice",
-                checked = state.enableLipSync,
-                enabled = state.enableDubbing,
-                onCheckedChange = { viewModel.onToggleLipSync(it) }
-            )
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-            OptionRow(
                 label = "Auto Subs",
                 description = "Generate translated captions",
                 checked = state.enableAutoSubtitles,
@@ -464,7 +455,7 @@ private fun LanguageDropdown(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            AVAILABLE_LANGUAGES.forEach { lang ->
+            EXPORT_TARGET_LANGUAGES.forEach { lang ->
                 DropdownMenuItem(
                     text = { Text(lang.label) },
                     onClick = {

@@ -11,6 +11,7 @@ import com.example.dubcast.domain.model.SegmentType
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.BgmClip
 import com.example.dubcast.domain.model.SubtitlePosition
+import com.example.dubcast.domain.model.TargetLanguage
 import com.example.dubcast.domain.model.TextOverlay
 import com.example.dubcast.domain.model.Voice
 import com.example.dubcast.domain.repository.BgmClipRepository
@@ -155,7 +156,11 @@ data class TimelineUiState(
     val selectedBgmClipId: String? = null,
     val isAddingBgm: Boolean = false,
     val bgmError: String? = null,
-    val audioSeparation: AudioSeparationUiState? = null
+    val audioSeparation: AudioSeparationUiState? = null,
+    val targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
+    val enableAutoDubbing: Boolean = false,
+    val enableAutoSubtitles: Boolean = false,
+    val showExportOptionsSheet: Boolean = false
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -266,7 +271,10 @@ class TimelineViewModel @Inject constructor(
                         backgroundColorHex = project.backgroundColorHex,
                         videoScale = project.videoScale,
                         videoOffsetXPct = project.videoOffsetXPct,
-                        videoOffsetYPct = project.videoOffsetYPct
+                        videoOffsetYPct = project.videoOffsetYPct,
+                        targetLanguageCode = project.targetLanguageCode,
+                        enableAutoDubbing = project.enableAutoDubbing,
+                        enableAutoSubtitles = project.enableAutoSubtitles
                     )
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
@@ -1797,6 +1805,35 @@ class TimelineViewModel @Inject constructor(
             Voice("default-ko-1", "Jimin", null, "ko"),
             Voice("default-ko-2", "Seoyeon", null, "ko"),
         )
+    }
+
+    fun onOpenExportOptionsSheet() {
+        _uiState.value = _uiState.value.copy(showExportOptionsSheet = true)
+    }
+
+    fun onCloseExportOptionsSheet() {
+        _uiState.value = _uiState.value.copy(showExportOptionsSheet = false)
+    }
+
+    fun onUpdateExportOptions(
+        targetLanguageCode: String,
+        enableAutoSubtitles: Boolean,
+        enableAutoDubbing: Boolean
+    ) {
+        viewModelScope.launch {
+            val current = editProjectRepository.getProject(projectId) ?: return@launch
+            val isOriginal = targetLanguageCode == TargetLanguage.CODE_ORIGINAL
+            editProjectRepository.updateProject(
+                current.copy(
+                    targetLanguageCode = targetLanguageCode,
+                    // 번역 대상 언어가 원본이면 자막/더빙 파이프라인은 의미가 없으므로 강제 OFF.
+                    enableAutoSubtitles = if (isOriginal) false else enableAutoSubtitles,
+                    enableAutoDubbing = if (isOriginal) false else enableAutoDubbing,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            _uiState.value = _uiState.value.copy(showExportOptionsSheet = false)
+        }
     }
 }
 

@@ -29,7 +29,7 @@ import com.example.dubcast.data.local.db.entity.TextOverlayEntity
         TextOverlayEntity::class,
         BgmClipEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -262,6 +262,14 @@ abstract class DubCastDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE edit_projects ADD COLUMN videoScale REAL NOT NULL DEFAULT 1.0")
                 db.execSQL("ALTER TABLE edit_projects ADD COLUMN videoOffsetXPct REAL NOT NULL DEFAULT 0.0")
                 db.execSQL("ALTER TABLE edit_projects ADD COLUMN videoOffsetYPct REAL NOT NULL DEFAULT 0.0")
+            }
+        }
+
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN targetLanguageCode TEXT NOT NULL DEFAULT 'original'")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN enableAutoDubbing INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN enableAutoSubtitles INTEGER NOT NULL DEFAULT 0")
             }
         }
     }
