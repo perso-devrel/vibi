@@ -29,7 +29,7 @@ import com.example.dubcast.data.local.db.entity.TextOverlayEntity
         TextOverlayEntity::class,
         BgmClipEntity::class
     ],
-    version = 17,
+    version = 19,
     exportSchema = false
 )
 abstract class DubCastDatabase : RoomDatabase() {
@@ -270,6 +270,25 @@ abstract class DubCastDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE edit_projects ADD COLUMN targetLanguageCode TEXT NOT NULL DEFAULT 'original'")
                 db.execSQL("ALTER TABLE edit_projects ADD COLUMN enableAutoDubbing INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE edit_projects ADD COLUMN enableAutoSubtitles INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN dubbedAudioPath TEXT")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN autoSubtitleStatus TEXT NOT NULL DEFAULT 'IDLE'")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN autoDubStatus TEXT NOT NULL DEFAULT 'IDLE'")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN autoSubtitleJobId TEXT")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN autoDubJobId TEXT")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN autoSubtitleError TEXT")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN autoDubError TEXT")
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE subtitle_clips ADD COLUMN source TEXT NOT NULL DEFAULT 'MANUAL'")
+                db.execSQL("ALTER TABLE edit_projects ADD COLUMN numberOfSpeakers INTEGER NOT NULL DEFAULT 1")
             }
         }
     }

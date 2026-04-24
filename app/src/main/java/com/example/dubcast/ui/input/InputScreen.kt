@@ -27,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -178,19 +179,56 @@ private fun InputOptionsCard(
             onSelect = { viewModel.onSelectTargetLanguage(it) }
         )
         Spacer(modifier = Modifier.height(12.dp))
+        // 자막과 더빙은 한 묶음. 한 번에 켜고 끈다 — 별개로 운용할 일이 없어
+        // 별도 토글이 사용자 결정 부담만 늘렸다.
         InputOptionRow(
-            label = "자동 자막",
-            checked = state.enableAutoSubtitles,
+            label = "자동 자막 + 더빙 적용",
+            checked = state.enableAutoSubtitles && state.enableAutoDubbing,
             enabled = state.isTranslationLanguage,
-            onCheckedChange = { viewModel.onToggleAutoSubtitles(it) }
+            onCheckedChange = { viewModel.onToggleAutoLocalization(it) }
         )
-        Spacer(modifier = Modifier.height(4.dp))
-        InputOptionRow(
-            label = "자동 더빙",
-            checked = state.enableAutoDubbing,
-            enabled = state.isTranslationLanguage,
-            onCheckedChange = { viewModel.onToggleAutoDubbing(it) }
+        Spacer(modifier = Modifier.height(8.dp))
+        SpeakerCountRow(
+            value = state.numberOfSpeakers,
+            onChange = { viewModel.onSetNumberOfSpeakers(it) }
         )
+    }
+}
+
+@Composable
+private fun SpeakerCountRow(
+    value: Int,
+    onChange: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = "화자 수",
+            fontSize = 14.sp,
+            color = CharcoalPrimary
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = { onChange(value - 1) },
+                enabled = value > 1,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+            ) { Text("-") }
+            Text(
+                text = value.toString(),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = CharcoalPrimary,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            OutlinedButton(
+                onClick = { onChange(value + 1) },
+                enabled = value < 10,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+            ) { Text("+") }
+        }
     }
 }
 

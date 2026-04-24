@@ -3,6 +3,7 @@ package com.example.dubcast.ui.timeline
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.dubcast.domain.model.AutoJobStatus
 import com.example.dubcast.domain.model.DubClip
 import com.example.dubcast.domain.model.EditProject
 import com.example.dubcast.domain.model.ImageClip
@@ -43,6 +44,8 @@ import com.example.dubcast.domain.usecase.separation.RequestStemMixUseCase
 import com.example.dubcast.domain.usecase.separation.StartAudioSeparationUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
+import com.example.dubcast.domain.usecase.subtitle.GenerateAutoDubUseCase
+import com.example.dubcast.domain.usecase.subtitle.GenerateAutoSubtitlesUseCase
 import com.example.dubcast.domain.usecase.subtitle.UndoRedoManager
 import com.example.dubcast.domain.usecase.text.AddTextOverlayUseCase
 import com.example.dubcast.domain.usecase.text.DeleteTextOverlayUseCase
@@ -160,7 +163,12 @@ data class TimelineUiState(
     val targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
     val enableAutoDubbing: Boolean = false,
     val enableAutoSubtitles: Boolean = false,
-    val showExportOptionsSheet: Boolean = false
+    val numberOfSpeakers: Int = 1,
+    val showExportOptionsSheet: Boolean = false,
+    val autoSubtitleStatus: AutoJobStatus = AutoJobStatus.IDLE,
+    val autoDubStatus: AutoJobStatus = AutoJobStatus.IDLE,
+    val autoSubtitleError: String? = null,
+    val autoDubError: String? = null
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -230,7 +238,9 @@ class TimelineViewModel @Inject constructor(
     private val pollSeparation: PollSeparationUseCase,
     private val requestStemMix: RequestStemMixUseCase,
     private val pollMix: PollMixUseCase,
-    private val applyMixAsBgm: ApplyMixAsBgmUseCase
+    private val applyMixAsBgm: ApplyMixAsBgmUseCase,
+    private val generateAutoSubtitles: GenerateAutoSubtitlesUseCase,
+    private val generateAutoDub: GenerateAutoDubUseCase
 ) : ViewModel() {
 
     private val projectId: String = savedStateHandle["projectId"] ?: ""
@@ -243,6 +253,14 @@ class TimelineViewModel @Inject constructor(
 
     private val undoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
     private var hasSeededUndoSnapshot = false
+
+    // Auto-trigger gates: prevent re-firing background pipelines on every
+    // project emission. ARMED → eligible to fire; FIRED → already running
+    // or finished. Reset to ARMED on explicit retry, or on a failure /
+    // cancellation that left the project FAILED so the user can retry.
+    private enum class TriggerGate { ARMED, FIRED }
+    private var subtitleGate = TriggerGate.ARMED
+    private var dubGate = TriggerGate.ARMED
 
     init {
         loadSegments()
@@ -274,14 +292,124 @@ class TimelineViewModel @Inject constructor(
                         videoOffsetYPct = project.videoOffsetYPct,
                         targetLanguageCode = project.targetLanguageCode,
                         enableAutoDubbing = project.enableAutoDubbing,
-                        enableAutoSubtitles = project.enableAutoSubtitles
+                        enableAutoSubtitles = project.enableAutoSubtitles,
+                        numberOfSpeakers = project.numberOfSpeakers,
+                        autoSubtitleStatus = project.autoSubtitleStatus,
+                        autoDubStatus = project.autoDubStatus,
+                        autoSubtitleError = project.autoSubtitleError,
+                        autoDubError = project.autoDubError
                     )
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
                         pushUndoState()
                     }
+                    maybeTriggerAutoPipelines(project)
                 }
             }
+        }
+    }
+
+    /**
+     * Kicks off the BFF subtitle / dub jobs the first time we observe a
+     * project that has them enabled but in IDLE state. Each pipeline is
+     * gated by an in-memory flag so the trigger does not re-fire when the
+     * project flow re-emits during normal use.
+     */
+    private fun maybeTriggerAutoPipelines(project: EditProject) {
+        if (shouldTriggerAutoSubtitle(project)) {
+            subtitleGate = TriggerGate.FIRED
+            launchAutoSubtitle(project)
+        }
+        if (shouldTriggerAutoDub(project)) {
+            dubGate = TriggerGate.FIRED
+            launchAutoDub(project)
+        }
+    }
+
+    private fun shouldTriggerAutoSubtitle(project: EditProject): Boolean =
+        subtitleGate == TriggerGate.ARMED &&
+            project.enableAutoSubtitles &&
+            project.autoSubtitleStatus == AutoJobStatus.IDLE
+
+    private fun shouldTriggerAutoDub(project: EditProject): Boolean =
+        dubGate == TriggerGate.ARMED &&
+            project.enableAutoDubbing &&
+            project.autoDubStatus == AutoJobStatus.IDLE
+
+    private fun launchAutoSubtitle(project: EditProject) {
+        val source = _uiState.value.segments.firstOrNull()?.sourceUri
+        if (source.isNullOrBlank()) {
+            // Segments load asynchronously; re-arm so the next project
+            // emission with hydrated segments retries.
+            subtitleGate = TriggerGate.ARMED
+            return
+        }
+        val sourceLang = "auto"
+        val targetLang = project.targetLanguageCode
+            .takeIf { it != TargetLanguage.CODE_ORIGINAL }
+        viewModelScope.launch {
+            try {
+                val result = generateAutoSubtitles(
+                    projectId = projectId,
+                    sourceUri = source,
+                    mediaType = "VIDEO",
+                    sourceLanguageCode = sourceLang,
+                    targetLanguageCode = targetLang,
+                    numberOfSpeakers = project.numberOfSpeakers
+                )
+                // The use case wrote FAILED on its own; re-arm so a fresh
+                // retry path (button or status reset) can trigger again.
+                if (result.isFailure) subtitleGate = TriggerGate.ARMED
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                subtitleGate = TriggerGate.ARMED
+                throw e
+            }
+        }
+    }
+
+    private fun launchAutoDub(project: EditProject) {
+        val source = _uiState.value.segments.firstOrNull()?.sourceUri
+        val targetLang = project.targetLanguageCode
+        if (source.isNullOrBlank() || targetLang == TargetLanguage.CODE_ORIGINAL) {
+            dubGate = TriggerGate.ARMED
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val result = generateAutoDub(
+                    projectId = projectId,
+                    sourceUri = source,
+                    mediaType = "VIDEO",
+                    sourceLanguageCode = "auto",
+                    targetLanguageCode = targetLang,
+                    numberOfSpeakers = project.numberOfSpeakers
+                )
+                if (result.isFailure) dubGate = TriggerGate.ARMED
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                dubGate = TriggerGate.ARMED
+                throw e
+            }
+        }
+    }
+
+    fun onRetryAutoSubtitles() {
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
+            // Reset to IDLE so the trigger gate sees a fresh chance.
+            editProjectRepository.updateProject(
+                project.copy(autoSubtitleStatus = AutoJobStatus.IDLE, autoSubtitleError = null)
+            )
+            subtitleGate = TriggerGate.ARMED
+        }
+    }
+
+    fun onRetryAutoDub() {
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
+            editProjectRepository.updateProject(
+                project.copy(autoDubStatus = AutoJobStatus.IDLE, autoDubError = null)
+            )
+            dubGate = TriggerGate.ARMED
         }
     }
 
@@ -1818,7 +1946,8 @@ class TimelineViewModel @Inject constructor(
     fun onUpdateExportOptions(
         targetLanguageCode: String,
         enableAutoSubtitles: Boolean,
-        enableAutoDubbing: Boolean
+        enableAutoDubbing: Boolean,
+        numberOfSpeakers: Int
     ) {
         viewModelScope.launch {
             val current = editProjectRepository.getProject(projectId) ?: return@launch
@@ -1829,6 +1958,7 @@ class TimelineViewModel @Inject constructor(
                     // 번역 대상 언어가 원본이면 자막/더빙 파이프라인은 의미가 없으므로 강제 OFF.
                     enableAutoSubtitles = if (isOriginal) false else enableAutoSubtitles,
                     enableAutoDubbing = if (isOriginal) false else enableAutoDubbing,
+                    numberOfSpeakers = numberOfSpeakers.coerceIn(1, 10),
                     updatedAt = System.currentTimeMillis()
                 )
             )

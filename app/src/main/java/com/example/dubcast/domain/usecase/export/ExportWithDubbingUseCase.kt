@@ -23,6 +23,7 @@ class ExportWithDubbingUseCase @Inject constructor(
         imageClips: List<ImageClip> = emptyList(),
         textOverlays: List<TextOverlay> = emptyList(),
         bgmClips: List<BgmClip> = emptyList(),
+        audioOverridePath: String? = null,
         resolveImagePath: suspend (imageUri: String) -> String? = { null },
         resolveAudioPath: suspend (audioUri: String) -> String? = { null },
         onProgress: (percent: Int) -> Unit
@@ -85,6 +86,7 @@ class ExportWithDubbingUseCase @Inject constructor(
             fontDir = fontDir,
             frame = frame,
             bgmClips = bgmMixInputs,
+            audioOverridePath = audioOverridePath,
             onProgress = onProgress
         )
     }

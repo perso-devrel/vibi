@@ -194,6 +194,13 @@ class ExportViewModel @Inject constructor(
                     }
                 } else null
 
+                // Auto-dub override: only honor when the user actually
+                // enabled dubbing for this export and the BFF pipeline
+                // produced a local file. Otherwise the source audio plays.
+                val audioOverridePath = if (isTranslation && options.enableDubbing) {
+                    project.dubbedAudioPath?.takeIf { File(it).exists() }
+                } else null
+
                 val result = exportWithDubbingUseCase.execute(
                     segments = segmentInputs,
                     dubClips = dubClips,
@@ -205,6 +212,7 @@ class ExportViewModel @Inject constructor(
                     imageClips = imageClips,
                     textOverlays = textOverlays,
                     bgmClips = bgmClips,
+                    audioOverridePath = audioOverridePath,
                     resolveImagePath = { uri -> copyContentUriToCache(uri, cacheDir, prefix = "image") },
                     resolveAudioPath = { uri -> copyContentUriToCache(uri, cacheDir, prefix = "bgm") },
                     onProgress = { percent ->

@@ -25,7 +25,8 @@ data class InputUiState(
     val isExtracting: Boolean = false,
     val targetLanguage: TargetLanguage = TargetLanguage.ORIGINAL,
     val enableAutoSubtitles: Boolean = false,
-    val enableAutoDubbing: Boolean = false
+    val enableAutoDubbing: Boolean = false,
+    val numberOfSpeakers: Int = 1
 ) {
     val isTranslationLanguage: Boolean
         get() = targetLanguage.code != TargetLanguage.CODE_ORIGINAL
@@ -85,6 +86,23 @@ class InputViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(enableAutoDubbing = enabled)
     }
 
+    /**
+     * Single switch that controls both auto-subtitles and auto-dubbing —
+     * the product treats them as a bundle. The two underlying flags are
+     * kept on [InputUiState] so legacy persistence and isolated tests
+     * don't have to migrate, but the UI doesn't expose them separately.
+     */
+    fun onToggleAutoLocalization(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            enableAutoSubtitles = enabled,
+            enableAutoDubbing = enabled
+        )
+    }
+
+    fun onSetNumberOfSpeakers(count: Int) {
+        _uiState.value = _uiState.value.copy(numberOfSpeakers = count.coerceIn(1, 10))
+    }
+
     fun onContinue() {
         val state = _uiState.value
         val video = state.selectedVideo ?: return
@@ -93,7 +111,8 @@ class InputViewModel @Inject constructor(
                 videoInfo = video,
                 targetLanguageCode = state.targetLanguage.code,
                 enableAutoDubbing = state.enableAutoDubbing,
-                enableAutoSubtitles = state.enableAutoSubtitles
+                enableAutoSubtitles = state.enableAutoSubtitles,
+                numberOfSpeakers = state.numberOfSpeakers
             )
             _navigateToTimeline.emit(projectId)
         }

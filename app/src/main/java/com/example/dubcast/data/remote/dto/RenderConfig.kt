@@ -8,7 +8,8 @@ data class RenderConfig(
     val segments: List<RenderSegment>,
     val imageClips: List<RenderImageClip> = emptyList(),
     val frame: RenderFrame? = null,
-    val bgmClips: List<RenderBgmClip> = emptyList()
+    val bgmClips: List<RenderBgmClip> = emptyList(),
+    val audioOverrideKey: String? = null
 )
 
 @JsonClass(generateAdapter = true)

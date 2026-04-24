@@ -1,11 +1,13 @@
 package com.example.dubcast.data.repository
 
+import android.util.Log
 import androidx.room.withTransaction
 import com.example.dubcast.data.local.db.DubCastDatabase
 import com.example.dubcast.data.local.db.dao.EditProjectDao
 import com.example.dubcast.data.local.db.dao.SegmentDao
 import com.example.dubcast.data.local.db.entity.EditProjectEntity
 import com.example.dubcast.data.local.db.entity.SegmentEntity
+import com.example.dubcast.domain.model.AutoJobStatus
 import com.example.dubcast.domain.model.EditProject
 import com.example.dubcast.domain.model.Segment
 import com.example.dubcast.domain.repository.EditProjectRepository
@@ -60,7 +62,15 @@ class EditProjectRepositoryImpl @Inject constructor(
         videoOffsetYPct = videoOffsetYPct,
         targetLanguageCode = targetLanguageCode,
         enableAutoDubbing = enableAutoDubbing,
-        enableAutoSubtitles = enableAutoSubtitles
+        enableAutoSubtitles = enableAutoSubtitles,
+        numberOfSpeakers = numberOfSpeakers,
+        dubbedAudioPath = dubbedAudioPath,
+        autoSubtitleStatus = parseStatus(autoSubtitleStatus),
+        autoDubStatus = parseStatus(autoDubStatus),
+        autoSubtitleJobId = autoSubtitleJobId,
+        autoDubJobId = autoDubJobId,
+        autoSubtitleError = autoSubtitleError,
+        autoDubError = autoDubError
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
@@ -75,8 +85,25 @@ class EditProjectRepositoryImpl @Inject constructor(
         videoOffsetYPct = videoOffsetYPct,
         targetLanguageCode = targetLanguageCode,
         enableAutoDubbing = enableAutoDubbing,
-        enableAutoSubtitles = enableAutoSubtitles
+        enableAutoSubtitles = enableAutoSubtitles,
+        numberOfSpeakers = numberOfSpeakers,
+        dubbedAudioPath = dubbedAudioPath,
+        autoSubtitleStatus = autoSubtitleStatus.name,
+        autoDubStatus = autoDubStatus.name,
+        autoSubtitleJobId = autoSubtitleJobId,
+        autoDubJobId = autoDubJobId,
+        autoSubtitleError = autoSubtitleError,
+        autoDubError = autoDubError
     )
+
+    private fun parseStatus(raw: String): AutoJobStatus =
+        runCatching { AutoJobStatus.valueOf(raw) }.getOrElse {
+            // A row with an unknown enum value usually means a missing
+            // migration after adding a new AutoJobStatus member. Surface it
+            // in logcat instead of silently snapping to IDLE.
+            Log.w("EditProjectRepo", "Unknown AutoJobStatus '$raw' — defaulting to IDLE")
+            AutoJobStatus.IDLE
+        }
 
     private fun Segment.toEntity() = SegmentEntity(
         id = id,

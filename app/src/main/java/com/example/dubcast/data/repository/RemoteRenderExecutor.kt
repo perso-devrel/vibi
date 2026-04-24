@@ -45,6 +45,7 @@ class RemoteRenderExecutor @Inject constructor(
         fontDir: String?,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
+        audioOverridePath: String?,
         onProgress: (percent: Int) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
@@ -188,6 +189,32 @@ class RemoteRenderExecutor @Inject constructor(
                 } else null
             } else null
 
+            // Auto-dub override: server replaces the source video's audio
+            // track with this file before mixing. Key MUST start with
+            // "audio_override" to be routed by the BFF multipart parser.
+            // Reject oversized payloads early to avoid a multipart timeout
+            // / OOM on the way to the server.
+            val (audioOverridePart, audioOverrideKey) = if (audioOverridePath != null) {
+                val overrideFile = File(audioOverridePath)
+                when {
+                    !overrideFile.exists() -> null to null
+                    overrideFile.length() > MAX_AUDIO_OVERRIDE_BYTES ->
+                        throw IllegalArgumentException(
+                            "오디오 오버라이드가 너무 큽니다 (최대 ${MAX_AUDIO_OVERRIDE_BYTES / 1024 / 1024}MB)"
+                        )
+                    else -> {
+                        val key = "audio_override"
+                        val part = MultipartBody.Part.createFormData(
+                            key, overrideFile.name,
+                            overrideFile.asRequestBody("audio/mpeg".toMediaType())
+                        )
+                        part to key
+                    }
+                }
+            } else {
+                null to null
+            }
+
             val config = RenderConfig(
                 dubClips = renderClips,
                 segments = renderSegments,
@@ -199,7 +226,8 @@ class RemoteRenderExecutor @Inject constructor(
                         backgroundColorHex = it.backgroundColorHex
                     )
                 },
-                bgmClips = renderBgmClips
+                bgmClips = renderBgmClips,
+                audioOverrideKey = audioOverrideKey
             )
             val configJson = moshi.adapter(RenderConfig::class.java).toJson(config)
             val configBody = configJson.toRequestBody("application/json".toMediaType())
@@ -212,6 +240,7 @@ class RemoteRenderExecutor @Inject constructor(
                 imageFiles = imageParts,
                 segmentImageFiles = segmentImageParts,
                 bgmFiles = bgmParts,
+                audioOverride = audioOverridePart,
                 config = configBody
             )
             val jobId = response.jobId
@@ -260,5 +289,9 @@ class RemoteRenderExecutor @Inject constructor(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private companion object {
+        const val MAX_AUDIO_OVERRIDE_BYTES = 100L * 1024 * 1024
     }
 }

@@ -354,9 +354,16 @@ fun TimelineScreen(
                 summary = summarizeExportOptions(
                     languageCode = state.targetLanguageCode,
                     autoSubtitles = state.enableAutoSubtitles,
-                    autoDubbing = state.enableAutoDubbing
+                    autoDubbing = state.enableAutoDubbing,
+                    numberOfSpeakers = state.numberOfSpeakers
                 ),
-                onEditClick = { viewModel.onOpenExportOptionsSheet() }
+                autoSubtitleStatus = state.autoSubtitleStatus,
+                autoDubStatus = state.autoDubStatus,
+                autoSubtitleError = state.autoSubtitleError,
+                autoDubError = state.autoDubError,
+                onEditClick = { viewModel.onOpenExportOptionsSheet() },
+                onRetrySubtitles = { viewModel.onRetryAutoSubtitles() },
+                onRetryDub = { viewModel.onRetryAutoDub() }
             )
             val frameBackgroundColor = rememberParsedColor(state.backgroundColorHex)
             Box(
@@ -900,9 +907,10 @@ fun TimelineScreen(
             initialLanguageCode = state.targetLanguageCode,
             initialAutoSubtitles = state.enableAutoSubtitles,
             initialAutoDubbing = state.enableAutoDubbing,
+            initialNumberOfSpeakers = state.numberOfSpeakers,
             onDismiss = { viewModel.onCloseExportOptionsSheet() },
-            onSave = { lang, subs, dub ->
-                viewModel.onUpdateExportOptions(lang, subs, dub)
+            onSave = { lang, subs, dub, speakers ->
+                viewModel.onUpdateExportOptions(lang, subs, dub, speakers)
             }
         )
     }
@@ -911,26 +919,82 @@ fun TimelineScreen(
 @Composable
 private fun ExportOptionsBar(
     summary: String,
-    onEditClick: () -> Unit
+    autoSubtitleStatus: com.example.dubcast.domain.model.AutoJobStatus,
+    autoDubStatus: com.example.dubcast.domain.model.AutoJobStatus,
+    autoSubtitleError: String?,
+    autoDubError: String?,
+    onEditClick: () -> Unit,
+    onRetrySubtitles: () -> Unit,
+    onRetryDub: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedButton(
+                onClick = onEditClick,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text("편집", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        AutoJobBadge(
+            label = "자막",
+            status = autoSubtitleStatus,
+            error = autoSubtitleError,
+            onRetry = onRetrySubtitles
+        )
+        AutoJobBadge(
+            label = "더빙",
+            status = autoDubStatus,
+            error = autoDubError,
+            onRetry = onRetryDub
+        )
+    }
+}
+
+@Composable
+private fun AutoJobBadge(
+    label: String,
+    status: com.example.dubcast.domain.model.AutoJobStatus,
+    error: String?,
+    onRetry: () -> Unit
+) {
+    if (status == com.example.dubcast.domain.model.AutoJobStatus.IDLE) return
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val text = when (status) {
+            com.example.dubcast.domain.model.AutoJobStatus.RUNNING -> "$label 생성 중…"
+            com.example.dubcast.domain.model.AutoJobStatus.READY -> "$label 준비 완료"
+            com.example.dubcast.domain.model.AutoJobStatus.FAILED -> "$label 실패: ${error ?: "알 수 없음"}"
+            com.example.dubcast.domain.model.AutoJobStatus.IDLE -> ""
+        }
         Text(
-            text = summary,
-            style = MaterialTheme.typography.bodyMedium,
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.weight(1f)
         )
-        OutlinedButton(
-            onClick = onEditClick,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-        ) {
-            Text("편집", style = MaterialTheme.typography.labelMedium)
+        if (status == com.example.dubcast.domain.model.AutoJobStatus.FAILED) {
+            OutlinedButton(
+                onClick = onRetry,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text("재시도", style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }

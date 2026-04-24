@@ -16,5 +16,6 @@ data class SubtitleClipEntity(
     val xPct: Float? = null,
     val yPct: Float? = null,
     val widthPct: Float? = null,
-    val heightPct: Float? = null
+    val heightPct: Float? = null,
+    val source: String = "MANUAL"
 )

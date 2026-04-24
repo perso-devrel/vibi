@@ -28,6 +28,10 @@ import com.example.dubcast.domain.usecase.separation.RequestStemMixUseCase
 import com.example.dubcast.domain.usecase.separation.StartAudioSeparationUseCase
 import com.example.dubcast.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.example.dubcast.domain.usecase.subtitle.DeleteSubtitleClipUseCase
+import com.example.dubcast.domain.usecase.subtitle.GenerateAutoDubUseCase
+import com.example.dubcast.domain.usecase.subtitle.GenerateAutoSubtitlesUseCase
+import com.example.dubcast.fake.FakeAutoDubRepository
+import com.example.dubcast.fake.FakeAutoSubtitleRepository
 import com.example.dubcast.domain.usecase.text.AddTextOverlayUseCase
 import com.example.dubcast.domain.usecase.text.DeleteTextOverlayUseCase
 import com.example.dubcast.domain.usecase.text.DuplicateTextOverlayUseCase
@@ -156,6 +160,15 @@ class TimelineViewModelTest {
                 separationRepository = separationRepo,
                 audioMetadataExtractor = audioExtractor,
                 addBgmClipUseCase = AddBgmClipUseCase(bgmRepo)
+            ),
+            generateAutoSubtitles = GenerateAutoSubtitlesUseCase(
+                FakeAutoSubtitleRepository(),
+                subRepo,
+                projectRepo
+            ),
+            generateAutoDub = GenerateAutoDubUseCase(
+                FakeAutoDubRepository(),
+                projectRepo
             )
         )
     }

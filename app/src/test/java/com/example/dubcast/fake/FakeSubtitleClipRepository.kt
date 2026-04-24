@@ -17,6 +17,11 @@ class FakeSubtitleClipRepository : SubtitleClipRepository {
         clips.value = clips.value + clip
     }
 
+    override suspend fun addClips(clips: List<SubtitleClip>) {
+        if (clips.isEmpty()) return
+        this.clips.value = this.clips.value + clips
+    }
+
     override suspend fun updateClip(clip: SubtitleClip) {
         clips.value = clips.value.map { if (it.id == clip.id) clip else it }
     }
@@ -35,5 +40,11 @@ class FakeSubtitleClipRepository : SubtitleClipRepository {
 
     override suspend fun deleteClipsBySourceDubClipId(dubClipId: String) {
         clips.value = clips.value.filter { it.sourceDubClipId != dubClipId }
+    }
+
+    override suspend fun deleteAutoSubtitles(projectId: String) {
+        clips.value = clips.value.filter {
+            it.projectId != projectId || it.source != com.example.dubcast.domain.model.SubtitleSource.AUTO
+        }
     }
 }

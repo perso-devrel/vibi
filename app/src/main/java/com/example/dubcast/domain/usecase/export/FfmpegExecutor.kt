@@ -66,6 +66,10 @@ interface FfmpegExecutor {
         fontDir: String? = null,
         frame: FrameInput? = null,
         bgmClips: List<BgmClipMixInput> = emptyList(),
+        // Phase 3 — when set, server replaces the source video's audio
+        // track with the contents of this file before mixing dub/bgm clips.
+        // Auto-dub stores its mp3 here.
+        audioOverridePath: String? = null,
         onProgress: (percent: Int) -> Unit
     ): Result<String>
 }

@@ -5,6 +5,8 @@ import com.example.dubcast.data.repository.AndroidGallerySaver
 import com.example.dubcast.data.repository.AndroidImageMetadataExtractor
 import com.example.dubcast.data.repository.AndroidVideoMetadataExtractor
 import com.example.dubcast.data.repository.AudioSeparationRepositoryImpl
+import com.example.dubcast.data.repository.AutoDubRepositoryImpl
+import com.example.dubcast.data.repository.AutoSubtitleRepositoryImpl
 import com.example.dubcast.data.repository.BgmClipRepositoryImpl
 import com.example.dubcast.data.repository.DubClipRepositoryImpl
 import com.example.dubcast.data.repository.EditProjectRepositoryImpl
@@ -15,6 +17,8 @@ import com.example.dubcast.data.repository.SubtitleClipRepositoryImpl
 import com.example.dubcast.data.repository.TextOverlayRepositoryImpl
 import com.example.dubcast.data.repository.TtsRepositoryImpl
 import com.example.dubcast.domain.repository.AudioSeparationRepository
+import com.example.dubcast.domain.repository.AutoDubRepository
+import com.example.dubcast.domain.repository.AutoSubtitleRepository
 import com.example.dubcast.domain.repository.BgmClipRepository
 import com.example.dubcast.domain.repository.DubClipRepository
 import com.example.dubcast.domain.repository.EditProjectRepository
@@ -93,4 +97,12 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindAudioSeparationRepository(impl: AudioSeparationRepositoryImpl): AudioSeparationRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAutoSubtitleRepository(impl: AutoSubtitleRepositoryImpl): AutoSubtitleRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAutoDubRepository(impl: AutoDubRepositoryImpl): AutoDubRepository
 }

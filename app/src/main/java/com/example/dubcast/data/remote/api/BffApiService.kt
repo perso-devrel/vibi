@@ -1,5 +1,7 @@
 package com.example.dubcast.data.remote.api
 
+import com.example.dubcast.data.remote.dto.AutoDubJobResponse
+import com.example.dubcast.data.remote.dto.AutoDubStatusResponse
 import com.example.dubcast.data.remote.dto.MixJobResponse
 import com.example.dubcast.data.remote.dto.MixRequest
 import com.example.dubcast.data.remote.dto.MixStatusResponse
@@ -7,6 +9,8 @@ import com.example.dubcast.data.remote.dto.RenderJobResponse
 import com.example.dubcast.data.remote.dto.RenderStatusResponse
 import com.example.dubcast.data.remote.dto.SeparationJobResponse
 import com.example.dubcast.data.remote.dto.SeparationStatusResponse
+import com.example.dubcast.data.remote.dto.SubtitleJobResponse
+import com.example.dubcast.data.remote.dto.SubtitleStatusResponse
 import com.example.dubcast.data.remote.dto.TtsRequest
 import com.example.dubcast.data.remote.dto.TtsResponse
 import com.example.dubcast.data.remote.dto.VoiceListResponse
@@ -41,6 +45,7 @@ interface BffApiService {
         @Part imageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part segmentImageFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
         @Part bgmFiles: List<@JvmSuppressWildcards MultipartBody.Part>,
+        @Part audioOverride: MultipartBody.Part?,
         @Part("config") config: RequestBody
     ): RenderJobResponse
 
@@ -79,4 +84,36 @@ interface BffApiService {
     @Streaming
     @GET
     suspend fun downloadMix(@Url tokenizedUrl: String): ResponseBody
+
+    // Auto subtitles (Perso STT + Gemini translate)
+
+    @Multipart
+    @POST("api/v2/subtitles")
+    suspend fun submitSubtitleJob(
+        @Part file: MultipartBody.Part,
+        @Part("spec") spec: RequestBody
+    ): SubtitleJobResponse
+
+    @GET("api/v2/subtitles/{jobId}")
+    suspend fun getSubtitleStatus(@Path("jobId") jobId: String): SubtitleStatusResponse
+
+    @Streaming
+    @GET
+    suspend fun downloadSrt(@Url tokenizedUrl: String): ResponseBody
+
+    // Auto dubbing (Perso translate, no lipsync)
+
+    @Multipart
+    @POST("api/v2/autodub")
+    suspend fun submitAutoDubJob(
+        @Part file: MultipartBody.Part,
+        @Part("spec") spec: RequestBody
+    ): AutoDubJobResponse
+
+    @GET("api/v2/autodub/{jobId}")
+    suspend fun getAutoDubStatus(@Path("jobId") jobId: String): AutoDubStatusResponse
+
+    @Streaming
+    @GET
+    suspend fun downloadDubbedAudio(@Url tokenizedUrl: String): ResponseBody
 }

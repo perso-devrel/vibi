@@ -18,5 +18,13 @@ data class EditProjectEntity(
     val videoOffsetYPct: Float = 0f,
     val targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
     val enableAutoDubbing: Boolean = false,
-    val enableAutoSubtitles: Boolean = false
+    val enableAutoSubtitles: Boolean = false,
+    val numberOfSpeakers: Int = 1,
+    val dubbedAudioPath: String? = null,
+    val autoSubtitleStatus: String = "IDLE",
+    val autoDubStatus: String = "IDLE",
+    val autoSubtitleJobId: String? = null,
+    val autoDubJobId: String? = null,
+    val autoSubtitleError: String? = null,
+    val autoDubError: String? = null
 )

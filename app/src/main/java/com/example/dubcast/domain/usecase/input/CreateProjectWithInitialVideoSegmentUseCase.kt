@@ -16,7 +16,8 @@ class CreateProjectWithInitialVideoSegmentUseCase @Inject constructor(
         videoInfo: VideoInfo,
         targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
         enableAutoDubbing: Boolean = false,
-        enableAutoSubtitles: Boolean = false
+        enableAutoSubtitles: Boolean = false,
+        numberOfSpeakers: Int = 1
     ): String {
         val projectId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
@@ -28,7 +29,8 @@ class CreateProjectWithInitialVideoSegmentUseCase @Inject constructor(
             frameHeight = videoInfo.height,
             targetLanguageCode = targetLanguageCode,
             enableAutoDubbing = enableAutoDubbing,
-            enableAutoSubtitles = enableAutoSubtitles
+            enableAutoSubtitles = enableAutoSubtitles,
+            numberOfSpeakers = numberOfSpeakers.coerceIn(1, 10)
         )
         val segment = Segment(
             id = "${projectId}_seg0",

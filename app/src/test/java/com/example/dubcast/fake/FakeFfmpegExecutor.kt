@@ -16,6 +16,8 @@ class FakeFfmpegExecutor : FfmpegExecutor {
     var lastFrame: FrameInput? = null
     var lastBgmInputs: List<BgmClipMixInput>? = null
 
+    var lastAudioOverridePath: String? = null
+
     override suspend fun renderProject(
         segments: List<SegmentInput>,
         dubClips: List<DubClipMixInput>,
@@ -25,6 +27,7 @@ class FakeFfmpegExecutor : FfmpegExecutor {
         fontDir: String?,
         frame: FrameInput?,
         bgmClips: List<BgmClipMixInput>,
+        audioOverridePath: String?,
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
         lastSegments = segments
@@ -32,6 +35,7 @@ class FakeFfmpegExecutor : FfmpegExecutor {
         lastImageInputs = imageClips
         lastFrame = frame
         lastBgmInputs = bgmClips
+        lastAudioOverridePath = audioOverridePath
         progressSteps.forEach { onProgress(it) }
         return mixResult
     }

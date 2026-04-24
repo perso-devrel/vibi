@@ -5,6 +5,7 @@ import com.example.dubcast.data.local.db.entity.SubtitleClipEntity
 import com.example.dubcast.domain.model.Anchor
 import com.example.dubcast.domain.model.SubtitleClip
 import com.example.dubcast.domain.model.SubtitlePosition
+import com.example.dubcast.domain.model.SubtitleSource
 import com.example.dubcast.domain.repository.SubtitleClipRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -19,6 +20,11 @@ class SubtitleClipRepositoryImpl @Inject constructor(
 
     override suspend fun addClip(clip: SubtitleClip) {
         dao.insert(clip.toEntity())
+    }
+
+    override suspend fun addClips(clips: List<SubtitleClip>) {
+        if (clips.isEmpty()) return
+        dao.insertAll(clips.map { it.toEntity() })
     }
 
     override suspend fun updateClip(clip: SubtitleClip) {
@@ -55,7 +61,8 @@ class SubtitleClipRepositoryImpl @Inject constructor(
         xPct = xPct,
         yPct = yPct,
         widthPct = widthPct,
-        heightPct = heightPct
+        heightPct = heightPct,
+        source = runCatching { SubtitleSource.valueOf(source) }.getOrDefault(SubtitleSource.MANUAL)
     )
 
     private fun SubtitleClip.toEntity() = SubtitleClipEntity(
@@ -70,6 +77,11 @@ class SubtitleClipRepositoryImpl @Inject constructor(
         xPct = xPct,
         yPct = yPct,
         widthPct = widthPct,
-        heightPct = heightPct
+        heightPct = heightPct,
+        source = source.name
     )
+
+    override suspend fun deleteAutoSubtitles(projectId: String) {
+        dao.deleteAutoByProjectId(projectId)
+    }
 }

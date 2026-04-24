@@ -122,6 +122,7 @@ class BffApiIntegrationTest {
                 imageFiles = emptyList(),
                 segmentImageFiles = emptyList(),
                 bgmFiles = emptyList(),
+                audioOverride = null,
                 config = configBody
             )
             assertTrue(r.jobId.startsWith("render-"))
@@ -194,6 +195,7 @@ class BffApiIntegrationTest {
                 imageFiles = emptyList(),
                 segmentImageFiles = emptyList(),
                 bgmFiles = listOf(bgmPart),
+                audioOverride = null,
                 config = configBody
             )
         } catch (e: retrofit2.HttpException) {
