@@ -1,0 +1,1078 @@
+package com.dubcast.cmp.ui.timeline
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material3.DropdownMenu
+import com.dubcast.cmp.theme.LocalDubCastColors
+import com.dubcast.cmp.platform.StemMixerSource
+import com.dubcast.cmp.platform.rememberStemMixer
+import com.dubcast.shared.domain.model.AutoJobStatus
+import com.dubcast.shared.ui.timeline.AudioSeparationStep
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import kotlinx.coroutines.delay
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.unit.dp
+import com.dubcast.cmp.platform.VideoPlayer
+import com.dubcast.cmp.ui.cupertino.StepHero
+import com.dubcast.shared.ui.timeline.SaveStatus
+import com.dubcast.shared.ui.timeline.TimelineViewModel
+import org.koin.compose.koinInject
+import org.koin.core.parameter.parametersOf
+
+/**
+ * Timeline 화면 — 6 핵심 기능 (업로드·TTS·자막·더빙·음성분리·구간선택) 통합.
+ *
+ * shared `TimelineViewModel` 을 Koin parametersOf(projectId) 로 inject. 각 기능 sheet 는
+ * 별도 Composable. 비디오 프리뷰는 `cmp.platform.VideoPlayer` expect/actual.
+ */
+@Composable
+fun TimelineScreen(
+    projectId: String,
+    onBack: () -> Unit = {},
+    onSaved: () -> Unit = {},
+) {
+    val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
+    val state by viewModel.uiState.collectAsState()
+
+    // 저장 완료 → InputScreen 복귀. ViewModel 의 _navigateBackHome SharedFlow 가 1회성 신호.
+    LaunchedEffect(viewModel) {
+        viewModel.navigateBackHome.collect { onSaved() }
+    }
+
+    // ── 분리된 stem 동시 재생 mixer (Phase 2) ──
+    // 첫 directive 의 selections 기준으로 stem 들을 ExoPlayer (Android) 다중 인스턴스에 로드하고,
+    // 영상 재생/일시정지/seek 에 동기화. directive range 밖 위치에서는 mute 효과 (volume 0).
+    // iOS 는 cinterop 한계로 no-op fallback (Swift bridge 도입 시 활성화).
+    val stemMixer = rememberStemMixer()
+    val activeDirective = state.separationDirectives.firstOrNull { d ->
+        d.selections.any { !it.audioUrl.isNullOrBlank() }
+    }
+    LaunchedEffect(activeDirective?.id) {
+        val dir = activeDirective
+        if (dir == null) {
+            stemMixer.load(emptyList())
+            return@LaunchedEffect
+        }
+        val sources = dir.selections.mapNotNull { sel ->
+            val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            StemMixerSource(stemId = sel.stemId, audioUrl = url)
+        }
+        stemMixer.load(sources)
+        dir.selections.forEach { sel ->
+            stemMixer.setVolume(sel.stemId, sel.volume)
+        }
+    }
+    // 재생 토글 / 사용자 seek 시 mixer 도 같이 정렬. video 재생 자유진행 시 sample-accurate 동기화는
+    // 못 하지만 사용자 체감 합리적 — 차후 더 정밀하면 정기 drift 보정 추가.
+    LaunchedEffect(state.isPlaying, activeDirective?.id) {
+        val dir = activeDirective ?: return@LaunchedEffect
+        if (state.isPlaying) {
+            val offset = (state.playbackPositionMs - dir.rangeStartMs).coerceAtLeast(0L)
+            stemMixer.seekTo(offset)
+            stemMixer.play()
+        } else {
+            stemMixer.pause()
+        }
+    }
+
+    // 구간 모드 진입 시 재생 위치가 구간 밖이면 시작점으로 정렬
+    LaunchedEffect(state.isRangeSelecting) {
+        if (state.isRangeSelecting) {
+            val pos = state.playbackPositionMs
+            if (pos < state.pendingRangeStartMs || pos > state.pendingRangeEndMs) {
+                viewModel.onUpdatePlaybackPosition(state.pendingRangeStartMs)
+            }
+        }
+    }
+    // 재생 중 구간 끝 도달 시 시작점으로 자동 seek (loop). 사용자 수동 seek 와 충돌 방지를 위해
+    // endMs 를 넘었을 때만 보정 — 시작점보다 앞으로 가는 건 사용자 의도일 수 있어 손대지 않음.
+    LaunchedEffect(state.isRangeSelecting, state.isPlaying) {
+        while (state.isRangeSelecting && state.isPlaying) {
+            if (state.playbackPositionMs >= state.pendingRangeEndMs) {
+                viewModel.onUpdatePlaybackPosition(state.pendingRangeStartMs)
+            }
+            delay(100)
+        }
+    }
+
+    val tokens = LocalDubCastColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(tokens.backgroundPrimary)
+            .verticalScroll(rememberScrollState())
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // 헤더: 뒤로 + StepHero + 저장 버튼. 백그라운드 잡 진행 중이면 저장 disabled.
+        // 저장 버튼이 자체적으로 모든 variant 렌더 → 갤러리 저장 → EditProject 삭제 → InputScreen 복귀를
+        // 호출하므로 별도 ExportScreen 으로 이동하는 흐름은 폐기됐다.
+        val saveAnyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+            state.autoDubStatus == AutoJobStatus.RUNNING ||
+            state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
+            state.separationStatus == AutoJobStatus.RUNNING ||
+            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+            state.sttPreflightStatus == AutoJobStatus.RUNNING
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(tokens.chipBg)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("‹", color = tokens.onBackgroundPrimary, style = MaterialTheme.typography.titleLarge)
+            }
+            val headerTitle = if (state.isSegmentEditMode) "타임라인: 영상편집" else "타임라인"
+            StepHero(step = 2, title = headerTitle, modifier = Modifier.weight(1f), compact = true)
+            val saving = state.saveStatus is SaveStatus.RUNNING
+            val savingPercent = (state.saveStatus as? SaveStatus.RUNNING)?.progress ?: 0
+            if (state.isSegmentEditMode) {
+                // 영상편집 모드 — 취소(모드만 종료) + 저장(모드 종료 + 전체 variant 렌더).
+                IconButton(
+                    onClick = { viewModel.onFinishSegmentEdit() },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Filled.Close,
+                        contentDescription = "취소",
+                        tint = tokens.onBackgroundPrimary,
+                    )
+                }
+                IconButton(
+                    enabled = !saving && !saveAnyJobRunning,
+                    onClick = {
+                        viewModel.onFinishSegmentEdit()
+                        viewModel.onSaveAllVariants()
+                    },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    if (saving) {
+                        Text(
+                            "${savingPercent}%",
+                            fontSize = 11.sp,
+                            color = tokens.onBackgroundPrimary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
+                            contentDescription = "저장",
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                    }
+                }
+            } else {
+                // 공유 아이콘 — 추후 기능. 지금은 disabled icon button.
+                IconButton(
+                    onClick = { /* TODO: 공유 기능 */ },
+                    enabled = false,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
+                        contentDescription = "공유 (준비중)",
+                        tint = tokens.onBackgroundPrimary.copy(alpha = 0.4f),
+                    )
+                }
+                // 저장 아이콘 — 진행 중이면 percent 텍스트로 토글.
+                IconButton(
+                    enabled = !saving && !saveAnyJobRunning,
+                    onClick = { viewModel.onSaveAllVariants() },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    if (saving) {
+                        Text(
+                            "${savingPercent}%",
+                            fontSize = 11.sp,
+                            color = tokens.onBackgroundPrimary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
+                            contentDescription = "저장",
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                    }
+                }
+            }
+        }
+
+        // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
+        val versions = buildList<Pair<String?, String>> {
+            add(null to "기본")
+            state.targetLanguageCodes.forEach { add(it to it.uppercase()) }
+        }
+        val isJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+            state.autoDubStatus == AutoJobStatus.RUNNING ||
+            state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
+            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING
+        // 영상 편집 모드에선 변종 선택 숨김 — 원본만 표시.
+        if (!state.isSegmentEditMode) Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            var menuOpen by remember { mutableStateOf(false) }
+            val currentLabel = versions.firstOrNull { it.first == state.previewLangCode }?.second ?: "기본"
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(tokens.chipBg)
+                        .clickable(enabled = !isJobRunning) { menuOpen = true }
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(currentLabel, color = tokens.onBackgroundPrimary, fontSize = 14.sp)
+                    if (isJobRunning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            color = tokens.onBackgroundPrimary,
+                            strokeWidth = 1.5.dp,
+                        )
+                    } else {
+                        Text("▾", color = tokens.onBackgroundPrimary, fontSize = 14.sp)
+                    }
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    versions.forEach { (code, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                viewModel.onSelectPreviewLang(code)
+                                menuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        // 비디오 프리뷰
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            if (state.videoUri.isNotEmpty()) {
+                // 미리보기 언어 선택 시 BFF 가 mux 한 mp4 path 로 video uri 자체 swap.
+                // 없으면 (생성 미완료 / mux 실패) 원본 영상 fallback.
+                val previewVideoUri = state.previewLangCode?.let { state.dubbedVideoPaths[it] }
+                    ?: state.videoUri
+                VideoPlayer(
+                    uri = previewVideoUri,
+                    isPlaying = state.isPlaying,
+                    seekToMs = state.playbackPositionMs.takeIf { state.videoDurationMs > 0 },
+                    onPositionChanged = { ms -> viewModel.onUpdatePlaybackPosition(ms) },
+                    // 영상 끝 도달 → ① 재생/멈춤 버튼을 ▶ 로 (isPlaying=false) ② 위치를 0 으로 reset
+                    // 해서 사용자가 다시 ▶ 누르면 처음부터 재생.
+                    onEnded = {
+                        if (state.isPlaying) viewModel.onTogglePlayback()
+                        viewModel.onUpdatePlaybackPosition(0L)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                // 영상 Box bg 가 항상 검정이므로 라이트 모드에서도 흰색 텍스트 유지.
+                Text("비디오 없음", color = Color.White)
+            }
+
+            // 자막 overlay — 비디오 위 하단에 오버레이. Compose 의 Box 스택. previewLangCode 의
+            // 자막만 싱크 맞춰 표시. (iOS UIKitView z-order 한계로 Android 에서만 시각적으로 정확히
+            // 영상 위에 그려지고, iOS 는 Swift bridge 도입 시까지 가시성 제한적.)
+            val activeSubtitleClip = run {
+                // 원본 미리보기(previewLangCode == null) 에는 자막 표시 안 함. lang="" SubtitleClip
+                // 들은 STT 검토 용도라 timeline preview 에서 보이면 안 됨.
+                val lang = state.previewLangCode
+                if (lang.isNullOrBlank()) null
+                else state.subtitleClips
+                    .filter { it.languageCode == lang }
+                    .firstOrNull { clip -> state.playbackPositionMs in clip.startMs..clip.endMs }
+            }
+            if (activeSubtitleClip != null) {
+                val anchor = activeSubtitleClip.position.anchor
+                val align = when (anchor) {
+                    com.dubcast.shared.domain.model.Anchor.TOP -> Alignment.TopCenter
+                    com.dubcast.shared.domain.model.Anchor.MIDDLE -> Alignment.Center
+                    com.dubcast.shared.domain.model.Anchor.BOTTOM -> Alignment.BottomCenter
+                }
+                Box(
+                    modifier = Modifier
+                        .align(align)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .background(parseArgbHexColor(activeSubtitleClip.backgroundColorHex), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = activeSubtitleClip.text,
+                        color = parseArgbHexColor(activeSubtitleClip.colorHex),
+                        fontSize = activeSubtitleClip.fontSizeSp.sp,
+                    )
+                }
+            }
+
+            // 우상단 연필 버튼 — segment 편집 (복제/삭제/볼륨/속도) 진입. 첫 video segment 의 id 로
+            // ViewModel.onEnterSegmentEditMode 호출. 음성분리(onEnterRangeMode) 와 명시적 분리.
+            // (iOS UIKitView z-order 한계로 비디오 위 overlay 가 안 그려질 수 있음 — Android 우선 동작.)
+            val firstVideoSegId = state.segments.firstOrNull { it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO }?.id
+            if (firstVideoSegId != null && !state.isRangeSelecting) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 12.dp, end = 12.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.4f))
+                        .clickable { viewModel.onEnterSegmentEditMode(firstVideoSegId) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Edit,
+                        contentDescription = "구간 편집",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        // Transport row: play/pause + 시간 표시
+        if (state.videoUri.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(tokens.onBackgroundPrimary)
+                        .clickable { viewModel.onTogglePlayback() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (state.isPlaying) "일시정지" else "재생",
+                        tint = tokens.backgroundPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                Text(
+                    "${state.playbackPositionMs / 1000}s / ${state.videoDurationMs / 1000}s",
+                    color = tokens.onBackgroundPrimary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                // Undo / Redo — 작은 아이콘만, transport row 우측에 inline
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (state.canUndo) tokens.chipBg else tokens.chipBgDisabled)
+                        .clickable(enabled = state.canUndo) { viewModel.onUndo() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "실행 취소",
+                        tint = if (state.canUndo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (state.canRedo) tokens.chipBg else tokens.chipBgDisabled)
+                        .clickable(enabled = state.canRedo) { viewModel.onRedo() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "다시 실행",
+                        tint = if (state.canRedo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        // 통합 재생 바 — 구간 선택 활성화 시 RangeSlider, 평소엔 일반 Slider
+        if (state.videoDurationMs > 0) {
+            // 통합 타임라인 — 구간 모드면 시작/끝 두 핸들을 직접 드래그, 평소엔 단일 재생 핸들
+            if (state.isRangeSelecting) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    RangeSlider(
+                        value = state.pendingRangeStartMs.toFloat()..state.pendingRangeEndMs.toFloat(),
+                        valueRange = 0f..state.videoDurationMs.toFloat(),
+                        onValueChange = { range ->
+                            viewModel.onSetPendingRangeStart(range.start.toLong())
+                            viewModel.onSetPendingRangeEnd(range.endInclusive.toLong())
+                        },
+                        modifier = Modifier.scale(scaleX = 1f, scaleY = 0.7f),
+                    )
+                    // 재생 위치 dot — 정보 표시 (조작은 아래 별도 슬라이더에서)
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .padding(horizontal = 10.dp)
+                    ) {
+                        if (state.videoDurationMs > 0) {
+                            val frac = state.playbackPositionMs.toFloat() / state.videoDurationMs
+                            val x = frac.coerceIn(0f, 1f) * size.width
+                            // inactive track 과 같은 어두운 회색 — 활성(흰) 구간 위에선 잘 보이고
+                            // 구간 밖에선 트랙에 자연스럽게 묻힘
+                            drawCircle(
+                                color = Color(0xFF49454F),
+                                radius = 5.dp.toPx(),
+                                center = androidx.compose.ui.geometry.Offset(x, size.height / 2)
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.accent
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!state.isSegmentEditMode) {
+                        Button(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                val segId = state.segments.firstOrNull()?.id ?: return@Button
+                                viewModel.onCancelRangeMode()
+                                viewModel.onShowAudioSeparationSheet(segId)
+                            }
+                        ) { Text("이 구간 음성분리") }
+                        OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
+                    }
+                }
+                // segment 편집 모드 — confirm 단계 없이 슬라이더 + action panel 항상 동시 노출.
+                // 액션(복제/삭제/볼륨/속도) 적용해도 모드 유지. "저장" 버튼만 모드 종료.
+                if (state.isSegmentEditMode) {
+                    SegmentEditActionPanel(
+                        volume = state.pendingRangeVolume,
+                        speed = state.pendingRangeSpeed,
+                        onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                        onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                        onApplyVolume = { viewModel.onApplyRangeVolume(it) },
+                        onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
+                        onDuplicate = { viewModel.onDuplicateRange() },
+                        onDelete = { viewModel.onDeleteRange() },
+                        onCancel = { viewModel.onFinishSegmentEdit() },
+                    )
+                }
+            } else {
+                // Slider 와 directive bar 를 0-spacing 으로 묶음 — outer Column spacedBy(8dp) 회피.
+                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                    Slider(
+                        value = state.playbackPositionMs.toFloat(),
+                        valueRange = 0f..state.videoDurationMs.toFloat(),
+                        onValueChange = { viewModel.onUpdatePlaybackPosition(it.toLong()) },
+                        modifier = Modifier.scale(scaleX = 1f, scaleY = 0.7f),
+                    )
+                    // 음성분리 타임라인 — 재생바 바로 아래 얇은 남색 가로 막대. directive 시간 범위만 색 채움.
+                    if (state.separationDirectives.isNotEmpty() && state.videoDurationMs > 0) {
+                        val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            var prevEnd = 0L
+                            sortedDirectives.forEach { directive ->
+                                val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
+                                if (gap > 0L) {
+                                    Spacer(Modifier.weight(gap.toFloat()).fillMaxHeight())
+                                }
+                                val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(w.toFloat())
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(Color(0xFF1E3A8A).copy(alpha = 0.55f))  // 남색 + 투명감
+                                        .clickable { viewModel.onEditExistingSeparation(directive.id) }
+                                )
+                                prevEnd = directive.rangeEndMs
+                            }
+                            val tail = (state.videoDurationMs - prevEnd).coerceAtLeast(0L)
+                            if (tail > 0L) {
+                                Spacer(Modifier.weight(tail.toFloat()).fillMaxHeight())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 더빙/자막 트랙 막대는 일단 숨김 — 음성분리 한 기능만 노출하는 단순화 단계.
+        // 선택된 클립 액션 row 제거 — 액션은 자막 편집 패널 우상단의 "적용" 버튼 한 군데로 통합.
+
+        // 자막/더빙 진행 상태는 상단 버전 chip 의 spinner 로만 표시.
+
+        // 진입점 버튼들 (음성 분리 + 자막/더빙 생성)
+        val firstSegId = state.segments.firstOrNull()?.id
+        // 백그라운드 잡 진행 중 — 새 잡 시작/내보내기 막기 위한 게이팅 플래그.
+        val anyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+            state.autoDubStatus == AutoJobStatus.RUNNING ||
+            state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
+            state.separationStatus == AutoJobStatus.RUNNING ||
+            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+            state.sttPreflightStatus == AutoJobStatus.RUNNING
+        if (!state.isRangeSelecting && !state.localizationOpen) {
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // 라벨 — RUNNING 만 진행 표시. READY/IDLE/FAILED 모두 "음성 분리" 로
+                // (이미 분리 결과 있어도 새 분리 시작). 기존 결과 편집은 directive 막대 클릭으로.
+                val sepLabel = when (state.separationStatus) {
+                    AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
+                    AutoJobStatus.FAILED -> "❌ 다시 시도"
+                    else -> "음성 분리"
+                }
+                // 음성분리 버튼은 자기 자신 status 만 봄 — 자막/더빙 진행 중이라도 음성분리는 독립 실행 가능.
+                // RUNNING 중엔 disabled (백그라운드 폴링은 계속 — sheet 자동 재오픈 X).
+                // 진행 결과 확인은 timeline 의 directive 막대 클릭으로.
+                OutlinedButton(
+                    enabled = firstSegId != null && state.separationStatus != AutoJobStatus.RUNNING,
+                    modifier = Modifier.height(42.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                    onClick = {
+                        val segId = firstSegId ?: return@OutlinedButton
+                        when (state.separationStatus) {
+                            AutoJobStatus.FAILED -> {
+                                viewModel.onClearSeparation()
+                                viewModel.onEnterRangeMode(segId)
+                            }
+                            else -> viewModel.onEnterRangeMode(segId)
+                        }
+                    }
+                ) { Text(sepLabel, fontSize = 14.sp) }
+                // 자막/더빙 생성: 자막/더빙 잡만 진행 중이면 비활성 + 진행 라벨로 변경.
+                // 음성분리는 독립이라 영향 X.
+                val localizationBusy = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+                    state.autoDubStatus == AutoJobStatus.RUNNING ||
+                    state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+                    state.sttPreflightStatus == AutoJobStatus.RUNNING
+                val localizationLabel = when {
+                    state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
+                        state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 자막·더빙 생성 중"
+                    state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+                        state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+                        state.sttPreflightStatus == AutoJobStatus.RUNNING -> "⏳ 자막 생성 중"
+                    state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 더빙 생성 중"
+                    else -> "자막/더빙 생성"
+                }
+                OutlinedButton(
+                    enabled = !localizationBusy,
+                    modifier = Modifier.height(42.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                    onClick = { viewModel.onShowLocalization() }
+                ) { Text(localizationLabel, fontSize = 14.sp) }
+                // 상세 편집 — 자막 cue 별 텍스트/스타일 inline 조정. 자막 1개 이상 + idle 시.
+                val anySubtitle = remember(state.subtitleClips) {
+                    state.subtitleClips.any { it.languageCode.isNotBlank() }
+                }
+                OutlinedButton(
+                    enabled = anySubtitle && !anyJobRunning,
+                    modifier = Modifier.height(42.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                    onClick = { viewModel.onToggleDetailEdit() }
+                ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
+                // 임시 — 음성분리 mock 데이터 주입 (영상 전체 분리 가정). release 전 제거.
+                OutlinedButton(
+                    enabled = firstSegId != null,
+                    modifier = Modifier.height(42.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                    onClick = { viewModel.onMockSeparationReady() }
+                ) { Text("분리 mock", fontSize = 14.sp) }
+            }
+        }
+
+        // 상세 편집 패널 — lang chip 으로 lang 필터 + cue list + 선택 cue 의 스타일/텍스트 조정.
+        // 영상 미리보기 위에 자막 overlay 가 즉시 반영되어 사용자가 보면서 조정 가능.
+        if (state.showDetailEdit && !state.isRangeSelecting && !state.localizationOpen) {
+            DetailEditPanel(
+                state = state,
+                onSelectLang = { viewModel.onSetDetailEditLang(it) },
+                onSelectClip = { viewModel.onSelectSubtitleClip(it) },
+                onUpdateText = { id, text -> viewModel.onUpdateSubtitleText(id, text) },
+                onUpdateStyle = { id, size, color, bg ->
+                    viewModel.onUpdateSubtitleStyle(
+                        clipId = id,
+                        fontSizeSp = size,
+                        colorHex = color,
+                        backgroundColorHex = bg,
+                        applyToAllLanguages = false,
+                    )
+                },
+                onSeekToClip = { viewModel.onUpdatePlaybackPosition(it) },
+            )
+        }
+
+        // 자막/더빙 생성 인라인 패널
+        if (state.localizationOpen) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(tokens.panelBg, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("자막/더빙 생성", style = MaterialTheme.typography.titleSmall, color = tokens.onBackgroundPrimary)
+                // 모드 선택 (자막 / 더빙 — 둘 중 하나)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.localizationMode == "subtitle",
+                        onClick = { viewModel.onSetLocalizationMode("subtitle") },
+                        label = { Text("자막") }
+                    )
+                    FilterChip(
+                        selected = state.localizationMode == "dub",
+                        onClick = { viewModel.onSetLocalizationMode("dub") },
+                        label = { Text("더빙") }
+                    )
+                }
+
+                // 원본 언어는 Perso STT 가 자동 감지함 — 사용자 선택 불필요.
+
+                Text("번역 대상 언어 (다중)", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        "en" to "English",
+                        "ko" to "한국어",
+                        "ja" to "日本語",
+                        "zh" to "中文",
+                        "es" to "Español",
+                        "fr" to "Français",
+                        "de" to "Deutsch"
+                    ).forEach { (code, label) ->
+                        FilterChip(
+                            selected = code in state.localizationLangs,
+                            onClick = { viewModel.onToggleLocalizationLang(code) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                // 자막 모드 한정: STT 결과 미리 검토 후 다국어 자막 생성. dub 는 BFF 추가 필요해 현재 미지원.
+                if (state.localizationMode == "subtitle") {
+                    FilterChip(
+                        selected = state.reviewScriptBeforeGenerate,
+                        onClick = { viewModel.onToggleReviewScriptBeforeGenerate() },
+                        label = { Text("📝 스크립트 먼저 검토") }
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        enabled = state.localizationLangs.isNotEmpty(),
+                        onClick = { viewModel.onStartLocalization() }
+                    ) { Text("생성 시작") }
+                    OutlinedButton(onClick = { viewModel.onDismissLocalization() }) {
+                        Text("취소")
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // 저장 상태 메시지 (실패 시) — 헤더 저장 버튼이 진행률을 자체 표시하므로
+        // running/done 은 별도 표시 안 함. 실패 메시지만 사용자에게 알림.
+        when (val s = state.saveStatus) {
+            is SaveStatus.FAILED -> Text(
+                "저장 실패: ${s.message}",
+                color = Color(0xFFFF6B6B),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            else -> Unit
+        }
+    }
+
+    // 더빙 sheet
+    if (state.showDubbingSheet) {
+        InsertDubbingSheet(
+            voices = state.voices,
+            isVoicesLoading = state.isVoicesLoading,
+            isSynthesizing = state.isSynthesizing,
+            previewAvailable = state.previewClip != null,
+            synthError = state.synthError,
+            onSynthesize = { text, voiceId, voiceName ->
+                viewModel.onSynthesize(text, voiceId, voiceName)
+            },
+            onInsert = { viewModel.onInsertPreviewClip() },
+            onDismiss = { viewModel.onDismissDubbingSheet() }
+        )
+    }
+
+    // STT 스크립트 검토 sheet — review 모드에서 STT 완료 후 표시.
+    if (state.showScriptReviewSheet) {
+        val sourceClips = remember(state.subtitleClips) {
+            state.subtitleClips.filter { it.languageCode.isBlank() }
+        }
+        // confirm 시 일괄 저장하기 위해 outer 에서 hoist — text/confirmButton 두 슬롯이 같은 map 공유.
+        val scriptReviewEdits = remember(sourceClips.map { it.id }) {
+            androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
+                sourceClips.forEach { put(it.id, it.text) }
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { viewModel.onDismissScriptReviewSheet() },
+            title = { Text("스크립트 검토") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "STT 결과를 확인하고 잘못 인식된 부분을 수정하세요. 확인 후 ${state.pendingReviewTargetLangs.joinToString(", ") { it.uppercase() }} 자막이 생성됩니다.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(items = sourceClips, key = { it.id }) { clip ->
+                            val draft = scriptReviewEdits[clip.id] ?: clip.text
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "${clip.startMs / 1000}s\n${clip.endMs / 1000}s",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.heightIn(min = 56.dp)
+                                )
+                                OutlinedTextField(
+                                    value = draft,
+                                    onValueChange = { scriptReviewEdits[clip.id] = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.onConfirmScriptReview(scriptReviewEdits.toMap())
+                }) { Text("자막 생성") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onDismissScriptReviewSheet() }) { Text("취소") }
+            }
+        )
+    }
+
+
+    // 자막 sheet
+    if (state.showSubtitleSheet) {
+        InsertSubtitleSheet(
+            playbackPositionMs = state.playbackPositionMs,
+            videoDurationMs = state.videoDurationMs,
+            onConfirm = { text, startMs, endMs, position, style ->
+                viewModel.onAddSubtitle(
+                    text = text,
+                    startMs = startMs,
+                    endMs = endMs,
+                    position = position,
+                    fontFamily = style.fontFamily,
+                    fontSizeSp = style.fontSizeSp,
+                    colorHex = style.colorHex,
+                    backgroundColorHex = style.backgroundColorHex,
+                )
+            },
+            onDismiss = { viewModel.onDismissSubtitleSheet() }
+        )
+    }
+
+    // 음성분리 sheet
+    state.audioSeparation?.takeIf { state.showAudioSeparationSheet }?.let { sepState ->
+        AudioSeparationSheet(
+            state = sepState,
+            onUpdateSpeakers = { viewModel.onUpdateSeparationSpeakers(it) },
+            onStart = { viewModel.onStartSeparation() },
+            onToggleStem = { viewModel.onToggleStemSelection(it) },
+            onUpdateStemVolume = { id, vol -> viewModel.onUpdateStemVolume(id, vol) },
+            onToggleMuteOriginal = { viewModel.onToggleMuteOriginalSegmentAudio() },
+            onConfirmMix = { viewModel.onConfirmStemMix() },
+            onDismiss = { viewModel.onDismissAudioSeparationSheet() },
+            onDelete = { viewModel.onDeleteCurrentSeparation() },
+        )
+    }
+
+    // 구간 선택 — popup sheet 대신 인라인 RangeSlider 로 처리하므로 sheet 제거
+}
+
+/**
+ * 한 클립을 트랙 위에 그릴 데이터.
+ */
+data class ClipBar(
+    val id: String,
+    val startMs: Long,
+    val endMs: Long,
+    val selected: Boolean
+)
+
+/**
+ * 라벨 + 가로 트랙 + 클립 막대들 — 시간축에 비례해서 배치.
+ *
+ * [durationMs] 가 0 이면 클립을 그릴 수 없으므로 라벨만 노출.
+ * 막대 탭 → [onClipClick] 호출 (id 또는 null=선택해제).
+ */
+@Composable
+private fun ClipTrack(
+    label: String,
+    color: Color,
+    durationMs: Long,
+    clips: List<ClipBar>,
+    onClipClick: (String?) -> Unit
+) {
+    val tokens = LocalDubCastColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .width(56.dp)
+                .height(32.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(label, color = color, style = MaterialTheme.typography.labelMedium)
+        }
+        // 트랙 바 (탭 시 선택 해제)
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .height(32.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color.copy(alpha = 0.10f))
+                .clickable { onClipClick(null) }
+        ) {
+            val totalWidth = maxWidth
+            if (durationMs > 0L) {
+                clips.forEach { clip ->
+                    val startFrac = (clip.startMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                    val endFrac = (clip.endMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                    val widthFrac = (endFrac - startFrac).coerceAtLeast(0.01f)
+                    Box(
+                        modifier = Modifier
+                            .padding(start = totalWidth * startFrac)
+                            .width(totalWidth * widthFrac)
+                            .height(28.dp)
+                            .padding(vertical = 2.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (clip.selected) color else color.copy(alpha = 0.6f))
+                            .border(
+                                width = if (clip.selected) 2.dp else 0.dp,
+                                color = tokens.onBackgroundPrimary,
+                                shape = RoundedCornerShape(50)
+                            )
+                            .clickable {
+                                // 토글: 같은 막대 다시 누르면 선택 해제
+                                onClipClick(if (clip.selected) null else clip.id)
+                            }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Segment 편집(복제/삭제/볼륨/속도) inline 패널 — 영상 우상단 연필 버튼으로 진입했을 때
+ * range slider 확정 후 노출. 적용 시 [TimelineViewModel.onDuplicateRange] / [onDeleteRange] /
+ * [onApplyRangeVolume] / [onApplyRangeSpeed] 가 내부적으로 resetRangeMode() 를 호출해 자동 닫힘.
+ */
+@Composable
+private fun SegmentEditActionPanel(
+    volume: Float,
+    speed: Float,
+    onVolumeChange: (Float) -> Unit,
+    onSpeedChange: (Float) -> Unit,
+    onApplyVolume: (Float) -> Unit,
+    onApplySpeed: (Float) -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val tokens = LocalDubCastColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(tokens.panelBg, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // "구간 편집" 헤더 옆 복제/삭제 작은 버튼.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "구간 편집",
+                style = MaterialTheme.typography.titleSmall,
+                color = tokens.onBackgroundPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(
+                onClick = onDuplicate,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(30.dp),
+            ) { Text("복제", fontSize = 12.sp) }
+            OutlinedButton(
+                onClick = onDelete,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(30.dp),
+            ) { Text("삭제", fontSize = 12.sp) }
+        }
+
+        // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). 변경된 경우에만 "적용" 버튼이 의미 있음.
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("볼륨 ${(volume * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+                TextButton(onClick = { onApplyVolume(volume) }) { Text("볼륨 적용") }
+            }
+            Slider(
+                value = volume,
+                valueRange = 0f..2f,
+                onValueChange = onVolumeChange,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        // 속도 — 0.25..4.
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                val pct = (speed * 100).toInt()
+                Text("속도 ${pct}%", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+                TextButton(onClick = { onApplySpeed(speed) }) { Text("속도 적용") }
+            }
+            Slider(
+                value = speed,
+                valueRange = 0.25f..4f,
+                onValueChange = onSpeedChange,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        // 복제/삭제 는 헤더 row 로 이동했고, 우상단 X 가 "취소(저장)" 역할이라 하단 row 제거.
+    }
+}
+
+/** ARGB hex (#AARRGGBB or #RRGGBB) → Compose Color. 잘못된 입력은 white fallback. */
+private fun parseArgbHexColor(hex: String): Color {
+    val cleaned = hex.removePrefix("#")
+    val v = runCatching { cleaned.toLong(16) }.getOrNull() ?: return Color.White
+    return when (cleaned.length) {
+        8 -> Color(
+            alpha = ((v shr 24) and 0xFF) / 255f,
+            red = ((v shr 16) and 0xFF) / 255f,
+            green = ((v shr 8) and 0xFF) / 255f,
+            blue = (v and 0xFF) / 255f,
+        )
+        6 -> Color(
+            alpha = 1f,
+            red = ((v shr 16) and 0xFF) / 255f,
+            green = ((v shr 8) and 0xFF) / 255f,
+            blue = (v and 0xFF) / 255f,
+        )
+        else -> Color.White
+    }
+}

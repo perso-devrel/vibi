@@ -1,21 +1,29 @@
+# Build / Gradle
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
+.gradle/
+**/.gradle/
 /build
+**/build/
+.kotlin/
+**/.kotlin/
 /captures
 .externalNativeBuild
 .cxx
+*.hprof
+
+# Local config (절대 커밋 금지 — 디바이스/사용자별)
 local.properties
-/app/build
-.claude/ralph-work/
-.claude/scheduled_tasks.lock
-.claude/settings.local.json
-.claude/feature-pipeline-state.json
-/.idea/
+**/local.properties
+
+# IDE
+/.idea
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/

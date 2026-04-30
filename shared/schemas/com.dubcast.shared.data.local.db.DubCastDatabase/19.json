@@ -1,0 +1,602 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 19,
+    "identityHash": "f48162ac20a62d88aaf13ce17c1ac9f2",
+    "entities": [
+      {
+        "tableName": "edit_projects",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`projectId` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `frameWidth` INTEGER NOT NULL, `frameHeight` INTEGER NOT NULL, `backgroundColorHex` TEXT NOT NULL, `videoScale` REAL NOT NULL, `videoOffsetXPct` REAL NOT NULL, `videoOffsetYPct` REAL NOT NULL, `targetLanguageCode` TEXT NOT NULL, `enableAutoDubbing` INTEGER NOT NULL, `enableAutoSubtitles` INTEGER NOT NULL, `numberOfSpeakers` INTEGER NOT NULL, `dubbedAudioPath` TEXT, `autoSubtitleStatus` TEXT NOT NULL, `autoDubStatus` TEXT NOT NULL, `autoSubtitleJobId` TEXT, `autoDubJobId` TEXT, `autoSubtitleError` TEXT, `autoDubError` TEXT, PRIMARY KEY(`projectId`))",
+        "fields": [
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frameWidth",
+            "columnName": "frameWidth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frameHeight",
+            "columnName": "frameHeight",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backgroundColorHex",
+            "columnName": "backgroundColorHex",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "videoScale",
+            "columnName": "videoScale",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "videoOffsetXPct",
+            "columnName": "videoOffsetXPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "videoOffsetYPct",
+            "columnName": "videoOffsetYPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetLanguageCode",
+            "columnName": "targetLanguageCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enableAutoDubbing",
+            "columnName": "enableAutoDubbing",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enableAutoSubtitles",
+            "columnName": "enableAutoSubtitles",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "numberOfSpeakers",
+            "columnName": "numberOfSpeakers",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dubbedAudioPath",
+            "columnName": "dubbedAudioPath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "autoSubtitleStatus",
+            "columnName": "autoSubtitleStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoDubStatus",
+            "columnName": "autoDubStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoSubtitleJobId",
+            "columnName": "autoSubtitleJobId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "autoDubJobId",
+            "columnName": "autoDubJobId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "autoSubtitleError",
+            "columnName": "autoSubtitleError",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "autoDubError",
+            "columnName": "autoDubError",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "projectId"
+          ]
+        }
+      },
+      {
+        "tableName": "dub_clips",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `text` TEXT NOT NULL, `voiceId` TEXT NOT NULL, `voiceName` TEXT NOT NULL, `audioFilePath` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, `volume` REAL NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "voiceId",
+            "columnName": "voiceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "voiceName",
+            "columnName": "voiceName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "audioFilePath",
+            "columnName": "audioFilePath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volume",
+            "columnName": "volume",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "subtitle_clips",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `text` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `anchor` TEXT NOT NULL, `yOffsetPct` REAL NOT NULL, `sourceDubClipId` TEXT, `xPct` REAL, `yPct` REAL, `widthPct` REAL, `heightPct` REAL, `source` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchor",
+            "columnName": "anchor",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "yOffsetPct",
+            "columnName": "yOffsetPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceDubClipId",
+            "columnName": "sourceDubClipId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "xPct",
+            "columnName": "xPct",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "yPct",
+            "columnName": "yPct",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "widthPct",
+            "columnName": "widthPct",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "heightPct",
+            "columnName": "heightPct",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "image_clips",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `imageUri` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `xPct` REAL NOT NULL, `yPct` REAL NOT NULL, `widthPct` REAL NOT NULL, `heightPct` REAL NOT NULL, `lane` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageUri",
+            "columnName": "imageUri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "xPct",
+            "columnName": "xPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "yPct",
+            "columnName": "yPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "widthPct",
+            "columnName": "widthPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heightPct",
+            "columnName": "heightPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lane",
+            "columnName": "lane",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "segments",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `type` TEXT NOT NULL, `order` INTEGER NOT NULL, `sourceUri` TEXT NOT NULL, `durationMs` INTEGER NOT NULL, `width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `trimStartMs` INTEGER NOT NULL, `trimEndMs` INTEGER NOT NULL, `imageXPct` REAL NOT NULL, `imageYPct` REAL NOT NULL, `imageWidthPct` REAL NOT NULL, `imageHeightPct` REAL NOT NULL, `volumeScale` REAL NOT NULL, `speedScale` REAL NOT NULL, `duplicatedFromId` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "order",
+            "columnName": "order",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUri",
+            "columnName": "sourceUri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trimStartMs",
+            "columnName": "trimStartMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trimEndMs",
+            "columnName": "trimEndMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageXPct",
+            "columnName": "imageXPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageYPct",
+            "columnName": "imageYPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageWidthPct",
+            "columnName": "imageWidthPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageHeightPct",
+            "columnName": "imageHeightPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volumeScale",
+            "columnName": "volumeScale",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speedScale",
+            "columnName": "speedScale",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "duplicatedFromId",
+            "columnName": "duplicatedFromId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "text_overlays",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `text` TEXT NOT NULL, `fontFamily` TEXT NOT NULL, `fontSizeSp` REAL NOT NULL, `colorHex` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `xPct` REAL NOT NULL, `yPct` REAL NOT NULL, `lane` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fontFamily",
+            "columnName": "fontFamily",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fontSizeSp",
+            "columnName": "fontSizeSp",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorHex",
+            "columnName": "colorHex",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "xPct",
+            "columnName": "xPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "yPct",
+            "columnName": "yPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lane",
+            "columnName": "lane",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "bgm_clips",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `sourceUri` TEXT NOT NULL, `sourceDurationMs` INTEGER NOT NULL, `startMs` INTEGER NOT NULL, `volumeScale` REAL NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUri",
+            "columnName": "sourceUri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceDurationMs",
+            "columnName": "sourceDurationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volumeScale",
+            "columnName": "volumeScale",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f48162ac20a62d88aaf13ce17c1ac9f2')"
+    ]
+  }
+}

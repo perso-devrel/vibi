@@ -1,0 +1,56 @@
+name: iosApp
+options:
+  bundleIdPrefix: com.dubcast
+  deploymentTarget:
+    iOS: "17.2"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: iosApp
+    info:
+      path: iosApp/Info.plist
+      properties:
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        CADisableMinimumFrameDurationOnPhone: true
+        NSPhotoLibraryUsageDescription: 편집할 동영상을 선택하기 위해 사진 라이브러리 접근이 필요합니다.
+        NSPhotoLibraryAddUsageDescription: 완성된 동영상을 사진 라이브러리에 저장하기 위해 권한이 필요합니다.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # UILaunchScreen 누락 시 iOS 가 320×480 호환 모드로 앱을 강제 — 화면 작게 잘림.
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dubcast.ios
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework"
+          - "$(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework"
+        KOTLIN_FRAMEWORK_BUILD_TYPE_DIR: iosSimulatorArm64
+        OTHER_LDFLAGS:
+          - "-framework"
+          - "Cmp"
+          - "-framework"
+          - "Shared"
+        ENABLE_BITCODE: NO
+    preBuildScripts:
+      - name: "Build Kotlin frameworks"
+        # outputs 는 명시하지 않음 (KMP source 가 변경되면 framework 가 stale 인데 outputs 만으로는
+        # 그걸 감지 못 함). 대신 gradle 자체의 incremental + configuration-cache 로 빠르게.
+        # `--no-configuration-cache` 제거 — gradle.properties 의 cc 옵션을 살려 매 호출 5–10s 절감.
+        basedOnDependencyAnalysis: false
+        script: |
+          cd "$SRCROOT/.."
+          ./gradlew :cmp:embedAndSignAppleFrameworkForXcode :shared:embedAndSignAppleFrameworkForXcode
