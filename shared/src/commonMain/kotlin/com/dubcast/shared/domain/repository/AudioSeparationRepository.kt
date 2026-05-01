@@ -54,7 +54,13 @@ data class StemSelection(
      * 이 URL 들을 받아 amix 합성하기 때문에 stemId 만으론 부족.
      * legacy 경로(BFF mix mp3)에서는 비어 있을 수 있음.
      */
-    val audioUrl: String? = null
+    val audioUrl: String? = null,
+    /**
+     * 사용자가 mix 에 포함시킬지 여부. false 라도 directive 에 보존돼 사용자가 sheet 재진입 시
+     * 다시 토글 가능. preview/render 양쪽에서 false 인 stem 은 음 미포함 (preview 는 volume 0,
+     * render 는 사전 필터). 기본 true — 신규 분리/legacy 데이터의 backward compat.
+     */
+    val selected: Boolean = true
 )
 
 interface AudioSeparationRepository {

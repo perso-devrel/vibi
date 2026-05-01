@@ -39,7 +39,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dubcast.cmp.platform.StemMixerSource
 import com.dubcast.cmp.platform.rememberAudioPreviewer
+import com.dubcast.cmp.platform.rememberStemMixer
 import com.dubcast.shared.ui.timeline.AudioSeparationStep
 import com.dubcast.shared.ui.timeline.AudioSeparationUiState
 import com.dubcast.shared.ui.timeline.localizeProgressReason
@@ -65,11 +67,14 @@ fun AudioSeparationSheet(
     onDelete: (() -> Unit)? = null,
 ) {
     val previewer = rememberAudioPreviewer()
-    // 현재 재생 중인 stemId. "all" = 전체 미리듣기. null = 재생 안 됨.
+    // 전체 재생 — 선택된 stem 다수를 동시에 재생하기 위한 mixer. 개별 ▶ 는 previewer 단일 player.
+    val mixer = rememberStemMixer()
+    // 현재 재생 중인 stemId. "all" = 전체 미리듣기 (mixer). null = 재생 안 됨. 그 외 = 단일 stem (previewer).
     var playingId by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = {
             previewer.stop()
+            mixer.pause()
             playingId = null
             onDismiss()
         },
@@ -84,11 +89,29 @@ fun AudioSeparationSheet(
                     val isAllPlaying = playingId == "all"
                     TextButton(onClick = {
                         if (isAllPlaying) {
-                            previewer.stop()
+                            mixer.pause()
                             playingId = null
                         } else {
-                            state.stems.firstOrNull()?.let { previewer.play(it.url) }
-                            playingId = "all"
+                            // 단일 stem 미리듣기와 충돌 방지 — 먼저 stop.
+                            previewer.stop()
+                            // 선택된 (selected = true) stem 만 동시 재생. url 빈 항목은 제외.
+                            val sources = state.stems.mapNotNull { stem ->
+                                val sel = state.selections[stem.stemId]
+                                if (sel?.selected != true) return@mapNotNull null
+                                if (stem.url.isBlank()) return@mapNotNull null
+                                StemMixerSource(stemId = stem.stemId, audioUrl = stem.url)
+                            }
+                            if (sources.isNotEmpty()) {
+                                mixer.load(sources)
+                                state.stems.forEach { stem ->
+                                    val sel = state.selections[stem.stemId]
+                                    val v = if (sel?.selected == true) (sel.volume) else 0f
+                                    mixer.setVolume(stem.stemId, v)
+                                }
+                                mixer.seekTo(0L)
+                                mixer.play()
+                                playingId = "all"
+                            }
                         }
                     }) {
                         Icon(
@@ -157,15 +180,21 @@ fun AudioSeparationSheet(
                                         .scale(scaleX = 1f, scaleY = 0.7f),
                                 )
                                 val isThisPlaying = playingId == stem.stemId
-                                IconButton(onClick = {
-                                    if (isThisPlaying) {
-                                        previewer.stop()
-                                        playingId = null
-                                    } else {
-                                        previewer.play(stem.url)
-                                        playingId = stem.stemId
+                                val canPreview = stem.url.isNotBlank()
+                                IconButton(
+                                    enabled = canPreview,
+                                    onClick = {
+                                        if (isThisPlaying) {
+                                            previewer.stop()
+                                            playingId = null
+                                        } else {
+                                            // 전체 재생 중이면 충돌 방지 위해 mixer 정지.
+                                            mixer.pause()
+                                            previewer.play(stem.url)
+                                            playingId = stem.stemId
+                                        }
                                     }
-                                }) {
+                                ) {
                                     Icon(
                                         imageVector = if (isThisPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                                         contentDescription = if (isThisPlaying) "일시정지" else "재생",
@@ -210,6 +239,7 @@ fun AudioSeparationSheet(
                 if (onDelete != null && state.step == AudioSeparationStep.PICK_STEMS) {
                     TextButton(onClick = {
                         previewer.stop()
+                        mixer.pause()
                         playingId = null
                         onDelete()
                     }) {
@@ -217,7 +247,12 @@ fun AudioSeparationSheet(
                     }
                     Spacer(Modifier.size(4.dp))
                 }
-                TextButton(onClick = onDismiss) { Text("취소") }
+                TextButton(onClick = {
+                    previewer.stop()
+                    mixer.pause()
+                    playingId = null
+                    onDismiss()
+                }) { Text("취소") }
             }
         }
     )

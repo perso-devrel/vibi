@@ -1592,15 +1592,53 @@ class TimelineViewModel constructor(
         )
     }
 
+    /**
+     * directive 사이의 gap 을 한 번에 pendingRange 로 점프. range 모드 비활성이면 자동 진입.
+     * 타임라인의 회색(directive) 구간을 시각화하고, 그 외(사용 가능) 구간 탭으로 즉시 그 구간을
+     * 풀 셀렉트 → 슬라이더로 fine-tune 하는 UX.
+     */
+    fun onSelectFreeRange(startMs: Long, endMs: Long) {
+        val state = _uiState.value
+        val total = state.videoDurationMs.coerceAtLeast(0L)
+        val s = startMs.coerceIn(0L, total)
+        val e = endMs.coerceIn(0L, total)
+        if (e - s < MIN_RANGE_MS) return
+        if (state.isRangeSelecting) {
+            _uiState.value = state.copy(
+                pendingRangeStartMs = s,
+                pendingRangeEndMs = e,
+            )
+        } else {
+            // range 모드 진입 — 첫 video segment 를 타깃으로. 슬라이더 valueRange 는 이후 영상 전체.
+            val seg = state.segments.firstOrNull { it.type == SegmentType.VIDEO } ?: return
+            _uiState.value = state.copy(
+                isRangeSelecting = true,
+                isSegmentEditMode = false,
+                rangeTargetSegmentId = seg.id,
+                selectedSegmentId = seg.id,
+                pendingRangeStartMs = s,
+                pendingRangeEndMs = e,
+                showRangeActionSheet = false,
+                pendingRangeVolume = seg.volumeScale,
+                pendingRangeSpeed = seg.speedScale,
+                isPlaying = false,
+            )
+        }
+    }
+
     fun onSetPendingRangeStart(globalMs: Long) {
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(0L)
         val upper = (state.pendingRangeEndMs - MIN_RANGE_MS).coerceAtLeast(0L)
-        val clamped = globalMs.coerceIn(0L, upper.coerceAtMost(total))
-        // 이미 분리된 directive 영역과 겹치는 입력은 거부 (이전 값 유지).
+        // 현재 pendingRange 가 들어있는 free interval 안으로 clamp — directive 경계를 만나면 거기서
+        // 멈추되 핸들 자체는 부드럽게 따라감 (이전엔 reject 라 핸들이 얼어붙음).
         val freeFromEnd = freeIntervalContaining(state.pendingRangeEndMs)
-        if (freeFromEnd != null && clamped !in freeFromEnd) return
-        // range slider 는 구간만 변경 — 재생 헤드는 사용자가 자유롭게 조절.
+        val freeLower = freeFromEnd?.first ?: 0L
+        val freeUpper = freeFromEnd?.last ?: total
+        val clamped = globalMs.coerceIn(
+            minimumValue = freeLower,
+            maximumValue = upper.coerceIn(freeLower, freeUpper),
+        )
         _uiState.value = state.copy(pendingRangeStartMs = clamped)
     }
 
@@ -1608,10 +1646,13 @@ class TimelineViewModel constructor(
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(0L)
         val lower = (state.pendingRangeStartMs + MIN_RANGE_MS).coerceAtMost(total)
-        val clamped = globalMs.coerceIn(lower.coerceAtLeast(0L), total)
-        // 이미 분리된 directive 영역과 겹치는 입력은 거부 (이전 값 유지).
         val freeFromStart = freeIntervalContaining(state.pendingRangeStartMs)
-        if (freeFromStart != null && clamped !in freeFromStart) return
+        val freeLower = freeFromStart?.first ?: 0L
+        val freeUpper = freeFromStart?.last ?: total
+        val clamped = globalMs.coerceIn(
+            minimumValue = lower.coerceIn(freeLower, freeUpper),
+            maximumValue = freeUpper,
+        )
         _uiState.value = state.copy(pendingRangeEndMs = clamped)
     }
 
@@ -2242,24 +2283,26 @@ class TimelineViewModel constructor(
      */
     fun onEditExistingSeparation(directiveId: String) {
         val directive = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId } ?: return
-        val stems = directive.selections.mapNotNull { sel ->
-            val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        // audioUrl 이 만료되었거나 빈 selection 도 stem 으로 노출 — 사용자가 볼륨 조정/삭제는 가능해야
+        // 하므로 silent return 하지 않는다. 미리듣기는 url 빈 stem 에 대해선 자동 no-op.
+        val stems = directive.selections.map { sel ->
             val kind = com.dubcast.shared.domain.model.Stem.kindFromId(sel.stemId)
             val speakerIdx = com.dubcast.shared.domain.model.Stem.speakerIndexFromId(sel.stemId)
             com.dubcast.shared.domain.model.Stem(
                 stemId = sel.stemId,
                 label = "",
-                url = url,
+                url = sel.audioUrl.orEmpty(),
                 kind = kind,
                 speakerIndex = speakerIdx,
             )
         }
-        if (stems.isEmpty()) return
+        // selections 가 비어도 (망가진 directive) sheet 는 열어 — 최소한 삭제 버튼은 노출돼야 함.
         val volumeByStem = directive.selections.associate { it.stemId to it.volume }
+        val selectedByStem = directive.selections.associate { it.stemId to it.selected }
         val selections = stems.associate { stem ->
             stem.stemId to StemSelectionUi(
                 stemId = stem.stemId,
-                selected = true,
+                selected = selectedByStem[stem.stemId] ?: true,
                 volume = volumeByStem[stem.stemId] ?: 1.0f,
             )
         }
@@ -2673,8 +2716,18 @@ class TimelineViewModel constructor(
     fun onToggleStemSelection(stemId: String) {
         val sep = _uiState.value.audioSeparation ?: return
         val current = sep.selections[stemId] ?: return
-        val next = sep.selections + (stemId to current.copy(selected = !current.selected))
+        val newSelected = !current.selected
+        val next = sep.selections + (stemId to current.copy(selected = newSelected))
         updateSeparation { it.copy(selections = next) }
+        // 편집 모드 — 토글 즉시 directive 에 반영. 볼륨 슬라이더와 동일 패턴.
+        val directiveId = editingDirectiveId ?: return
+        viewModelScope.launch {
+            val existing = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId } ?: return@launch
+            val updatedSelections = existing.selections.map { sel ->
+                if (sel.stemId == stemId) sel.copy(selected = newSelected) else sel
+            }
+            separationDirectiveRepository.add(existing.copy(selections = updatedSelections))
+        }
     }
 
     fun onUpdateStemVolume(stemId: String, volume: Float) {
@@ -2683,6 +2736,16 @@ class TimelineViewModel constructor(
         val clamped = volume.coerceIn(0f, 2f)
         val next = sep.selections + (stemId to current.copy(volume = clamped))
         updateSeparation { it.copy(selections = next) }
+        // 편집 모드 — slider 드래그마다 directive 자체에도 즉시 반영. BGM 의 onUpdateBgmVolume 과 동등한
+        // 동작 (별도 "적용" 누르지 않아도 영속). 새 분리 작업(directive 미생성) 흐름에선 no-op.
+        val directiveId = editingDirectiveId ?: return
+        viewModelScope.launch {
+            val existing = _uiState.value.separationDirectives.firstOrNull { it.id == directiveId } ?: return@launch
+            val updatedSelections = existing.selections.map { sel ->
+                if (sel.stemId == stemId) sel.copy(volume = clamped) else sel
+            }
+            separationDirectiveRepository.add(existing.copy(selections = updatedSelections))
+        }
     }
 
     fun onToggleMuteOriginalSegmentAudio() {
@@ -2696,10 +2759,11 @@ class TimelineViewModel constructor(
         // stem URL 까지 함께 보존해야 export 시점에 BFF render 가 amix 합성 가능.
         // 별도 mix 산출(mp3) 단계는 폐기 — preview/export 둘 다 stem 리스트로 직접 처리.
         val urlByStemId = sep.stems.associate { it.stemId to it.url }
+        // 선택 안 된 stem 도 directive 에 보존 (selected = false) — 사용자가 sheet 재진입 시 다시
+        // 토글 가능. preview/render 는 selected 플래그 보고 mute / 제외.
         val selections = sep.selections.values
-            .filter { it.selected }
-            .map { StemSelection(it.stemId, it.volume, urlByStemId[it.stemId]) }
-        if (selections.isEmpty()) return
+            .map { StemSelection(it.stemId, it.volume, urlByStemId[it.stemId], it.selected) }
+        if (selections.none { it.selected }) return
         viewModelScope.launch {
             val isWholeVideo = segment == null
             val segStart = segment?.let { s -> segmentStartOffsetMs(state.segments, s.id) } ?: 0L
@@ -2751,7 +2815,11 @@ class TimelineViewModel constructor(
                     state.segments.filter { it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO }
                         .forEach { updateSegmentVolume(it.id, 0f) }
                 }
-                updateSeparation { it.copy(step = AudioSeparationStep.DONE) }
+                // 적용 즉시 sheet 닫음 — DONE 단계의 "완료" 팝업 노출 안 함.
+                _uiState.value = _uiState.value.copy(
+                    audioSeparation = null,
+                    showAudioSeparationSheet = false,
+                )
                 // commit 완료 → EditProject 의 separation* 모두 IDLE 로 클리어. 다음 음성분리 새로 가능.
                 editProjectRepository.getProject(projectId)?.let { p ->
                     editProjectRepository.updateProject(

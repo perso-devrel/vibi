@@ -3,6 +3,8 @@ package com.dubcast.cmp.ui.timeline
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -113,13 +115,25 @@ fun TimelineScreen(
             stemMixer.load(emptyList())
             return@LaunchedEffect
         }
+        // load 는 audioUrl 있는 모든 stem (selected 무관) — 사용자가 토글 키면 즉시 반영되도록
+        // 모두 prepare. 선택 안 된 stem 은 아래 volume effect 에서 0 으로 mute.
         val sources = dir.selections.mapNotNull { sel ->
             val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             StemMixerSource(stemId = sel.stemId, audioUrl = url)
         }
         stemMixer.load(sources)
         dir.selections.forEach { sel ->
-            stemMixer.setVolume(sel.stemId, sel.volume)
+            stemMixer.setVolume(sel.stemId, if (sel.selected) sel.volume else 0f)
+        }
+    }
+    // 볼륨/선택 변화 실시간 전파 — slider 드래그 또는 체크 토글 → onUpdateStemVolume/onToggleStemSelection
+    // 이 directive 를 upsert → observe Flow 가 새 selections 흘려줌 → 본 effect 가
+    // stemMixer.setVolume 호출. selected=false 면 0f mute, true 면 볼륨 그대로.
+    // load 와 분리한 이유: load(...) 는 player 인스턴스 재생성이라 매 변화마다 호출하면 재생이 끊김.
+    LaunchedEffect(activeDirective?.id, activeDirective?.selections) {
+        val dir = activeDirective ?: return@LaunchedEffect
+        dir.selections.forEach { sel ->
+            stemMixer.setVolume(sel.stemId, if (sel.selected) sel.volume else 0f)
         }
     }
     // 재생 토글 / 사용자 seek 시 mixer 도 같이 정렬. video 재생 자유진행 시 sample-accurate 동기화는
@@ -473,11 +487,46 @@ fun TimelineScreen(
             }
         }
 
-        // 통합 재생 바 — 구간 선택 활성화 시 RangeSlider, 평소엔 일반 Slider
+        // 통합 재생 바.
+        //  - 메인 (range 모드 비활성): 재생 Slider + 그 아래 directive 회색 막대 (탭 → 편집 sheet).
+        //  - range 모드: **단일 라인** = Box 안에 RangeSlider + directive 회색 overlay 를 layered.
+        //    overlay 는 시각만 (pointerInput 없음) — 슬라이더 핸들이 directive 경계 근처에서도 자유로이
+        //    드래그 가능. 탭 처리는 Box parent 의 detectTapGestures 가 위치 기반으로 분기:
+        //    directive 위 탭 → 편집 sheet, free interval 위 탭 → 그 구간으로 pendingRange 점프.
         if (state.videoDurationMs > 0) {
-            // 통합 타임라인 — 구간 모드면 시작/끝 두 핸들을 직접 드래그, 평소엔 단일 재생 핸들
+            val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
             if (state.isRangeSelecting) {
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .pointerInput(sortedDirectives, state.videoDurationMs) {
+                            detectTapGestures { offset ->
+                                val w = size.width.toFloat()
+                                if (w <= 0f) return@detectTapGestures
+                                val frac = (offset.x / w).coerceIn(0f, 1f)
+                                val ms = (frac * state.videoDurationMs).toLong()
+                                val onDirective = sortedDirectives.any {
+                                    ms in it.rangeStartMs..it.rangeEndMs
+                                }
+                                // range 모드에서 회색(directive) 영역 탭은 무시 — 편집 sheet 안 띄우고
+                                // pendingRange 도 그대로. free interval 위 탭만 점프 처리.
+                                if (onDirective) return@detectTapGestures
+                                var freeStart = 0L
+                                var freeEnd = state.videoDurationMs
+                                for (d in sortedDirectives) {
+                                    if (ms < d.rangeStartMs) {
+                                        freeEnd = d.rangeStartMs
+                                        break
+                                    }
+                                    freeStart = maxOf(freeStart, d.rangeEndMs)
+                                }
+                                viewModel.onSelectFreeRange(freeStart, freeEnd)
+                            }
+                        }
+                ) {
+                    // Layer 1 — RangeSlider (먼저 그림 = 뒤). drag 은 slider 가 받고, tap 은 parent
+                    // detectTapGestures 가 분기.
                     RangeSlider(
                         value = state.pendingRangeStartMs.toFloat()..state.pendingRangeEndMs.toFloat(),
                         valueRange = 0f..state.videoDurationMs.toFloat(),
@@ -485,27 +534,99 @@ fun TimelineScreen(
                             viewModel.onSetPendingRangeStart(range.start.toLong())
                             viewModel.onSetPendingRangeEnd(range.endInclusive.toLong())
                         },
-                        modifier = Modifier.scale(scaleX = 1f, scaleY = 0.7f),
+                        modifier = Modifier.fillMaxWidth().scale(scaleX = 1f, scaleY = 0.7f),
                     )
-                    // 재생 위치 dot — 정보 표시 (조작은 아래 별도 슬라이더에서)
-                    androidx.compose.foundation.Canvas(
+                    // Layer 2 — directive overlay (slider 위, 시각만). `background()` 만으로는 pointer
+                    // hit-test 등록 안 되므로 slider drag/tap 통과. RangeSlider 의 기본 horizontal
+                    // padding(10dp) 과 정렬해 핸들 위치와 일치.
+                    Row(
                         modifier = Modifier
                             .matchParentSize()
-                            .padding(horizontal = 10.dp)
+                            .padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (state.videoDurationMs > 0) {
-                            val frac = state.playbackPositionMs.toFloat() / state.videoDurationMs
-                            val x = frac.coerceIn(0f, 1f) * size.width
-                            // inactive track 과 같은 어두운 회색 — 활성(흰) 구간 위에선 잘 보이고
-                            // 구간 밖에선 트랙에 자연스럽게 묻힘
-                            drawCircle(
-                                color = Color(0xFF49454F),
-                                radius = 5.dp.toPx(),
-                                center = androidx.compose.ui.geometry.Offset(x, size.height / 2)
-                            )
+                        var prevEnd = 0L
+                        sortedDirectives.forEach { directive ->
+                            val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
+                            if (gap > 0L) {
+                                Spacer(Modifier.weight(gap.toFloat()).fillMaxHeight())
+                            }
+                            val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
+                            Box(
+                                modifier = Modifier
+                                    .weight(w.toFloat())
+                                    .fillMaxHeight(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                // 사용 불가 = 회색. RangeSlider 트랙(파랑/회색) 위에 덮어 보이도록
+                                // 두꺼운 12dp 막대 + 거의 불투명(α 0.9).
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(12.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(Color(0xFF6E6E6E).copy(alpha = 0.9f))
+                                )
+                            }
+                            prevEnd = directive.rangeEndMs
+                        }
+                        val tail = (state.videoDurationMs - prevEnd).coerceAtLeast(0L)
+                        if (tail > 0L) {
+                            Spacer(Modifier.weight(tail.toFloat()).fillMaxHeight())
                         }
                     }
                 }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                    Slider(
+                        value = state.playbackPositionMs.toFloat(),
+                        valueRange = 0f..state.videoDurationMs.toFloat(),
+                        onValueChange = { viewModel.onUpdatePlaybackPosition(it.toLong()) },
+                        modifier = Modifier.scale(scaleX = 1f, scaleY = 0.7f),
+                    )
+                    // 메인 화면 — 음성분리 directive 막대 (회색만). 탭 → 편집 sheet.
+                    // 빈 구간엔 시각/탭 없음 (range 모드 진입은 별도 "음성분리" 버튼 통해).
+                    if (sortedDirectives.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(28.dp)
+                                .padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            var prevEnd = 0L
+                            sortedDirectives.forEach { directive ->
+                                val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
+                                if (gap > 0L) {
+                                    Spacer(Modifier.weight(gap.toFloat()).fillMaxHeight())
+                                }
+                                val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(w.toFloat())
+                                        .fillMaxHeight()
+                                        .clickable { viewModel.onEditExistingSeparation(directive.id) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(Color(0xFF888888).copy(alpha = 0.85f))
+                                    )
+                                }
+                                prevEnd = directive.rangeEndMs
+                            }
+                            val tail = (state.videoDurationMs - prevEnd).coerceAtLeast(0L)
+                            if (tail > 0L) {
+                                Spacer(Modifier.weight(tail.toFloat()).fillMaxHeight())
+                            }
+                        }
+                    }
+                }
+            }
+            if (state.isRangeSelecting) {
                 Text(
                     "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
                     style = MaterialTheme.typography.bodySmall,
@@ -527,8 +648,6 @@ fun TimelineScreen(
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
                     }
                 }
-                // segment 편집 모드 — confirm 단계 없이 슬라이더 + action panel 항상 동시 노출.
-                // 액션(복제/삭제/볼륨/속도) 적용해도 모드 유지. "저장" 버튼만 모드 종료.
                 if (state.isSegmentEditMode) {
                     SegmentEditActionPanel(
                         volume = state.pendingRangeVolume,
@@ -541,48 +660,6 @@ fun TimelineScreen(
                         onDelete = { viewModel.onDeleteRange() },
                         onCancel = { viewModel.onFinishSegmentEdit() },
                     )
-                }
-            } else {
-                // Slider 와 directive bar 를 0-spacing 으로 묶음 — outer Column spacedBy(8dp) 회피.
-                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                    Slider(
-                        value = state.playbackPositionMs.toFloat(),
-                        valueRange = 0f..state.videoDurationMs.toFloat(),
-                        onValueChange = { viewModel.onUpdatePlaybackPosition(it.toLong()) },
-                        modifier = Modifier.scale(scaleX = 1f, scaleY = 0.7f),
-                    )
-                    // 음성분리 타임라인 — 재생바 바로 아래 얇은 남색 가로 막대. directive 시간 범위만 색 채움.
-                    if (state.separationDirectives.isNotEmpty() && state.videoDurationMs > 0) {
-                        val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            var prevEnd = 0L
-                            sortedDirectives.forEach { directive ->
-                                val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
-                                if (gap > 0L) {
-                                    Spacer(Modifier.weight(gap.toFloat()).fillMaxHeight())
-                                }
-                                val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(w.toFloat())
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFF1E3A8A).copy(alpha = 0.55f))  // 남색 + 투명감
-                                        .clickable { viewModel.onEditExistingSeparation(directive.id) }
-                                )
-                                prevEnd = directive.rangeEndMs
-                            }
-                            val tail = (state.videoDurationMs - prevEnd).coerceAtLeast(0L)
-                            if (tail > 0L) {
-                                Spacer(Modifier.weight(tail.toFloat()).fillMaxHeight())
-                            }
-                        }
-                    }
                 }
             }
         }

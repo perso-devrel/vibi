@@ -152,6 +152,8 @@ class RemoteRenderExecutor(
                 }
             }
 
+            // selected=false 필터는 호출자(ExportWithDubbingUseCase) 단계에서 이미 적용 — 여기로
+            // 넘어온 SeparationDirectiveInput 의 selections 는 mix 에 들어갈 stem 만 남아있음.
             val renderSeparationDirectives = separationDirectives.map { d ->
                 RenderSeparationDirective(
                     id = d.id,
