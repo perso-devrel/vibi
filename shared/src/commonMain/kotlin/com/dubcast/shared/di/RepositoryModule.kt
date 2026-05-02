@@ -53,4 +53,6 @@ val repositoryModule = module {
     single<com.dubcast.shared.domain.repository.SeparationDirectiveRepository> {
         com.dubcast.shared.data.repository.SeparationDirectiveRepositoryImpl(dao = get())
     }
+    single { com.dubcast.shared.data.repository.ChatRepository(bffApi = get()) }
+    single { com.dubcast.shared.domain.chat.ChatToolDispatcher() }
 }

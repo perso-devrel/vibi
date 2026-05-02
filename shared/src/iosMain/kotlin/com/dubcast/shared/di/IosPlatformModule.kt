@@ -7,6 +7,8 @@ import com.dubcast.shared.data.repository.IosGallerySaver
 import com.dubcast.shared.data.repository.IosImageMetadataExtractor
 import com.dubcast.shared.data.repository.IosMediaJobUploader
 import com.dubcast.shared.data.repository.IosVideoMetadataExtractor
+import com.dubcast.shared.platform.IosVideoThumbnailExtractor
+import com.dubcast.shared.platform.VideoThumbnailExtractor
 import com.dubcast.shared.domain.repository.AutoDubRepository
 import com.dubcast.shared.domain.repository.AutoSubtitleRepository
 import com.dubcast.shared.domain.usecase.input.AudioMetadataExtractor
@@ -24,6 +26,7 @@ val iosPlatformModule = module {
     single<ExportPlatformAdapter> { IosExportPlatformAdapter(exportWithDubbing = get()) }
     single<GallerySaver> { IosGallerySaver() }
     single<VideoMetadataExtractor> { IosVideoMetadataExtractor() }
+    single<VideoThumbnailExtractor> { IosVideoThumbnailExtractor() }
     single<AudioMetadataExtractor> { IosAudioMetadataExtractor() }
     single<ImageMetadataExtractor> { IosImageMetadataExtractor() }
     single { IosMediaJobUploader() }

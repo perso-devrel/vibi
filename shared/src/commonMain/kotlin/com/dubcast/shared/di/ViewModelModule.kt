@@ -1,5 +1,6 @@
 package com.dubcast.shared.di
 
+import com.dubcast.shared.ui.chat.ChatViewModel
 import com.dubcast.shared.ui.input.InputViewModel
 import com.dubcast.shared.ui.timeline.TimelineViewModel
 import org.koin.dsl.module
@@ -12,6 +13,8 @@ val viewModelModule = module {
             createProjectWithInitialVideoSegment = get(),
             languageRepository = get(),
             editProjectRepository = get(),
+            segmentRepository = get(),
+            thumbnailExtractor = get(),
             expireOldDrafts = get(),
         )
     }
@@ -69,4 +72,5 @@ val viewModelModule = module {
             saveAllVariants = get(),
         )
     }
+    factory { ChatViewModel(chatRepository = get()) }
 }

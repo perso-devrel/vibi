@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
 import com.dubcast.cmp.platform.MediaPicker
 import com.dubcast.cmp.ui.cupertino.BodyText
 import com.dubcast.cmp.ui.cupertino.PageScaffold
@@ -108,33 +112,6 @@ fun InputScreen(
                 }
             }
 
-            // "이어서 작업" — drafts 가 비어있으면 섹션 자체 숨김.
-            if (state.drafts.isNotEmpty()) {
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    text = "이어서 작업",
-                    style = TextStyle(
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
-                Spacer(Modifier.height(10.dp))
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(items = state.drafts, key = { it.projectId }) { draft ->
-                        DraftCard(
-                            draft = draft,
-                            onClick = { viewModel.onContinueDraft(draft.projectId) },
-                            onDelete = { viewModel.onDeleteDraft(draft.projectId) },
-                        )
-                    }
-                }
-            }
-
             Section(header = "비디오") {
                 SectionRow {
                     MediaPicker(
@@ -180,6 +157,34 @@ fun InputScreen(
                 }
             }
 
+            // "이어서 작업" — drafts 가 비어있으면 섹션 자체 숨김.
+            // (갤러리에서 영상 선택 섹션 아래에 위치 — 신규 영상 선택 흐름이 우선.)
+            if (state.drafts.isNotEmpty()) {
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = "이어서 작업",
+                    style = TextStyle(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(items = state.drafts, key = { it.projectId }) { draft ->
+                        DraftCard(
+                            draft = draft,
+                            onClick = { viewModel.onContinueDraft(draft.projectId) },
+                            onDelete = { viewModel.onDeleteDraft(draft.projectId) },
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -204,8 +209,7 @@ private fun DraftCard(
 
     Box(
         modifier = Modifier
-            .width(200.dp)
-            .height(110.dp)
+            .width(220.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
                 Brush.linearGradient(
@@ -217,46 +221,66 @@ private fun DraftCard(
             )
             .clickable(onClick = onClick)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-        ) {
-            Text(
-                text = titleText,
-                maxLines = 1,
-                style = TextStyle(
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                ),
-                modifier = Modifier.padding(end = 24.dp)
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = relative,
-                style = TextStyle(
-                    fontSize = 12.sp,
-                    color = Color(0xCCFFFFFF),
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // 비디오 한 장면 썸네일 — InputViewModel 이 사전 추출한 JPEG path 를 Coil AsyncImage 로 표시.
+            // ExoPlayer/AVPlayer 인스턴스 없이 정적 이미지 한 장만 메모리 → drafts N개에서도 비용 일정.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .background(Color.Black)
+            ) {
+                val thumb = draft.thumbnailPath
+                if (!thumb.isNullOrBlank()) {
+                    AsyncImage(
+                        model = thumb,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+            ) {
+                Text(
+                    text = titleText,
+                    maxLines = 1,
+                    style = TextStyle(
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    ),
+                    modifier = Modifier.padding(end = 24.dp)
                 )
-            )
-            draft.jobsRunningSummary?.let { summary ->
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF30D158))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = relative,
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        color = Color(0xCCFFFFFF),
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = summary,
-                        style = TextStyle(
-                            fontSize = 11.sp,
-                            color = Color(0xCCFFFFFF),
+                )
+                draft.jobsRunningSummary?.let { summary ->
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF30D158))
                         )
-                    )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = summary,
+                            style = TextStyle(
+                                fontSize = 11.sp,
+                                color = Color(0xCCFFFFFF),
+                            )
+                        )
+                    }
                 }
             }
         }

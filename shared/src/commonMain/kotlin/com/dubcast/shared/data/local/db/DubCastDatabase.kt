@@ -32,7 +32,7 @@ import com.dubcast.shared.data.local.db.entity.TextOverlayEntity
         BgmClipEntity::class,
         SeparationDirectiveEntity::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = true
 )
 @ConstructedBy(DubCastDatabaseConstructor::class)

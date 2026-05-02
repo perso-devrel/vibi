@@ -1,5 +1,7 @@
 package com.dubcast.shared.data.remote.api
 
+import com.dubcast.shared.data.remote.dto.ChatRequestDto
+import com.dubcast.shared.data.remote.dto.ChatResponseDto
 import com.dubcast.shared.data.remote.dto.AutoDubJobResponse
 import com.dubcast.shared.data.remote.dto.AutoDubSpec
 import com.dubcast.shared.data.remote.dto.AutoDubStatusResponse
@@ -31,9 +33,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.readRawBytes
+import io.ktor.client.request.headers
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 
 data class BinaryPart(
@@ -63,6 +67,13 @@ class BffApi(
 
     suspend fun synthesize(request: TtsRequest): TtsResponse =
         client.post("api/v2/tts") {
+            setBody(request)
+        }.body()
+
+    /** 자연어 편집 어시스턴트 — Gemini function calling 라우팅. */
+    suspend fun chat(request: ChatRequestDto): ChatResponseDto =
+        client.post("api/v2/chat") {
+            contentType(ContentType.Application.Json)
             setBody(request)
         }.body()
 

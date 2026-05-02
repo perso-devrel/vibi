@@ -40,6 +40,9 @@ class SegmentRepositoryImpl constructor(
     override suspend fun getMaxOrder(projectId: String): Int =
         dao.getMaxOrder(projectId) ?: -1
 
+    override suspend fun getFirstSourceUri(projectId: String): String? =
+        dao.getFirstSourceUri(projectId)
+
     private fun SegmentEntity.toDomain() = Segment(
         id = id,
         projectId = projectId,

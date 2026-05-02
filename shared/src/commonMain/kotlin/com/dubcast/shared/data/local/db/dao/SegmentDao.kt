@@ -23,6 +23,10 @@ interface SegmentDao {
     @Query("SELECT * FROM segments WHERE projectId = :projectId ORDER BY `order` ASC")
     suspend fun getByProjectId(projectId: String): List<SegmentEntity>
 
+    /** Lightweight thumbnail/draft 용 — sourceUri 한 컬럼만, 첫 row 만 반환. */
+    @Query("SELECT sourceUri FROM segments WHERE projectId = :projectId ORDER BY `order` ASC LIMIT 1")
+    suspend fun getFirstSourceUri(projectId: String): String?
+
     @Query("SELECT * FROM segments WHERE id = :id")
     suspend fun getById(id: String): SegmentEntity?
 

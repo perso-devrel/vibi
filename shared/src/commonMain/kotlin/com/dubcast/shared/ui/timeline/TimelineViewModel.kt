@@ -67,8 +67,6 @@ import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.dubcast.shared.domain.usecase.timeline.UpdateSegmentVolumeUseCase
 import com.dubcast.shared.domain.usecase.tts.GetVoiceListUseCase
 import com.dubcast.shared.domain.usecase.tts.SynthesizeDubClipUseCase
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -76,7 +74,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class PreviewDubClip(
@@ -321,7 +318,18 @@ class TimelineViewModel constructor(
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
 
     private val undoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
+    /**
+     * 영상편집 모드 전용 undo 스택 — 메인 timeline 스택과 분리. 모드 진입 시 비우고 baseline 푸시,
+     * 모드 종료 (commit/cancel) 시 다시 비운다. 사용자는 영상편집 안에서 한 변경만 영상편집 모드의
+     * undo/redo 로 다룰 수 있음.
+     */
+    private val editModeUndoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
+    /** 영상편집 진입 시 스냅샷 — cancel 시 즉시 복원용. */
+    private var preEditBaseline: TimelineSnapshot? = null
     private var hasSeededUndoSnapshot = false
+
+    private fun activeUndoManager(): UndoRedoManager<TimelineSnapshot> =
+        if (_uiState.value.isSegmentEditMode) editModeUndoRedoManager else undoRedoManager
 
     // Auto-trigger gates: prevent re-firing background pipelines on every
     // project emission. ARMED → eligible to fire; FIRED → already running
@@ -653,68 +661,56 @@ class TimelineViewModel constructor(
         }
     }
 
-    private suspend fun pushUndoState() {
-        // Read every repository concurrently — sequential .first() calls
-        // serialised on dispatcher hops added measurable latency on every
-        // mutating handler (which is hot path during pinch/drag).
-        val (segs, dubs, subs, images, texts, bgms, project) = coroutineScope {
-            val segsAsync = async { segmentRepository.getByProjectId(projectId) }
-            val dubsAsync = async { dubClipRepository.observeClips(projectId).first() }
-            val subsAsync = async { subtitleClipRepository.observeClips(projectId).first() }
-            val imgsAsync = async { imageClipRepository.observeClips(projectId).first() }
-            val textsAsync = async { textOverlayRepository.observeOverlays(projectId).first() }
-            val bgmsAsync = async { bgmClipRepository.observeClips(projectId).first() }
-            val projectAsync = async { editProjectRepository.getProject(projectId) }
-            UndoSnapshotInputs(
-                segs = segsAsync.await(),
-                dubs = dubsAsync.await(),
-                subs = subsAsync.await(),
-                images = imgsAsync.await(),
-                texts = textsAsync.await(),
-                bgms = bgmsAsync.await(),
-                project = projectAsync.await()
-            )
-        }
-        undoRedoManager.pushState(
-            TimelineSnapshot(
-                segments = segs,
-                dubClips = dubs,
-                subtitleClips = subs,
-                imageClips = images,
-                textOverlays = texts,
-                bgmClips = bgms,
-                frameWidth = project?.frameWidth ?: 0,
-                frameHeight = project?.frameHeight ?: 0,
-                backgroundColorHex = project?.backgroundColorHex
-                    ?: EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
-                videoScale = project?.videoScale ?: EditProject.DEFAULT_VIDEO_SCALE,
-                videoOffsetXPct = project?.videoOffsetXPct ?: 0f,
-                videoOffsetYPct = project?.videoOffsetYPct ?: 0f
-            )
+    /**
+     * In-memory snapshot — `_uiState.value` 가 이미 모든 repository 의 최신 상태를 반영하고 있으므로
+     * 다시 7-async fan-out 으로 repository 를 .first() 하지 않는다. frame/background 등 EditProject
+     * 필드도 _uiState 에 미러링돼 있어 동기 접근 가능. (observeProject 가 이미 이 필드들을 hydrate)
+     *
+     * 효과: pushUndoState 가 hot-path (드래그·슬라이더·복제 등) 에서 호출돼도 zero round-trip.
+     * 이전 fan-out 은 매 mutation 마다 6-7개 .first() 콜드 콜렉트 → dispatcher hop 비용이 측정됐다.
+     */
+    private fun buildSnapshot(): TimelineSnapshot {
+        val s = _uiState.value
+        return TimelineSnapshot(
+            segments = s.segments,
+            dubClips = s.dubClips,
+            subtitleClips = s.subtitleClips,
+            imageClips = s.imageClips,
+            textOverlays = s.textOverlays,
+            bgmClips = s.bgmClips,
+            frameWidth = s.frameWidth,
+            frameHeight = s.frameHeight,
+            backgroundColorHex = s.backgroundColorHex,
+            videoScale = s.videoScale,
+            videoOffsetXPct = s.videoOffsetXPct,
+            videoOffsetYPct = s.videoOffsetYPct,
         )
+    }
+
+    private fun pushUndoState() {
+        activeUndoManager().pushState(buildSnapshot())
         updateUndoRedoState()
     }
 
-    /** Destructuring shim for the parallel repository fan-out in [pushUndoState]. */
-    private data class UndoSnapshotInputs(
-        val segs: List<Segment>,
-        val dubs: List<DubClip>,
-        val subs: List<SubtitleClip>,
-        val images: List<ImageClip>,
-        val texts: List<TextOverlay>,
-        val bgms: List<BgmClip>,
-        val project: EditProject?
-    )
-
     private fun updateUndoRedoState() {
+        val mgr = activeUndoManager()
         _uiState.value = _uiState.value.copy(
-            canUndo = undoRedoManager.canUndo,
-            canRedo = undoRedoManager.canRedo
+            canUndo = mgr.canUndo,
+            canRedo = mgr.canRedo
         )
     }
 
     fun onUpdatePlaybackPosition(positionMs: Long) {
-        _uiState.value = _uiState.value.copy(playbackPositionMs = positionMs)
+        val s = _uiState.value
+        // 음원분리 range 모드: 재생 marker 는 선택된 pendingRange 안으로 clamp.
+        // 영상편집 모드: 자유 scrub (clamp 안 함). 평상시: 영상 길이 안으로만.
+        val clamped = when {
+            s.isRangeSelecting && !s.isSegmentEditMode ->
+                positionMs.coerceIn(s.pendingRangeStartMs, s.pendingRangeEndMs)
+            else ->
+                positionMs.coerceIn(0L, s.videoDurationMs.coerceAtLeast(0L))
+        }
+        _uiState.value = s.copy(playbackPositionMs = clamped)
     }
 
     fun onTogglePlayback() {
@@ -1225,7 +1221,7 @@ class TimelineViewModel constructor(
 
     fun onUndo() {
         viewModelScope.launch {
-            val snapshot = undoRedoManager.undo() ?: return@launch
+            val snapshot = activeUndoManager().undo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
         }
@@ -1233,7 +1229,7 @@ class TimelineViewModel constructor(
 
     fun onRedo() {
         viewModelScope.launch {
-            val snapshot = undoRedoManager.redo() ?: return@launch
+            val snapshot = activeUndoManager().redo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
         }
@@ -1559,6 +1555,9 @@ class TimelineViewModel constructor(
      * 영상 위 우상단 연필 버튼에서 호출 — segment 편집(복제/삭제/볼륨/속도) 진입.
      * [onEnterRangeMode] 와 동일한 range slider UI 를 띄우지만 confirm 액션이 음성분리가 아닌
      * segment edit action sheet (복제/삭제/볼륨/속도) 로 갈라진다.
+     *
+     * 진입 즉시 현 timeline 스냅샷을 [preEditBaseline] 에 저장 — 취소(X) 시 즉시 복원.
+     * 영상편집 모드의 undo 스택은 새로 시드되어 메인 timeline 스택과 분리된다.
      */
     fun onEnterSegmentEditMode(segmentId: String) {
         val state = _uiState.value
@@ -1568,6 +1567,7 @@ class TimelineViewModel constructor(
         val segEnd = segStart + seg.effectiveDurationMs
         // segment 편집은 directive 영역과 무관 — 전체 segment 를 default 로.
         // 진입 시 원본 영상으로 강제 reset — 사용자는 편집 결과를 원본 영상에서 확인.
+        // 진입 시 음성분리/자막더빙 sheet 들도 같이 닫음 — 영상편집 중엔 노출 금지.
         _uiState.value = state.copy(
             isRangeSelecting = true,
             isSegmentEditMode = true,
@@ -1580,6 +1580,70 @@ class TimelineViewModel constructor(
             pendingRangeSpeed = seg.speedScale,
             isPlaying = false,
             previewLangCode = null,
+            showAudioSeparationSheet = false,
+            showSubtitleSheet = false,
+            showDubbingSheet = false,
+            showSubtitleEditSheet = false,
+            showRegenerateSubtitleSheet = false,
+            showScriptReviewSheet = false,
+            localizationOpen = false,
+            showDetailEdit = false,
+            showAppendSheet = false,
+        )
+        // buildSnapshot 는 non-suspend (in-memory) — 즉시 baseline 시드.
+        preEditBaseline = buildSnapshot()
+        editModeUndoRedoManager.clear()
+        editModeUndoRedoManager.pushState(preEditBaseline!!)
+        updateUndoRedoState()
+    }
+
+    /**
+     * 영상편집 모드에서 타임라인 바의 segment 블록을 탭 — 해당 segment 전체를 pendingRange 로 잡고
+     * 선택 상태로 만든다. 볼륨/속도 슬라이더 초기값도 그 segment 의 현재 값으로.
+     * 재생 헤드를 segment 시작점으로 이동 — 사용자가 어느 segment 를 보고 있는지 즉시 확인.
+     */
+    fun onSelectSegmentInEdit(segmentId: String) {
+        val state = _uiState.value
+        if (!state.isSegmentEditMode) return
+        // 같은 segment 재탭 → 선택 해제 (영상편집 모드 유지, range 만 비움).
+        if (state.selectedSegmentId == segmentId &&
+            state.pendingRangeEndMs > state.pendingRangeStartMs
+        ) {
+            _uiState.value = state.copy(
+                selectedSegmentId = null,
+                rangeTargetSegmentId = null,
+                pendingRangeStartMs = 0L,
+                pendingRangeEndMs = 0L,
+            )
+            return
+        }
+        val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
+        if (seg.type != SegmentType.VIDEO) return
+        val segStart = segmentStartOffsetMs(state.segments, seg.id)
+        val segEnd = segStart + seg.effectiveDurationMs
+        _uiState.value = state.copy(
+            rangeTargetSegmentId = seg.id,
+            selectedSegmentId = seg.id,
+            pendingRangeStartMs = segStart,
+            pendingRangeEndMs = segEnd,
+            pendingRangeVolume = seg.volumeScale,
+            pendingRangeSpeed = seg.speedScale,
+            playbackPositionMs = segStart,
+        )
+    }
+
+    /**
+     * range 모드 (음원분리/영상편집) 안에서 "구간 선택만" 비움 — 모드 자체는 유지.
+     * 사용자가 다른 segment/free interval 을 탭하면 다시 selection 생성.
+     */
+    fun onClearRangeSelection() {
+        val state = _uiState.value
+        if (!state.isRangeSelecting) return
+        _uiState.value = state.copy(
+            selectedSegmentId = null,
+            rangeTargetSegmentId = null,
+            pendingRangeStartMs = 0L,
+            pendingRangeEndMs = 0L,
         )
     }
 
@@ -1589,6 +1653,116 @@ class TimelineViewModel constructor(
             isSegmentEditMode = false,
             rangeTargetSegmentId = null,
             showRangeActionSheet = false,
+        )
+        editModeUndoRedoManager.clear()
+        preEditBaseline = null
+        updateUndoRedoState()
+    }
+
+    /**
+     * 영상편집 모드의 X(취소) — 편집 진입 직전 스냅샷으로 즉시 복원하고 모드 종료.
+     * 사용자가 영상편집 중 적용한 복제/삭제/볼륨/속도 변경을 모두 무효화.
+     */
+    fun onCancelSegmentEditChanges() {
+        val baseline = preEditBaseline
+        viewModelScope.launch {
+            if (baseline != null) {
+                restoreSnapshot(baseline)
+            }
+            preEditBaseline = null
+            editModeUndoRedoManager.clear()
+            _uiState.value = _uiState.value.copy(
+                isRangeSelecting = false,
+                isSegmentEditMode = false,
+                rangeTargetSegmentId = null,
+                showRangeActionSheet = false,
+                selectedSegmentId = null,
+            )
+            updateUndoRedoState()
+        }
+    }
+
+    /**
+     * 영상편집 모드의 ✓(체크) — 편집 확정. 영상 segment 자체는 그대로 두고, 음원분리·자막·더빙
+     * 결과와 메인 timeline undo 스택을 모두 초기화 (사용자에게 안내문구로 명시).
+     * BFF 호출 없음 — 단순 로컬 상태 리셋만.
+     */
+    fun onCommitSegmentEdit() {
+        viewModelScope.launch {
+            resetTimelineDerivedResults()
+            editModeUndoRedoManager.clear()
+            preEditBaseline = null
+            undoRedoManager.clear()
+            _uiState.value = _uiState.value.copy(
+                isRangeSelecting = false,
+                isSegmentEditMode = false,
+                rangeTargetSegmentId = null,
+                showRangeActionSheet = false,
+                selectedSegmentId = null,
+                previewLangCode = null,
+            )
+            // 메인 스택 baseline 재시드.
+            pushUndoState()
+        }
+    }
+
+    /**
+     * onCommitSegmentEdit 시 호출되는 reset — 영상편집 결과로 음원분리/자막/더빙이 timeline 과
+     * 어긋나므로 모두 초기화. 사용자는 다시 음원분리/자막/더빙 생성 단계를 거쳐야 한다.
+     */
+    private suspend fun resetTimelineDerivedResults() {
+        // 1) 음원분리 directive 모두 삭제 + 영상 전체 음소거 해제
+        _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
+        _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
+            .forEach { updateSegmentVolume(it.id, 1f) }
+        // 2) 자막 / 더빙 클립 모두 삭제
+        subtitleClipRepository.deleteAllClips(projectId)
+        dubClipRepository.deleteAllClips(projectId)
+        // 3) 진행 중 잡 폴링 취소
+        separationJob?.cancel()
+        separationJob = null
+        // 4) EditProject 의 자동 잡/더빙 결과 필드 초기화
+        editProjectRepository.getProject(projectId)?.let { p ->
+            editProjectRepository.updateProject(
+                p.copy(
+                    autoSubtitleStatus = AutoJobStatus.IDLE,
+                    autoDubStatus = AutoJobStatus.IDLE,
+                    autoSubtitleError = null,
+                    autoDubError = null,
+                    autoSubtitleJobId = null,
+                    autoDubJobId = null,
+                    autoDubStatusByLang = emptyMap(),
+                    autoDubJobIdByLang = emptyMap(),
+                    dubbedAudioPaths = emptyMap(),
+                    dubbedVideoPaths = emptyMap(),
+                    dubbedAudioPath = null,
+                    separationJobId = null,
+                    separationSegmentId = null,
+                    separationStatus = AutoJobStatus.IDLE,
+                    separationError = null,
+                    pendingReviewTargetLangsCsv = null,
+                )
+            )
+        }
+        // 5) auto-trigger 게이트 재무장 (다음 자막/더빙 생성 시 정상 트리거)
+        subtitleGate = TriggerGate.ARMED
+        dubGate = TriggerGate.ARMED
+        separationGate = TriggerGate.ARMED
+        reviewSheetGate = TriggerGate.ARMED
+        // 6) UI 상태 — sheet 닫고 audioSeparation hydrate 데이터도 클리어
+        _uiState.value = _uiState.value.copy(
+            audioSeparation = null,
+            showAudioSeparationSheet = false,
+            sttPreflightStatus = AutoJobStatus.IDLE,
+            sttPreflightError = null,
+            regenerateSubtitleStatus = AutoJobStatus.IDLE,
+            regenerateSubtitleError = null,
+            pendingReviewCues = null,
+            pendingReviewTargetLangs = emptyList(),
+            showScriptReviewSheet = false,
+            showSubtitleEditSheet = false,
+            showRegenerateSubtitleSheet = false,
+            showDetailEdit = false,
         )
     }
 
@@ -1603,10 +1777,13 @@ class TimelineViewModel constructor(
         val s = startMs.coerceIn(0L, total)
         val e = endMs.coerceIn(0L, total)
         if (e - s < MIN_RANGE_MS) return
+        // 새 range 안으로 재생 marker clamp — 음원분리 모드에서 marker 는 항상 선택 구간 안.
+        val clampedPlayback = state.playbackPositionMs.coerceIn(s, e)
         if (state.isRangeSelecting) {
             _uiState.value = state.copy(
                 pendingRangeStartMs = s,
                 pendingRangeEndMs = e,
+                playbackPositionMs = clampedPlayback,
             )
         } else {
             // range 모드 진입 — 첫 video segment 를 타깃으로. 슬라이더 valueRange 는 이후 영상 전체.
@@ -1622,38 +1799,66 @@ class TimelineViewModel constructor(
                 pendingRangeVolume = seg.volumeScale,
                 pendingRangeSpeed = seg.speedScale,
                 isPlaying = false,
+                playbackPositionMs = clampedPlayback,
             )
         }
     }
 
-    fun onSetPendingRangeStart(globalMs: Long) {
+    /**
+     * 영상편집 모드: 현재 selectedSegmentId 의 segment global bounds 안으로 clamp.
+     * 음원분리 모드: directive-free interval 안으로 clamp.
+     */
+    private fun rangeBoundsForCurrentMode(): Pair<Long, Long> {
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(0L)
-        val upper = (state.pendingRangeEndMs - MIN_RANGE_MS).coerceAtLeast(0L)
-        // 현재 pendingRange 가 들어있는 free interval 안으로 clamp — directive 경계를 만나면 거기서
-        // 멈추되 핸들 자체는 부드럽게 따라감 (이전엔 reject 라 핸들이 얼어붙음).
+        if (state.isSegmentEditMode) {
+            val seg = state.segments.firstOrNull { it.id == state.selectedSegmentId }
+            if (seg != null) {
+                val segStart = segmentStartOffsetMs(state.segments, seg.id)
+                return segStart to (segStart + seg.effectiveDurationMs)
+            }
+            return 0L to total
+        }
         val freeFromEnd = freeIntervalContaining(state.pendingRangeEndMs)
-        val freeLower = freeFromEnd?.first ?: 0L
-        val freeUpper = freeFromEnd?.last ?: total
+        return (freeFromEnd?.first ?: 0L) to (freeFromEnd?.last ?: total)
+    }
+
+    fun onSetPendingRangeStart(globalMs: Long) {
+        val state = _uiState.value
+        val upper = (state.pendingRangeEndMs - MIN_RANGE_MS).coerceAtLeast(0L)
+        val (lower, hi) = rangeBoundsForCurrentMode()
         val clamped = globalMs.coerceIn(
-            minimumValue = freeLower,
-            maximumValue = upper.coerceIn(freeLower, freeUpper),
+            minimumValue = lower,
+            maximumValue = upper.coerceIn(lower, hi),
         )
         _uiState.value = state.copy(pendingRangeStartMs = clamped)
     }
 
     fun onSetPendingRangeEnd(globalMs: Long) {
         val state = _uiState.value
-        val total = state.videoDurationMs.coerceAtLeast(0L)
-        val lower = (state.pendingRangeStartMs + MIN_RANGE_MS).coerceAtMost(total)
-        val freeFromStart = freeIntervalContaining(state.pendingRangeStartMs)
-        val freeLower = freeFromStart?.first ?: 0L
-        val freeUpper = freeFromStart?.last ?: total
+        val lower = (state.pendingRangeStartMs + MIN_RANGE_MS).coerceAtMost(state.videoDurationMs)
+        val (freeLower, freeUpper) = rangeBoundsForCurrentMode()
         val clamped = globalMs.coerceIn(
             minimumValue = lower.coerceIn(freeLower, freeUpper),
             maximumValue = freeUpper,
         )
         _uiState.value = state.copy(pendingRangeEndMs = clamped)
+    }
+
+    /**
+     * 구간 fill 영역을 잡고 드래그하여 양쪽 끝을 같은 폭으로 이동. width 보존, 영상편집/음원분리
+     * 양쪽 모두 자기 모드 bounds 안으로 clamp.
+     */
+    fun onTranslateRange(newStartMs: Long) {
+        val state = _uiState.value
+        val width = (state.pendingRangeEndMs - state.pendingRangeStartMs).coerceAtLeast(MIN_RANGE_MS)
+        val (lower, upper) = rangeBoundsForCurrentMode()
+        val maxStart = (upper - width).coerceAtLeast(lower)
+        val clampedStart = newStartMs.coerceIn(lower, maxStart)
+        _uiState.value = state.copy(
+            pendingRangeStartMs = clampedStart,
+            pendingRangeEndMs = clampedStart + width,
+        )
     }
 
     /**
@@ -1672,7 +1877,7 @@ class TimelineViewModel constructor(
         val out = mutableListOf<SegmentRangeSlice>()
         var acc = 0L
         for (seg in _uiState.value.segments) {
-            val segDur = seg.effectiveDurationMs
+            val segDur = seg.effectiveDurationMs   // 타임라인 위 길이 (speed 반영)
             val segGlobalStart = acc
             val segGlobalEnd = acc + segDur
             acc += segDur
@@ -1680,8 +1885,10 @@ class TimelineViewModel constructor(
             val overlapStart = maxOf(segGlobalStart, globalStart)
             val overlapEnd = minOf(segGlobalEnd, globalEnd)
             if (overlapEnd - overlapStart < MIN_RANGE_MS) continue
-            val localStart = seg.trimStartMs + (overlapStart - segGlobalStart)
-            val localEnd = seg.trimStartMs + (overlapEnd - segGlobalStart)
+            // global ms (timeline) → source-media ms 변환 — speedScale 만큼 stretch.
+            val speed = if (seg.speedScale > 0f) seg.speedScale else 1f
+            val localStart = seg.trimStartMs + ((overlapStart - segGlobalStart) * speed).toLong()
+            val localEnd = seg.trimStartMs + ((overlapEnd - segGlobalStart) * speed).toLong()
             out += SegmentRangeSlice(seg.id, seg.order, localStart, localEnd)
         }
         return out
@@ -1714,11 +1921,19 @@ class TimelineViewModel constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val wasSegmentEdit = state.isSegmentEditMode
         // Hide UI immediately for instant feedback; the actual split work
         // continues in the background.
         resetRangeMode()
         viewModelScope.launch {
-            slices.forEach { s -> duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd) }
+            var lastDuplicated: com.dubcast.shared.domain.model.Segment? = null
+            slices.forEach { s ->
+                lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
+            }
+            // 영상편집 모드: 새로 생긴 duplicate 를 selection 으로 — 사용자가 후속 편집 바로 가능.
+            if (wasSegmentEdit) {
+                lastDuplicated?.id?.let { onSelectSegmentInEdit(it) }
+            }
             pushUndoState()
         }
     }
@@ -1729,9 +1944,15 @@ class TimelineViewModel constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
             slices.forEach { s -> removeSegmentRange(s.segmentId, s.localStart, s.localEnd) }
+            // 영상편집 모드: 삭제 후 선택 segment 가 사라졌을 수 있어 첫 video segment 로 reselect.
+            if (wasSegmentEdit) {
+                _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
+                    ?.id?.let { onSelectSegmentInEdit(it) }
+            }
             pushUndoState()
         }
     }
@@ -1742,11 +1963,18 @@ class TimelineViewModel constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
+            var lastMiddleId: String? = null
             slices.forEach { s ->
                 val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
                 updateSegmentVolume(r.middle.id, value)
+                lastMiddleId = r.middle.id
+            }
+            // 영상편집 모드: 분할로 새 segment 가 생겼으면 그걸 select — selection stale 방지.
+            if (wasSegmentEdit) {
+                lastMiddleId?.let { onSelectSegmentInEdit(it) }
             }
             pushUndoState()
         }
@@ -1758,11 +1986,17 @@ class TimelineViewModel constructor(
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
+            var lastMiddleId: String? = null
             slices.forEach { s ->
                 val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
                 updateSegmentSpeed(r.middle.id, value)
+                lastMiddleId = r.middle.id
+            }
+            if (wasSegmentEdit) {
+                lastMiddleId?.let { onSelectSegmentInEdit(it) }
             }
             pushUndoState()
         }
@@ -2230,6 +2464,63 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * BGM 클립을 source 로 자막 자동 생성. 영상 segment 흐름과 동일한 GenerateAutoSubtitlesUseCase
+     * 재사용 — mediaType=AUDIO 만 다름. invalidation 책임은 use case 가 EditProject autoSubtitleStatus
+     * 기록 + 자막 클립 갱신으로 이미 처리.
+     */
+    fun onGenerateAutoSubtitlesForBgmClip(clipId: String, targetLanguageCodes: List<String>) {
+        viewModelScope.launch {
+            val bgm = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return@launch
+            val r = generateAutoSubtitles(
+                projectId = projectId,
+                sourceUri = bgm.sourceUri,
+                mediaType = "AUDIO",
+                sourceLanguageCode = "auto",
+                targetLanguageCodes = targetLanguageCodes,
+                numberOfSpeakers = 1,
+            )
+            if (r.isFailure) {
+                _uiState.value = _uiState.value.copy(
+                    autoSubtitleError = r.exceptionOrNull()?.message ?: "자막 생성 실패",
+                )
+            }
+        }
+    }
+
+    /**
+     * BGM 클립을 source 로 더빙 자동 생성. mediaType=AUDIO. 단일 lang per call (영상 흐름과 동등).
+     */
+    fun onGenerateAutoDubForBgmClip(clipId: String, targetLanguageCode: String) {
+        viewModelScope.launch {
+            val bgm = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return@launch
+            val r = generateAutoDub(
+                projectId = projectId,
+                sourceUri = bgm.sourceUri,
+                mediaType = "AUDIO",
+                sourceLanguageCode = "auto",
+                targetLanguageCode = targetLanguageCode,
+                numberOfSpeakers = 1,
+            )
+            if (r.isFailure) {
+                _uiState.value = _uiState.value.copy(
+                    autoDubError = r.exceptionOrNull()?.message ?: "더빙 생성 실패",
+                )
+            }
+        }
+    }
+
+    fun onUpdateBgmSpeed(clipId: String, newSpeed: Float) {
+        viewModelScope.launch {
+            try {
+                updateBgmClip(clipId, speedScale = newSpeed)
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(bgmError = e.message)
+            }
+        }
+    }
+
     fun onUpdateBgmVolume(clipId: String, newVolume: Float) {
         viewModelScope.launch {
             try {
@@ -2324,6 +2615,12 @@ class TimelineViewModel constructor(
     private var editingDirectiveId: String? = null
 
     /**
+     * 음원분리 target 이 video segment 가 아닌 BgmClip 일 때 그 id 보존. onConfirmStemMix 가 분기:
+     * non-null 이면 BGM 교체 path, null 이면 video segment directive path.
+     */
+    private var bgmSeparationTargetId: String? = null
+
+    /**
      * 임시 — testdata 의 mock stem mp3 들로 음성분리 결과를 즉시 hydrate. 실제 BFF /separate 호출 없이
      * PICK_STEMS 단계로 바로 진입해 stem 선택/볼륨 UI + StemMixer 동작 확인용. release 전 제거.
      */
@@ -2371,6 +2668,42 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * BgmClip 음원분리 — 추가된 음원에 대해 Perso AUDIO 분리 호출. 시트는 동일 [AudioSeparationSheet]
+     * 재사용 — onConfirmStemMix 가 [bgmSeparationTargetId] 보고 BGM 교체 path 로 분기.
+     *
+     * 결과: 사용자가 picked stem 들로 원본 BGM 을 N 개의 stem BGM 클립으로 대체.
+     */
+    fun onStartBgmSeparation(bgmClipId: String) {
+        val state = _uiState.value
+        val bgm = state.bgmClips.firstOrNull { it.id == bgmClipId } ?: return
+        bgmSeparationTargetId = bgm.id
+        editingDirectiveId = null  // video directive flow 와 충돌 방지
+        _uiState.value = state.copy(
+            audioSeparation = AudioSeparationUiState(
+                segmentId = "",
+                step = AudioSeparationStep.PROCESSING,
+                numberOfSpeakers = 2,
+            ),
+            showAudioSeparationSheet = true,
+            isPlaying = false,
+        )
+        separationJob?.cancel()
+        separationJob = viewModelScope.launch {
+            val result = startAudioSeparation(
+                sourceUri = bgm.sourceUri,
+                mediaType = SeparationMediaType.AUDIO,
+                numberOfSpeakers = 2,
+            )
+            val jobId = result.getOrElse { err ->
+                updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message) }
+                return@launch
+            }
+            updateSeparation { it.copy(jobId = jobId) }
+            pollSeparationFlow(jobId)
+        }
+    }
+
     fun onShowAudioSeparationSheet(segmentId: String) {
         val state = _uiState.value
         val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
@@ -2397,6 +2730,17 @@ class TimelineViewModel constructor(
      */
     fun onDeleteCurrentSeparation() {
         viewModelScope.launch {
+            // BGM 분리 진행/대기 중 취소 — sheet 닫고 target 만 클리어 (BGM clip 자체는 보존).
+            if (bgmSeparationTargetId != null) {
+                bgmSeparationTargetId = null
+                separationJob?.cancel()
+                separationJob = null
+                _uiState.value = _uiState.value.copy(
+                    audioSeparation = null,
+                    showAudioSeparationSheet = false,
+                )
+                return@launch
+            }
             val targetId = editingDirectiveId
                 ?: _uiState.value.separationDirectives.firstOrNull()?.id
             if (targetId != null) {
@@ -2753,6 +3097,12 @@ class TimelineViewModel constructor(
     }
 
     fun onConfirmStemMix() {
+        // BGM 음원분리 path 분기 — onStartBgmSeparation 으로 진입한 경우.
+        val bgmTargetId = bgmSeparationTargetId
+        if (bgmTargetId != null) {
+            onConfirmBgmStemMix(bgmTargetId)
+            return
+        }
         val state = _uiState.value
         val sep = state.audioSeparation ?: return
         val segment = state.segments.firstOrNull { it.id == sep.segmentId }
@@ -2838,6 +3188,44 @@ class TimelineViewModel constructor(
                 updateSeparation {
                     it.copy(step = AudioSeparationStep.FAILED, errorMessage = e.message)
                 }
+            }
+        }
+    }
+
+    /**
+     * BGM 음원분리 confirm — 원본 BgmClip 삭제 후 선택된 stem 마다 새 BgmClip 추가.
+     * stem audio 는 BFF signed URL — 모바일에서 그대로 sourceUri 로 사용 (Ktor Client 가 streaming).
+     */
+    private fun onConfirmBgmStemMix(bgmTargetId: String) {
+        val state = _uiState.value
+        val sep = state.audioSeparation ?: return
+        val original = state.bgmClips.firstOrNull { it.id == bgmTargetId } ?: return
+        val urlByStemId = sep.stems.associate { it.stemId to it.url }
+        val selectedStems = sep.selections.values.filter { it.selected }
+        if (selectedStems.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                deleteBgmClip(original.id)
+                selectedStems.forEach { sel ->
+                    val url = urlByStemId[sel.stemId]?.takeIf { it.isNotBlank() } ?: return@forEach
+                    val info = runCatching { audioMetadataExtractor.extract(url) }.getOrNull()
+                    val durMs = info?.durationMs?.takeIf { it > 0L } ?: original.sourceDurationMs
+                    addBgmClip(
+                        projectId = projectId,
+                        sourceUri = url,
+                        sourceDurationMs = durMs,
+                        startMs = original.startMs,
+                        volumeScale = sel.volume,
+                    )
+                }
+                bgmSeparationTargetId = null
+                _uiState.value = _uiState.value.copy(
+                    audioSeparation = null,
+                    showAudioSeparationSheet = false,
+                )
+                pushUndoState()
+            } catch (e: Exception) {
+                updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = e.message) }
             }
         }
     }

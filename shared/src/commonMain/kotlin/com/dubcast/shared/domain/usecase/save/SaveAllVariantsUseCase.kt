@@ -143,10 +143,26 @@ class SaveAllVariantsUseCase(
         }
 
         // 2단계 — 갤러리 저장 (직렬). 실패 1건이라도 실패로 간주.
+        // 파일명 prefix:
+        //   - original 또는 무자막/무더빙 → "VID_"
+        //   - 더빙된 언어 (dubbedAudioPaths 또는 dubbedVideoPaths 보유) → "DUB_<LANG>"
+        //   - 자막만 있는 언어 → "SUB_<LANG>"
         val saved = mutableListOf<SavedVariant>()
         targetLanguages.forEachIndexed { i, languageCode ->
             val path = renderedPaths[i]
-            val displayName = "DubCast_${projectId.hashCode().toUInt()}_${languageCode}_$i"
+            val isOriginal = languageCode == "original"
+            val hasDub = !isOriginal && (
+                project.dubbedAudioPaths.containsKey(languageCode) ||
+                    project.dubbedVideoPaths.containsKey(languageCode)
+                )
+            val hasSubtitle = !isOriginal && languageCode in langsWithSubtitle
+            val langTag = languageCode.uppercase()
+            val displayName = when {
+                isOriginal -> "VID_${projectId.hashCode().toUInt()}_$i"
+                hasDub -> "DUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
+                hasSubtitle -> "SUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
+                else -> "VID_${langTag}_${projectId.hashCode().toUInt()}_$i"
+            }
             gallerySaver.saveVideo(path, displayName).getOrElse { e ->
                 error("Gallery save failed for $languageCode: ${e.message}")
             }

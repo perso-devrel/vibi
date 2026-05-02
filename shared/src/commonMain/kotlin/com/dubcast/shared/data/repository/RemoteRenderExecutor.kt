@@ -136,7 +136,8 @@ class RemoteRenderExecutor(
                 renderBgmClips += RenderBgmClip(
                     audioFileKey = key,
                     startMs = clip.startMs,
-                    volume = clip.volume
+                    volume = clip.volume,
+                    speed = clip.speed,
                 )
             }
 

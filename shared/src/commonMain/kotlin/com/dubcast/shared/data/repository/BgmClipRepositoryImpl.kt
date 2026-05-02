@@ -40,7 +40,8 @@ class BgmClipRepositoryImpl constructor(
         sourceUri = sourceUri,
         sourceDurationMs = sourceDurationMs,
         startMs = startMs,
-        volumeScale = volumeScale
+        volumeScale = volumeScale,
+        speedScale = speedScale,
     )
 
     private fun BgmClip.toEntity() = BgmClipEntity(
@@ -49,6 +50,7 @@ class BgmClipRepositoryImpl constructor(
         sourceUri = sourceUri,
         sourceDurationMs = sourceDurationMs,
         startMs = startMs,
-        volumeScale = volumeScale
+        volumeScale = volumeScale,
+        speedScale = speedScale,
     )
 }

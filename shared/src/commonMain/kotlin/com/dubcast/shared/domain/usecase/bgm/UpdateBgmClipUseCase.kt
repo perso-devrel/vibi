@@ -9,7 +9,8 @@ class UpdateBgmClipUseCase constructor(
     suspend operator fun invoke(
         clipId: String,
         startMs: Long? = null,
-        volumeScale: Float? = null
+        volumeScale: Float? = null,
+        speedScale: Float? = null,
     ): BgmClip {
         val current = bgmClipRepository.getClip(clipId)
             ?: throw IllegalArgumentException("BGM clip not found: $clipId")
@@ -17,7 +18,9 @@ class UpdateBgmClipUseCase constructor(
         val updated = current.copy(
             startMs = startMs ?: current.startMs,
             volumeScale = volumeScale?.coerceIn(BgmClip.MIN_VOLUME, BgmClip.MAX_VOLUME)
-                ?: current.volumeScale
+                ?: current.volumeScale,
+            speedScale = speedScale?.coerceIn(BgmClip.MIN_SPEED, BgmClip.MAX_SPEED)
+                ?: current.speedScale,
         )
         bgmClipRepository.updateClip(updated)
         return updated

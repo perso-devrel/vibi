@@ -25,6 +25,12 @@ data class DubCastColors(
     val subtitleOverlayBg: Color,
     val mutedText: Color,
     val accent: Color,
+    /** 통합 타임라인 바 — 가운데 얇은 배경 strip (segment/directive 가 그 위에 그려짐). */
+    val timelineBarTrack: Color,
+    /** 통합 타임라인 바 — 기본 segment / directive 블록 색. 중성 회색 톤. */
+    val timelineBarSegment: Color,
+    /** 통합 타임라인 바 — 편집 적용된 segment 색. 기본보다 한 단계 밝은 회색. */
+    val timelineBarSegmentEdited: Color,
 )
 
 val DarkDubCastColors = DubCastColors(
@@ -37,6 +43,9 @@ val DarkDubCastColors = DubCastColors(
     subtitleOverlayBg = Color(0xCC000000),
     mutedText = Color(0x99EBEBF5),
     accent = Color(0xFF0A84FF),
+    timelineBarTrack = Color(0xFF1F1F22),
+    timelineBarSegment = Color(0xFF3A3A3C),
+    timelineBarSegmentEdited = Color(0xFF6B6B6E),
 )
 
 val LightDubCastColors = DubCastColors(
@@ -49,6 +58,9 @@ val LightDubCastColors = DubCastColors(
     subtitleOverlayBg = Color(0xCCFFFFFF),
     mutedText = Color(0x993C3C43),
     accent = Color(0xFF007AFF),
+    timelineBarTrack = Color(0xFFE5E5EA),
+    timelineBarSegment = Color(0xFFC7C7CC),
+    timelineBarSegmentEdited = Color(0xFF8E8E93),
 )
 
 val LocalDubCastColors = staticCompositionLocalOf { DarkDubCastColors }

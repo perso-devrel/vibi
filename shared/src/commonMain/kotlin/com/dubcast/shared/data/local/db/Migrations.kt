@@ -402,6 +402,16 @@ val MIGRATION_28_29 = object : Migration(28, 29) {
     }
 }
 
+/**
+ * v30 — BgmClip 에 speedScale (재생 속도 0.25..4) 추가. 기존 row 는 1.0 (정상 속도) 로 채움.
+ * 사용자가 추가한 음원 클립도 segment 와 동일한 볼륨/속도 조절 가능하도록.
+ */
+val MIGRATION_29_30 = object : Migration(29, 30) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE bgm_clips ADD COLUMN speedScale REAL NOT NULL DEFAULT 1.0")
+    }
+}
+
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
@@ -410,5 +420,5 @@ val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
     MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
     MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
-    MIGRATION_28_29
+    MIGRATION_28_29, MIGRATION_29_30,
 )

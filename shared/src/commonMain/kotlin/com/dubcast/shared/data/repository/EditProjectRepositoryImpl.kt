@@ -17,6 +17,7 @@ import com.dubcast.shared.domain.model.AutoJobStatus
 import com.dubcast.shared.domain.model.EditProject
 import com.dubcast.shared.domain.model.Segment
 import com.dubcast.shared.domain.repository.EditProjectRepository
+import com.dubcast.shared.platform.currentTimeMillis
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -56,7 +57,9 @@ class EditProjectRepositoryImpl constructor(
     }
 
     override suspend fun updateProject(project: EditProject) {
-        dao.update(project.toEntity())
+        // 모든 update 에서 updatedAt 강제 bump — InputScreen "이어서 작업" 카드 정렬이
+        // 실제 마지막 편집 시각을 따라가도록 (호출자가 잊어버려도 안전).
+        dao.update(project.copy(updatedAt = currentTimeMillis()).toEntity())
     }
 
     override suspend fun deleteProject(projectId: String) {

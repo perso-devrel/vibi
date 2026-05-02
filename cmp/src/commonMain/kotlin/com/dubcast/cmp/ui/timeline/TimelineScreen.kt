@@ -3,6 +3,7 @@ package com.dubcast.cmp.ui.timeline
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.horizontalScroll
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
@@ -47,11 +49,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material3.DropdownMenu
 import com.dubcast.cmp.theme.LocalDubCastColors
 import com.dubcast.cmp.platform.StemMixerSource
+import com.dubcast.cmp.platform.rememberAudioPicker
+import com.dubcast.cmp.platform.rememberAudioRecorder
 import com.dubcast.cmp.platform.rememberStemMixer
+import com.dubcast.cmp.ui.chat.ChatPanel
 import com.dubcast.shared.domain.model.AutoJobStatus
 import com.dubcast.shared.ui.timeline.AudioSeparationStep
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,7 +67,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -95,6 +103,9 @@ fun TimelineScreen(
 ) {
     val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
     val state by viewModel.uiState.collectAsState()
+
+    // 채팅 패널 토글 — FAB (헤더 우측) 로 열고 ModalBottomSheet 가 자체적으로 dismiss 처리.
+    var chatSheetVisible by remember { mutableStateOf(false) }
 
     // 저장 완료 → InputScreen 복귀. ViewModel 의 _navigateBackHome SharedFlow 가 1회성 신호.
     LaunchedEffect(viewModel) {
@@ -170,10 +181,10 @@ fun TimelineScreen(
     }
 
     val tokens = LocalDubCastColors.current
+    Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(tokens.backgroundPrimary)
             .verticalScroll(rememberScrollState())
             .statusBarsPadding()
             .navigationBarsPadding()
@@ -209,9 +220,9 @@ fun TimelineScreen(
             val saving = state.saveStatus is SaveStatus.RUNNING
             val savingPercent = (state.saveStatus as? SaveStatus.RUNNING)?.progress ?: 0
             if (state.isSegmentEditMode) {
-                // 영상편집 모드 — 취소(모드만 종료) + 저장(모드 종료 + 전체 variant 렌더).
+                // 영상편집 모드 — 취소(편집 무효) + 체크(편집 확정 → 타임라인 결과 초기화).
                 IconButton(
-                    onClick = { viewModel.onFinishSegmentEdit() },
+                    onClick = { viewModel.onCancelSegmentEditChanges() },
                     modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
@@ -221,29 +232,18 @@ fun TimelineScreen(
                     )
                 }
                 IconButton(
-                    enabled = !saving && !saveAnyJobRunning,
-                    onClick = {
-                        viewModel.onFinishSegmentEdit()
-                        viewModel.onSaveAllVariants()
-                    },
+                    onClick = { viewModel.onCommitSegmentEdit() },
                     modifier = Modifier.size(40.dp),
                 ) {
-                    if (saving) {
-                        Text(
-                            "${savingPercent}%",
-                            fontSize = 11.sp,
-                            color = tokens.onBackgroundPrimary,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
-                            contentDescription = "저장",
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                    }
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Filled.Check,
+                        contentDescription = "적용",
+                        tint = tokens.onBackgroundPrimary,
+                    )
                 }
             } else {
                 // 공유 아이콘 — 추후 기능. 지금은 disabled icon button.
+                // (분기 진입 시 isSegmentEditMode == false)
                 IconButton(
                     onClick = { /* TODO: 공유 기능 */ },
                     enabled = false,
@@ -276,6 +276,18 @@ fun TimelineScreen(
                     }
                 }
             }
+        }
+
+        // 영상편집 모드 안내 — 적용 시 결과(음원분리/자막/더빙) 가 모두 초기화됨을 사용자에게 명시.
+        if (state.isSegmentEditMode) {
+            Text(
+                "영상 편집을 적용(✓)하면 음원 분리·자막·더빙 결과와 변경사항 되돌리기 스택이 모두 초기화됩니다. 다시 생성하려면 적용 후 각 단계를 처음부터 진행해야 합니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.mutedText,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            )
         }
 
         // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
@@ -495,137 +507,32 @@ fun TimelineScreen(
         //    directive 위 탭 → 편집 sheet, free interval 위 탭 → 그 구간으로 pendingRange 점프.
         if (state.videoDurationMs > 0) {
             val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
-            if (state.isRangeSelecting) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                        .pointerInput(sortedDirectives, state.videoDurationMs) {
-                            detectTapGestures { offset ->
-                                val w = size.width.toFloat()
-                                if (w <= 0f) return@detectTapGestures
-                                val frac = (offset.x / w).coerceIn(0f, 1f)
-                                val ms = (frac * state.videoDurationMs).toLong()
-                                val onDirective = sortedDirectives.any {
-                                    ms in it.rangeStartMs..it.rangeEndMs
-                                }
-                                // range 모드에서 회색(directive) 영역 탭은 무시 — 편집 sheet 안 띄우고
-                                // pendingRange 도 그대로. free interval 위 탭만 점프 처리.
-                                if (onDirective) return@detectTapGestures
-                                var freeStart = 0L
-                                var freeEnd = state.videoDurationMs
-                                for (d in sortedDirectives) {
-                                    if (ms < d.rangeStartMs) {
-                                        freeEnd = d.rangeStartMs
-                                        break
-                                    }
-                                    freeStart = maxOf(freeStart, d.rangeEndMs)
-                                }
-                                viewModel.onSelectFreeRange(freeStart, freeEnd)
-                            }
-                        }
-                ) {
-                    // Layer 1 — RangeSlider (먼저 그림 = 뒤). drag 은 slider 가 받고, tap 은 parent
-                    // detectTapGestures 가 분기.
-                    RangeSlider(
-                        value = state.pendingRangeStartMs.toFloat()..state.pendingRangeEndMs.toFloat(),
-                        valueRange = 0f..state.videoDurationMs.toFloat(),
-                        onValueChange = { range ->
-                            viewModel.onSetPendingRangeStart(range.start.toLong())
-                            viewModel.onSetPendingRangeEnd(range.endInclusive.toLong())
-                        },
-                        modifier = Modifier.fillMaxWidth().scale(scaleX = 1f, scaleY = 0.7f),
-                    )
-                    // Layer 2 — directive overlay (slider 위, 시각만). `background()` 만으로는 pointer
-                    // hit-test 등록 안 되므로 slider drag/tap 통과. RangeSlider 의 기본 horizontal
-                    // padding(10dp) 과 정렬해 핸들 위치와 일치.
-                    Row(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        var prevEnd = 0L
-                        sortedDirectives.forEach { directive ->
-                            val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
-                            if (gap > 0L) {
-                                Spacer(Modifier.weight(gap.toFloat()).fillMaxHeight())
-                            }
-                            val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
-                            Box(
-                                modifier = Modifier
-                                    .weight(w.toFloat())
-                                    .fillMaxHeight(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                // 사용 불가 = 회색. RangeSlider 트랙(파랑/회색) 위에 덮어 보이도록
-                                // 두꺼운 12dp 막대 + 거의 불투명(α 0.9).
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(12.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFF6E6E6E).copy(alpha = 0.9f))
-                                )
-                            }
-                            prevEnd = directive.rangeEndMs
-                        }
-                        val tail = (state.videoDurationMs - prevEnd).coerceAtLeast(0L)
-                        if (tail > 0L) {
-                            Spacer(Modifier.weight(tail.toFloat()).fillMaxHeight())
-                        }
-                    }
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                    Slider(
-                        value = state.playbackPositionMs.toFloat(),
-                        valueRange = 0f..state.videoDurationMs.toFloat(),
-                        onValueChange = { viewModel.onUpdatePlaybackPosition(it.toLong()) },
-                        modifier = Modifier.scale(scaleX = 1f, scaleY = 0.7f),
-                    )
-                    // 메인 화면 — 음성분리 directive 막대 (회색만). 탭 → 편집 sheet.
-                    // 빈 구간엔 시각/탭 없음 (range 모드 진입은 별도 "음성분리" 버튼 통해).
-                    if (sortedDirectives.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(28.dp)
-                                .padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            var prevEnd = 0L
-                            sortedDirectives.forEach { directive ->
-                                val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
-                                if (gap > 0L) {
-                                    Spacer(Modifier.weight(gap.toFloat()).fillMaxHeight())
-                                }
-                                val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(w.toFloat())
-                                        .fillMaxHeight()
-                                        .clickable { viewModel.onEditExistingSeparation(directive.id) },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(6.dp)
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(Color(0xFF888888).copy(alpha = 0.85f))
-                                    )
-                                }
-                                prevEnd = directive.rangeEndMs
-                            }
-                            val tail = (state.videoDurationMs - prevEnd).coerceAtLeast(0L)
-                            if (tail > 0L) {
-                                Spacer(Modifier.weight(tail.toFloat()).fillMaxHeight())
-                            }
-                        }
-                    }
-                }
-            }
+            // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive 시각 모두 한 위치에.
+            UnifiedTimelineBar(
+                segments = state.segments,
+                directives = sortedDirectives,
+                showSegments = state.isSegmentEditMode,
+                showDirectives = !state.isSegmentEditMode,
+                showRange = state.isRangeSelecting,
+                totalMs = state.videoDurationMs,
+                playbackPositionMs = state.playbackPositionMs,
+                rangeStartMs = state.pendingRangeStartMs,
+                rangeEndMs = state.pendingRangeEndMs,
+                selectedSegmentId = state.selectedSegmentId,
+                accent = tokens.accent,
+                markerColor = tokens.onBackgroundPrimary,
+                trackColor = tokens.timelineBarTrack,
+                segmentColor = tokens.timelineBarSegment,
+                segmentEditedColor = tokens.timelineBarSegmentEdited,
+                onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
+                onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
+                onScrub = { viewModel.onUpdatePlaybackPosition(it) },
+                onRangeStartChange = { viewModel.onSetPendingRangeStart(it) },
+                onRangeEndChange = { viewModel.onSetPendingRangeEnd(it) },
+                onTranslateRange = { viewModel.onTranslateRange(it) },
+                onFreeIntervalTap = { s, e -> viewModel.onSelectFreeRange(s, e) },
+                onRangeTapToggle = { viewModel.onClearRangeSelection() },
+            )
             if (state.isRangeSelecting) {
                 Text(
                     "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
@@ -644,7 +551,7 @@ fun TimelineScreen(
                                 viewModel.onCancelRangeMode()
                                 viewModel.onShowAudioSeparationSheet(segId)
                             }
-                        ) { Text("이 구간 음성분리") }
+                        ) { Text("이 구간 음원분리") }
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
                     }
                 }
@@ -689,7 +596,7 @@ fun TimelineScreen(
                 val sepLabel = when (state.separationStatus) {
                     AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
                     AutoJobStatus.FAILED -> "❌ 다시 시도"
-                    else -> "음성 분리"
+                    else -> "음원 분리"
                 }
                 // 음성분리 버튼은 자기 자신 status 만 봄 — 자막/더빙 진행 중이라도 음성분리는 독립 실행 가능.
                 // RUNNING 중엔 disabled (백그라운드 폴링은 계속 — sheet 자동 재오픈 X).
@@ -747,7 +654,70 @@ fun TimelineScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     onClick = { viewModel.onMockSeparationReady() }
                 ) { Text("분리 mock", fontSize = 14.sp) }
+
+                // 음원 삽입 — 단일 진입점. 클릭 시 [업로드 / 즉시 녹음] DropdownMenu.
+                // 녹음 진행 중에는 자체적으로 ⏹ 종료 버튼 라벨로 토글.
+                val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }
+                val recorder = rememberAudioRecorder(
+                    onRecorded = { uri, _ -> viewModel.onPickBgmAudio(uri) },
+                    onError = { /* TODO: bgmError 상태로 토스트 */ },
+                )
+                val recording = recorder.isRecording
+                var audioMenuOpen by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(
+                        enabled = !state.isAddingBgm,
+                        modifier = Modifier.height(42.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        onClick = {
+                            if (recording) recorder.stop()
+                            else audioMenuOpen = true
+                        },
+                    ) {
+                        Text(
+                            when {
+                                state.isAddingBgm -> "⏳ 추가 중"
+                                recording -> "⏹ 녹음 종료"
+                                else -> "🎵 음원 삽입"
+                            },
+                            fontSize = 14.sp,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = audioMenuOpen,
+                        onDismissRequest = { audioMenuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("📁 업로드 하기") },
+                            onClick = {
+                                audioMenuOpen = false
+                                audioPicker.launch()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("🎙 즉시 녹음하기") },
+                            onClick = {
+                                audioMenuOpen = false
+                                recorder.start()
+                            },
+                        )
+                    }
+                }
             }
+        }
+
+        // 추가된 음원(BGM) 클립 목록 — 영상편집/range 모드/자막더빙 패널 활성 시는 숨김.
+        if (state.bgmClips.isNotEmpty() &&
+            !state.isRangeSelecting && !state.localizationOpen && !state.showDetailEdit
+        ) {
+            BgmClipsPanel(
+                clips = state.bgmClips,
+                onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
+                onUpdateVolume = { id, v -> viewModel.onUpdateBgmVolume(id, v) },
+                onUpdateSpeed = { id, s -> viewModel.onUpdateBgmSpeed(id, s) },
+                onSeparate = { id -> viewModel.onStartBgmSeparation(id) },
+                onDelete = { id -> viewModel.onDeleteBgmClip(id) },
+            )
         }
 
         // 상세 편집 패널 — lang chip 으로 lang 필터 + cue list + 선택 cue 의 스타일/텍스트 조정.
@@ -771,8 +741,8 @@ fun TimelineScreen(
             )
         }
 
-        // 자막/더빙 생성 인라인 패널
-        if (state.localizationOpen) {
+        // 자막/더빙 생성 인라인 패널 — 영상편집 모드에선 노출 금지.
+        if (state.localizationOpen && !state.isSegmentEditMode) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -853,8 +823,38 @@ fun TimelineScreen(
         }
     }
 
-    // 더빙 sheet
-    if (state.showDubbingSheet) {
+    // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
+    val chatFabVisible = !state.isSegmentEditMode &&
+        !state.isRangeSelecting &&
+        !state.localizationOpen &&
+        !state.showDetailEdit &&
+        !state.showAudioSeparationSheet &&
+        !state.showDubbingSheet &&
+        !state.showSubtitleSheet &&
+        !state.showSubtitleEditSheet &&
+        !state.showRegenerateSubtitleSheet &&
+        !state.showScriptReviewSheet &&
+        !state.showAppendSheet &&
+        !state.showFrameSheet &&
+        !state.showTextOverlaySheet &&
+        !chatSheetVisible
+    if (chatFabVisible) {
+        FloatingActionButton(
+            onClick = { chatSheetVisible = true },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(20.dp),
+            containerColor = tokens.accent,
+            contentColor = tokens.onBackgroundPrimary,
+        ) {
+            Text("💬", fontSize = 22.sp)
+        }
+    }
+    } // close Box wrapper
+
+    // 더빙 sheet — 영상편집 모드에선 노출 금지.
+    if (state.showDubbingSheet && !state.isSegmentEditMode) {
         InsertDubbingSheet(
             voices = state.voices,
             isVoicesLoading = state.isVoicesLoading,
@@ -869,8 +869,8 @@ fun TimelineScreen(
         )
     }
 
-    // STT 스크립트 검토 sheet — review 모드에서 STT 완료 후 표시.
-    if (state.showScriptReviewSheet) {
+    // STT 스크립트 검토 sheet — review 모드에서 STT 완료 후 표시. 영상편집 모드 진행 중엔 숨김.
+    if (state.showScriptReviewSheet && !state.isSegmentEditMode) {
         val sourceClips = remember(state.subtitleClips) {
             state.subtitleClips.filter { it.languageCode.isBlank() }
         }
@@ -926,8 +926,8 @@ fun TimelineScreen(
     }
 
 
-    // 자막 sheet
-    if (state.showSubtitleSheet) {
+    // 자막 sheet — 영상편집 모드에선 노출 금지.
+    if (state.showSubtitleSheet && !state.isSegmentEditMode) {
         InsertSubtitleSheet(
             playbackPositionMs = state.playbackPositionMs,
             videoDurationMs = state.videoDurationMs,
@@ -947,8 +947,10 @@ fun TimelineScreen(
         )
     }
 
-    // 음성분리 sheet
-    state.audioSeparation?.takeIf { state.showAudioSeparationSheet }?.let { sepState ->
+    // 음성분리 sheet — 영상편집 모드에선 노출 금지.
+    state.audioSeparation
+        ?.takeIf { state.showAudioSeparationSheet && !state.isSegmentEditMode }
+        ?.let { sepState ->
         AudioSeparationSheet(
             state = sepState,
             onUpdateSpeakers = { viewModel.onUpdateSeparationSpeakers(it) },
@@ -963,6 +965,15 @@ fun TimelineScreen(
     }
 
     // 구간 선택 — popup sheet 대신 인라인 RangeSlider 로 처리하므로 sheet 제거
+
+    // 채팅 어시스턴트 sheet — 영상편집 모드와 무관하게 띄울 수 있지만 위 FAB 가 모드 중엔 숨김.
+    if (chatSheetVisible) {
+        ChatPanel(
+            timelineVm = viewModel,
+            timelineState = state,
+            onDismiss = { chatSheetVisible = false },
+        )
+    }
 }
 
 /**
@@ -1130,6 +1141,501 @@ private fun SegmentEditActionPanel(
         }
 
         // 복제/삭제 는 헤더 row 로 이동했고, 우상단 X 가 "취소(저장)" 역할이라 하단 row 제거.
+    }
+}
+
+/**
+ * 통합 타임라인 바 — 28dp 전체 높이, 가운데 6dp 만 segment/directive content strip (얇은 띠).
+ * 양쪽 끝 핸들은 full height 의 grippable 바 형태 (8dp wide visual + 28dp hit area).
+ * 색 분리: bg = 검정 strip, segment bg/edited = 중성 회색 톤, range fill = accent (주황/파랑 등 distinct).
+ *
+ * 제스처:
+ *  - segment 탭 (영상편집) → onSegmentTap (그 segment 전체로 range 스냅)
+ *  - directive 탭 (음원분리) → onDirectiveTap (편집 sheet)
+ *  - 빈 영역 탭 → onScrub
+ *  - range fill 드래그 → onTranslateRange (양쪽 끝 동시 이동)
+ *  - 좌/우 핸들 드래그 → onRangeStartChange/EndChange
+ *  - 재생 마커 = playbackPositionMs 위치 흰선 (얇은 strip 위에 떠 있음)
+ */
+/**
+ * 통합 타임라인 바의 시각/제스처 spec — 사이즈/간격/clamp 등 매직 넘버 한 곳에 모음.
+ * 색은 [DubCastColors] 의 `timelineBar*` 토큰 사용 — light/dark 자동 분기.
+ */
+private object TimelineBarSpec {
+    val BarHeight = 56.dp
+    val ContentHeight = 12.dp
+    val HandleHitWidth = 32.dp
+    val HandleVisualWidth = 8.dp
+    val GripWidth = 3.dp
+    val GripVerticalInset = 12.dp
+    val ContentCornerRadius = 4.dp
+    val HandleCornerRadius = 4.dp
+    val SegmentSpacing = 1.dp
+    /** 재생 마커 hit area — drag 으로 scrub. 마커 visual 자체는 GripWidth, hit zone 은 더 넓게. */
+    val PlaybackHitWidth = 32.dp
+    /** 재생 마커 visual line 높이 — 바 높이보다 짧게 (bar 위/아래로 marker 가 튀어나오지 않도록). */
+    val PlaybackMarkerVerticalInset = 16.dp
+    /** 구간 선택 영역 상/하단 accent border 두께 — Android 초기 트림 핸들 스타일. */
+    val RangeBorderThickness = 2.dp
+    /** range 핸들 사이 최소 간격 — VM 의 MIN_RANGE_MS 와 동일 의미. */
+    const val MinRangeGapMs = 100L
+}
+
+@Composable
+private fun UnifiedTimelineBar(
+    segments: List<com.dubcast.shared.domain.model.Segment>,
+    directives: List<com.dubcast.shared.domain.model.SeparationDirective>,
+    showSegments: Boolean,
+    showDirectives: Boolean,
+    showRange: Boolean,
+    totalMs: Long,
+    playbackPositionMs: Long,
+    rangeStartMs: Long,
+    rangeEndMs: Long,
+    selectedSegmentId: String?,
+    accent: Color,
+    markerColor: Color,
+    trackColor: Color,
+    segmentColor: Color,
+    segmentEditedColor: Color,
+    onSegmentTap: (String) -> Unit = {},
+    onDirectiveTap: (String) -> Unit = {},
+    onScrub: (Long) -> Unit,
+    onRangeStartChange: (Long) -> Unit = {},
+    onRangeEndChange: (Long) -> Unit = {},
+    onTranslateRange: (Long) -> Unit = {},
+    /** 음원분리 range 모드에서 free interval 탭 시 그 구간 [start, end] 로 range 스냅. */
+    onFreeIntervalTap: (startMs: Long, endMs: Long) -> Unit = { _, _ -> },
+    /** 음원분리 range 모드에서 현재 선택된 구간 내부를 재탭 시 호출 — 선택 해제. */
+    onRangeTapToggle: () -> Unit = {},
+) {
+    val density = LocalDensity.current
+    val currentRangeStart by rememberUpdatedState(rangeStartMs)
+    val currentRangeEnd by rememberUpdatedState(rangeEndMs)
+
+    val barHeight = TimelineBarSpec.BarHeight
+    val contentHeight = TimelineBarSpec.ContentHeight
+    val handleHitWidth = TimelineBarSpec.HandleHitWidth
+    val handleVisualWidth = TimelineBarSpec.HandleVisualWidth
+
+    // range 모드 (영상편집 + 음원분리) 양쪽 다 parent tap detector 단일화. segment 자체에 clickable
+    // 두지 않고 ms 좌표로 segment id 를 역검색 → onSegmentTap 호출. 같은 segment 재탭 시 VM 의
+    // onSelectSegmentInEdit 토글 로직이 처리.
+    val currentStartForTap by rememberUpdatedState(rangeStartMs)
+    val currentEndForTap by rememberUpdatedState(rangeEndMs)
+    val rangeTapModifier = if (showRange && totalMs > 0L) {
+        Modifier.pointerInput(showSegments, segments, directives, totalMs) {
+            detectTapGestures(onTap = { offset ->
+                val w = size.width.toFloat()
+                if (w <= 0f) return@detectTapGestures
+                val frac = (offset.x / w).coerceIn(0f, 1f)
+                val ms = (frac * totalMs).toLong()
+
+                if (showSegments) {
+                    // 영상편집: ms 가 속한 video segment 검색 → onSegmentTap (재탭은 VM 에서 토글).
+                    var acc = 0L
+                    for (seg in segments) {
+                        val nextAcc = acc + seg.effectiveDurationMs
+                        if (ms in acc until nextAcc) {
+                            if (seg.type == com.dubcast.shared.domain.model.SegmentType.VIDEO) {
+                                onSegmentTap(seg.id)
+                            }
+                            return@detectTapGestures
+                        }
+                        acc = nextAcc
+                    }
+                    return@detectTapGestures
+                }
+
+                // 음원분리: directive 위 ignore, 선택 영역 재탭 → toggle, 그 외 free interval → snap.
+                val sortedDir = directives.sortedBy { it.rangeStartMs }
+                val onDirective = sortedDir.any { ms in it.rangeStartMs..it.rangeEndMs }
+                if (onDirective) return@detectTapGestures
+                val hasSelection = currentEndForTap > currentStartForTap
+                if (hasSelection && ms in currentStartForTap..currentEndForTap) {
+                    onRangeTapToggle()
+                    return@detectTapGestures
+                }
+                var freeStart = 0L
+                var freeEnd = totalMs
+                for (d in sortedDir) {
+                    if (ms < d.rangeStartMs) {
+                        freeEnd = d.rangeStartMs
+                        break
+                    }
+                    freeStart = maxOf(freeStart, d.rangeEndMs)
+                }
+                onFreeIntervalTap(freeStart, freeEnd)
+            })
+        }
+    } else Modifier
+
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(barHeight)
+            .then(rangeTapModifier)
+    ) {
+        val totalWidthDp = maxWidth
+        val totalWidthPx = with(density) { totalWidthDp.toPx() }
+
+        // Layer 1 — 가운데 얇은 배경 strip + segment/directive content.
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .height(contentHeight)
+                .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
+                .background(trackColor)
+        )
+        if (showSegments) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(contentHeight),
+                horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
+            ) {
+                segments.forEach { seg ->
+                    val edited = seg.volumeScale != 1.0f ||
+                        seg.speedScale != 1.0f ||
+                        seg.trimStartMs > 0L ||
+                        (seg.trimEndMs > 0L && seg.trimEndMs < seg.durationMs) ||
+                        seg.duplicatedFromId != null
+                    // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
+                    Box(
+                        modifier = Modifier
+                            .weight(seg.effectiveDurationMs.toFloat().coerceAtLeast(1f))
+                            .fillMaxHeight()
+                            .background(if (edited) segmentEditedColor else segmentColor),
+                    )
+                }
+            }
+        } else if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(contentHeight),
+            ) {
+                var prevEnd = 0L
+                directives.forEach { directive ->
+                    val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
+                    if (gap > 0L) Spacer(Modifier.weight(gap.toFloat()))
+                    val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
+                    // range 모드에서는 directive 탭 비활성 — 음원분리 sheet 안 열리도록.
+                    val directiveModifier = Modifier
+                        .weight(w.toFloat())
+                        .fillMaxHeight()
+                        .background(segmentEditedColor)
+                        .let { if (!showRange) it.clickable { onDirectiveTap(directive.id) } else it }
+                    Box(modifier = directiveModifier)
+                    prevEnd = directive.rangeEndMs
+                }
+                val tail = (totalMs - prevEnd).coerceAtLeast(0L)
+                if (tail > 0L) Spacer(Modifier.weight(tail.toFloat()))
+            }
+        }
+
+        // Layer 2 — 회색 타임라인 strip(=contentHeight 12dp)에 정렬. 트림 핸들도 동일 높이.
+        // tap absorber 없음 → 자식 segment.clickable / parent free-interval tap 모두 살림.
+        // rangeEndMs <= rangeStartMs (zero-width) = "선택 없음" 상태 → range 시각 모두 숨김 (mode 유지).
+        if (showRange && totalMs > 0L && rangeEndMs > rangeStartMs) {
+            val startFrac = (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+            val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
+            val rangeStartDp = totalWidthDp * startFrac
+            val rangeWidthDp = totalWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
+            // 회색 strip 높이 = contentHeight. 위/아래 inset = (barHeight - contentHeight) / 2.
+            val rangeStripInsetY = (barHeight - contentHeight) / 2
+
+            var fillBaseStartMs by remember { mutableStateOf(0L) }
+            var fillAccumPx by remember { mutableStateOf(0f) }
+            Box(
+                modifier = Modifier
+                    .offset(x = rangeStartDp)
+                    .width(rangeWidthDp)
+                    .height(contentHeight)
+                    .align(Alignment.CenterStart)
+                    .background(accent.copy(alpha = 0.32f))
+                    .pointerInput(totalWidthPx, totalMs) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                fillBaseStartMs = currentRangeStart
+                                fillAccumPx = 0f
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                fillAccumPx += dragAmount
+                                if (totalWidthPx > 0f && totalMs > 0L) {
+                                    val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
+                                    onTranslateRange((fillBaseStartMs + deltaMs).toLong())
+                                }
+                            }
+                        )
+                    }
+            )
+            // 상단/하단 border — 회색 strip 의 위/아래 모서리에 정렬.
+            Box(
+                modifier = Modifier
+                    .offset(x = rangeStartDp, y = rangeStripInsetY)
+                    .width(rangeWidthDp)
+                    .height(TimelineBarSpec.RangeBorderThickness)
+                    .align(Alignment.TopStart)
+                    .background(accent)
+            )
+            Box(
+                modifier = Modifier
+                    .offset(x = rangeStartDp, y = -rangeStripInsetY)
+                    .width(rangeWidthDp)
+                    .height(TimelineBarSpec.RangeBorderThickness)
+                    .align(Alignment.BottomStart)
+                    .background(accent)
+            )
+
+            // 좌/우 bracket 핸들 — 회색 strip 높이만큼 grip visual.
+            val minGap = TimelineBarSpec.MinRangeGapMs
+            RangeHandle(
+                offsetX = rangeStartDp - handleHitWidth / 2,
+                hitWidth = handleHitWidth,
+                visualWidth = handleVisualWidth,
+                handleColor = accent,
+                gripColor = markerColor,
+                gripHeight = contentHeight,
+                totalWidthPx = totalWidthPx,
+                totalMs = totalMs,
+                baseMsProvider = { currentRangeStart },
+                clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
+                onChange = onRangeStartChange,
+            )
+            RangeHandle(
+                offsetX = rangeStartDp + rangeWidthDp - handleHitWidth / 2,
+                hitWidth = handleHitWidth,
+                visualWidth = handleVisualWidth,
+                handleColor = accent,
+                gripColor = markerColor,
+                gripHeight = contentHeight,
+                totalWidthPx = totalWidthPx,
+                totalMs = totalMs,
+                baseMsProvider = { currentRangeEnd },
+                clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
+                onChange = onRangeEndChange,
+            )
+        }
+
+        // Layer 3 — 재생 헤드 마커. hit zone 32dp wide drag → scrub.
+        // 클램프 제거: hit zone 은 frac 위치 정확히 중심에 두고 좌우 끝에서 hit zone 일부가 바 밖으로
+        // overflow 해도 OK (시각 marker line 은 항상 frac 위치 = 영상 길이와 정확히 일치).
+        // marker visual 길이는 바 높이 - 16dp (위/아래 inset) — 사용자 요구 "재생바 길이 짧게".
+        if (totalMs > 0L) {
+            val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+            val hitWidth = TimelineBarSpec.PlaybackHitWidth
+            val visualX = totalWidthDp * frac - hitWidth / 2
+            val markerHeight = barHeight - TimelineBarSpec.PlaybackMarkerVerticalInset
+            val currentPosMs by rememberUpdatedState(playbackPositionMs)
+            var basePosMs by remember { mutableStateOf(0L) }
+            var accumPx by remember { mutableStateOf(0f) }
+            Box(
+                modifier = Modifier
+                    .offset(x = visualX)
+                    .width(hitWidth)
+                    .fillMaxHeight()
+                    .pointerInput(totalWidthPx, totalMs) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                basePosMs = currentPosMs
+                                accumPx = 0f
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                accumPx += dragAmount
+                                if (totalWidthPx > 0f && totalMs > 0L) {
+                                    val deltaMs = (accumPx / totalWidthPx) * totalMs
+                                    val newMs = (basePosMs + deltaMs).toLong().coerceIn(0L, totalMs)
+                                    onScrub(newMs)
+                                }
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .width(TimelineBarSpec.GripWidth)
+                        .height(markerHeight)
+                        .background(markerColor)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 추가된 음원(BgmClip) 목록 패널 — 클립별 시작 위치(ms 입력) + 볼륨 + 속도 슬라이더 + 음원분리/삭제 버튼.
+ * BGM 은 segment 와 독립이라 별도 panel 로 노출 — Audio separation, 위치/볼륨/속도 모두 inline 조절 가능.
+ */
+@Composable
+private fun BgmClipsPanel(
+    clips: List<com.dubcast.shared.domain.model.BgmClip>,
+    onUpdateStart: (clipId: String, ms: Long) -> Unit,
+    onUpdateVolume: (clipId: String, volume: Float) -> Unit,
+    onUpdateSpeed: (clipId: String, speed: Float) -> Unit,
+    onSeparate: (clipId: String) -> Unit,
+    onDelete: (clipId: String) -> Unit,
+) {
+    val tokens = LocalDubCastColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(tokens.panelBg, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "추가한 음원",
+            style = MaterialTheme.typography.titleSmall,
+            color = tokens.onBackgroundPrimary,
+        )
+        clips.forEach { clip ->
+            BgmClipRow(
+                clip = clip,
+                onUpdateStart = onUpdateStart,
+                onUpdateVolume = onUpdateVolume,
+                onUpdateSpeed = onUpdateSpeed,
+                onSeparate = onSeparate,
+                onDelete = onDelete,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BgmClipRow(
+    clip: com.dubcast.shared.domain.model.BgmClip,
+    onUpdateStart: (String, Long) -> Unit,
+    onUpdateVolume: (String, Float) -> Unit,
+    onUpdateSpeed: (String, Float) -> Unit,
+    onSeparate: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    val tokens = LocalDubCastColors.current
+    val displayName = clip.sourceUri.substringAfterLast('/').substringBeforeLast('.').take(28)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(tokens.chipBg, RoundedCornerShape(8.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "🎵 $displayName",
+                color = tokens.onBackgroundPrimary,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { onSeparate(clip.id) }) { Text("음원분리", fontSize = 12.sp) }
+            TextButton(onClick = { onDelete(clip.id) }) { Text("삭제", fontSize = 12.sp) }
+        }
+        // 시작 위치 — 1초 단위 슬라이더 (영상 길이 modulo 한계는 VM 에서 clamp 안 함, 사용자 자유롭게).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("위치", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
+            Slider(
+                value = clip.startMs.toFloat(),
+                valueRange = 0f..(clip.startMs + 60_000L).toFloat().coerceAtLeast(60_000f),
+                onValueChange = { onUpdateStart(clip.id, it.toLong().coerceAtLeast(0L)) },
+                modifier = Modifier.weight(1f).scale(scaleX = 1f, scaleY = 0.7f),
+            )
+            Text("${clip.startMs / 1000}s", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("볼륨", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
+            Slider(
+                value = clip.volumeScale,
+                valueRange = com.dubcast.shared.domain.model.BgmClip.MIN_VOLUME..com.dubcast.shared.domain.model.BgmClip.MAX_VOLUME,
+                onValueChange = { onUpdateVolume(clip.id, it) },
+                modifier = Modifier.weight(1f).scale(scaleX = 1f, scaleY = 0.7f),
+            )
+            Text("${(clip.volumeScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("속도", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
+            Slider(
+                value = clip.speedScale,
+                valueRange = com.dubcast.shared.domain.model.BgmClip.MIN_SPEED..com.dubcast.shared.domain.model.BgmClip.MAX_SPEED,
+                onValueChange = { onUpdateSpeed(clip.id, it) },
+                modifier = Modifier.weight(1f).scale(scaleX = 1f, scaleY = 0.7f),
+            )
+            Text("${(clip.speedScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+        }
+    }
+}
+
+/**
+ * 양쪽 range 핸들 공통 — accumulator 패턴으로 drag delta 추적, clamp 후 onChange 호출.
+ * baseMsProvider 는 drag start 시점의 기준 ms (rangeStart 또는 rangeEnd) 를 lazily 반환.
+ * clamp 는 새 ms 를 모드별 허용 범위로 변환.
+ */
+@Composable
+private fun RangeHandle(
+    offsetX: androidx.compose.ui.unit.Dp,
+    hitWidth: androidx.compose.ui.unit.Dp,
+    visualWidth: androidx.compose.ui.unit.Dp,
+    handleColor: Color,
+    gripColor: Color,
+    gripHeight: androidx.compose.ui.unit.Dp,
+    totalWidthPx: Float,
+    totalMs: Long,
+    baseMsProvider: () -> Long,
+    clamp: (Long) -> Long,
+    onChange: (Long) -> Unit,
+) {
+    var baseMs by remember { mutableStateOf(0L) }
+    var accumPx by remember { mutableStateOf(0f) }
+    Box(
+        modifier = Modifier
+            .offset(x = offsetX)
+            .width(hitWidth)
+            .fillMaxHeight()
+            .pointerInput(totalWidthPx, totalMs) {
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        baseMs = baseMsProvider()
+                        accumPx = 0f
+                    },
+                    onHorizontalDrag = { _, dragAmount ->
+                        accumPx += dragAmount
+                        if (totalWidthPx > 0f && totalMs > 0L) {
+                            val deltaMs = (accumPx / totalWidthPx) * totalMs
+                            onChange(clamp((baseMs + deltaMs).toLong()))
+                        }
+                    }
+                )
+            }
+            .pointerInput(Unit) { detectTapGestures(onTap = { }) },
+        contentAlignment = Alignment.Center
+    ) {
+        // 시각 막대 두 개 모두 gripHeight (= 회색 strip 두께) 로 통일.
+        // hit zone 자체는 fillMaxHeight 유지 — 드래그 잡기 영역은 풀 바 높이.
+        Box(
+            Modifier
+                .width(visualWidth)
+                .height(gripHeight)
+                .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
+                .background(handleColor)
+        )
+        Box(
+            Modifier
+                .width(TimelineBarSpec.GripWidth)
+                .height(gripHeight)
+                .background(gripColor)
+        )
     }
 }
 

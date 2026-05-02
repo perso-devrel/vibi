@@ -4,6 +4,8 @@ import com.dubcast.shared.data.repository.AndroidAudioMetadataExtractor
 import com.dubcast.shared.data.repository.AndroidGallerySaver
 import com.dubcast.shared.data.repository.AndroidImageMetadataExtractor
 import com.dubcast.shared.data.repository.AndroidVideoMetadataExtractor
+import com.dubcast.shared.platform.AndroidVideoThumbnailExtractor
+import com.dubcast.shared.platform.VideoThumbnailExtractor
 import com.dubcast.shared.data.repository.AutoDubRepositoryImpl
 import com.dubcast.shared.data.repository.AutoSubtitleRepositoryImpl
 import com.dubcast.shared.data.repository.MediaJobUploader
@@ -26,6 +28,7 @@ val androidPlatformModule = module {
         )
     }
     single<VideoMetadataExtractor> { AndroidVideoMetadataExtractor(androidContext()) }
+    single<VideoThumbnailExtractor> { AndroidVideoThumbnailExtractor(androidContext()) }
     single<AudioMetadataExtractor> { AndroidAudioMetadataExtractor(androidContext()) }
     single<ImageMetadataExtractor> { AndroidImageMetadataExtractor(androidContext()) }
     single<GallerySaver> { AndroidGallerySaver(androidContext()) }

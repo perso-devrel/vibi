@@ -11,10 +11,15 @@ import com.dubcast.shared.domain.model.ValidationResult
 import com.dubcast.shared.domain.model.VideoInfo
 import com.dubcast.shared.domain.repository.EditProjectRepository
 import com.dubcast.shared.domain.repository.LanguageRepository
+import com.dubcast.shared.domain.repository.SegmentRepository
+import com.dubcast.shared.platform.VideoThumbnailExtractor
 import com.dubcast.shared.domain.usecase.draft.ExpireOldDraftsUseCase
 import com.dubcast.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.dubcast.shared.domain.usecase.input.ValidateVideoUseCase
 import com.dubcast.shared.domain.usecase.input.VideoMetadataExtractor
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -56,6 +61,11 @@ data class DraftSummary(
     val createdAt: Long,
     val updatedAt: Long,
     val jobsRunningSummary: String?,
+    /**
+     * 썸네일 JPEG 의 cache 경로 (이미 추출된 정적 이미지). Coil `AsyncImage` model 로 그대로 전달.
+     * null = 추출 미완 또는 segment 없음. VideoPlayer 인스턴스 띄우지 않으려는 최적화.
+     */
+    val thumbnailPath: String? = null,
 )
 
 class InputViewModel constructor(
@@ -64,6 +74,8 @@ class InputViewModel constructor(
     private val createProjectWithInitialVideoSegment: CreateProjectWithInitialVideoSegmentUseCase,
     private val languageRepository: LanguageRepository,
     private val editProjectRepository: EditProjectRepository,
+    private val segmentRepository: SegmentRepository,
+    private val thumbnailExtractor: VideoThumbnailExtractor,
     private val expireOldDrafts: ExpireOldDraftsUseCase,
 ) : ViewModel() {
 
@@ -78,11 +90,25 @@ class InputViewModel constructor(
         // 7일 미접근 drafts cleanup. 실패해도 drafts observe 는 진행.
         viewModelScope.launch { runCatching { expireOldDrafts() } }
         // drafts 영속 상태 관찰 — 자동 저장이 EditProject 를 갱신할 때마다 카드도 갱신.
+        //
+        // 각 project 의 (firstSourceUri 조회 + JPEG 썸네일 추출) 를 모두 병렬 async/awaitAll 로 묶음.
+        // 썸네일은 cache 히트 시 빠른 path 반환 (file existence check 만), 첫 추출만 ~50ms.
+        // VideoPlayer(이전 구현) 의 ExoPlayer/AVPlayer 다중 인스턴스를 회피하려는 핫패스 최적화.
         editProjectRepository.observeAllProjects()
             .onEach { projects ->
-                _uiState.value = _uiState.value.copy(
-                    drafts = projects.map { it.toDraftSummary() }
-                )
+                val summaries = coroutineScope {
+                    projects.map { project ->
+                        async {
+                            val firstUri = runCatching {
+                                segmentRepository.getFirstSourceUri(project.projectId)
+                            }.getOrNull()
+                            val thumbPath = firstUri
+                                ?.let { runCatching { thumbnailExtractor.extractThumbnail(it) }.getOrNull() }
+                            project.toDraftSummary(thumbPath)
+                        }
+                    }.awaitAll()
+                }
+                _uiState.value = _uiState.value.copy(drafts = summaries)
             }
             .launchIn(viewModelScope)
     }
@@ -226,7 +252,7 @@ class InputViewModel constructor(
         }
     }
 
-    private fun EditProject.toDraftSummary(): DraftSummary {
+    private fun EditProject.toDraftSummary(thumbnailPath: String?): DraftSummary {
         var running = 0
         if (separationStatus == AutoJobStatus.RUNNING) running++
         if (autoSubtitleStatus == AutoJobStatus.RUNNING) running++
@@ -239,6 +265,7 @@ class InputViewModel constructor(
             createdAt = createdAt,
             updatedAt = updatedAt,
             jobsRunningSummary = if (running > 0) "${running}개 작업 진행 중" else null,
+            thumbnailPath = thumbnailPath,
         )
     }
 }

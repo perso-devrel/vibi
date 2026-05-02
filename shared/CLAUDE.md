@@ -40,7 +40,8 @@ shared/
     │   │   ├── remote/dto/                  # kotlinx.serialization DTO
     │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF)
     │   │   └── local/db/                    # Room v19 (DubCastDatabase, 7 entity + 7 DAO + Migrations)
-    │   ├── ui/                              # ViewModel (InputVM, TimelineVM, ExportVM, ShareVM)
+    │   ├── ui/                              # ViewModel (InputVM, TimelineVM, ExportVM, ShareVM, ChatVM)
+    │   ├── domain/chat/                     # ChatToolDispatcher · ProjectContextBuilder (Gemini routing)
     │   ├── platform/                        # FileSystem expect, currentTimeMillis 등
     │   └── di/                              # Koin 모듈 (database/network/repository/usecase/viewmodel)
     ├── androidMain/                         # AndroidVideoMetadataExtractor, AndroidGallerySaver,

@@ -109,24 +109,27 @@ vibi-mobile/
 ```
 
 핵심 화면: Input → Timeline (편집·sheet 군) → Export → Share.
-시트: InsertDubbing · InsertSubtitle · AudioSeparation · RangeSelection · RegenerateSubtitles · DetailEdit.
+시트: InsertDubbing · InsertSubtitle · AudioSeparation · RegenerateSubtitles · DetailEdit · ChatPanel.
+타임라인 구간 선택은 별도 sheet 가 아니라 `UnifiedTimelineBar` 인라인 (28~56dp 바, segment/directive content strip + range fill + bracket 핸들 + 재생 marker).
 
-## 6 핵심 기능 ↔ BFF 매핑
+## 핵심 기능 ↔ BFF 매핑
 
 | 기능 | 클라이언트 | BFF 엔드포인트 |
 |---|---|---|
-| 영상 업로드 | InputScreen + MediaPicker | (로컬 segment) |
+| 영상 업로드 | InputScreen + MediaPicker · `VideoThumbnailExtractor` | (로컬 segment) |
 | TTS | InsertDubbingSheet | `POST /api/v2/tts` |
-| 자막 (수동 + 자동) | InsertSubtitleSheet · GenerateAutoSubtitlesUseCase | `POST /api/v2/subtitles` (+ poll) |
-| 자동 더빙 | GenerateAutoDubUseCase | `POST /api/v2/autodub` (+ poll) |
-| 음성 분리 | AudioSeparationSheet | `POST /api/v2/separate` (+ stem mix) |
-| 구간 선택 | RangeSelectionSheet | (로컬 Room) |
+| 자막 (수동 + 자동) | InsertSubtitleSheet · `GenerateAutoSubtitlesUseCase` | `POST /api/v2/subtitles` (+ poll) |
+| 자동 더빙 (영상 + BGM) | `GenerateAutoDubUseCase` (mediaType=VIDEO\|AUDIO) | `POST /api/v2/autodub` (+ poll) |
+| 음원 분리 (영상 segment + BGM clip) | AudioSeparationSheet · `onStartBgmSeparation` | `POST /api/v2/separate` (+ stem mix) |
+| 구간 선택 | UnifiedTimelineBar (인라인) | (로컬 Room) |
+| 음원 삽입 (파일 + 즉시 녹음) | `AudioPicker` / `AudioRecorder` (expect/actual) | (로컬 BgmClip) |
+| 채팅 어시스턴트 | ChatPanel · `ChatToolDispatcher` | `POST /api/v2/chat` (Gemini function calling) |
 
 ## 외부 의존 (BFF 경유, 클라이언트가 직접 호출하지 않음)
 
 - **ElevenLabs** — TTS, 보이스
-- **Perso AI** — 음성 분리, STT, 번역, 자동 더빙
-- **Gemini** — 추가 번역
+- **Perso AI** — 음원 분리, STT, 번역, 자동 더빙
+- **Gemini** — 자막 번역 + 채팅 function calling
 
 API 키는 모두 BFF env 에만 보관.
 

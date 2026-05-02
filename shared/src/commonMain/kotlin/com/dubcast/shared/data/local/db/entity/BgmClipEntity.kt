@@ -10,5 +10,6 @@ data class BgmClipEntity(
     val sourceUri: String,
     val sourceDurationMs: Long,
     val startMs: Long,
-    val volumeScale: Float = 1.0f
+    val volumeScale: Float = 1.0f,
+    val speedScale: Float = 1.0f,
 )

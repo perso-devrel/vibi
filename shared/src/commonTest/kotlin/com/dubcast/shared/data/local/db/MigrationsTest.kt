@@ -7,9 +7,10 @@ import kotlin.test.assertTrue
 class MigrationsTest {
 
     @Test
-    fun `migrations form contiguous version chain from 1 to 22`() {
+    fun `migrations form contiguous version chain`() {
         val pairs = ALL_MIGRATIONS.map { it.startVersion to it.endVersion }
-        assertEquals((1..21).map { it to it + 1 }, pairs)
+        val maxVersion = pairs.maxOf { it.second }
+        assertEquals((1 until maxVersion).map { it to it + 1 }, pairs)
     }
 
     @Test

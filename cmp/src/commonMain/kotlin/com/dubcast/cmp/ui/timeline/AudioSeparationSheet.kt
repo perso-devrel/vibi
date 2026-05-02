@@ -84,7 +84,7 @@ fun AudioSeparationSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("음성 분리", modifier = Modifier.weight(1f))
+                Text("음원 분리", modifier = Modifier.weight(1f))
                 if (state.step == AudioSeparationStep.PICK_STEMS) {
                     val isAllPlaying = playingId == "all"
                     TextButton(onClick = {

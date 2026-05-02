@@ -77,7 +77,8 @@ class ExportWithDubbingUseCase constructor(
             BgmClipMixInput(
                 audioFilePath = localPath,
                 startMs = clip.startMs,
-                volume = clip.volumeScale
+                volume = clip.volumeScale,
+                speed = clip.speedScale,
             )
         }
 

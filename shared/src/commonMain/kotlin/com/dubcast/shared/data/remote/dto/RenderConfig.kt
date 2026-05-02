@@ -37,7 +37,9 @@ data class RenderSeparationStem(
 data class RenderBgmClip(
     val audioFileKey: String,
     val startMs: Long,
-    val volume: Float = 1.0f
+    val volume: Float = 1.0f,
+    /** 1.0 = 정상 속도. BFF 의 atempo 필터로 적용 (atempo 권장 범위 0.5..2.0 → chain 으로 0.25..4 표현). */
+    val speed: Float = 1.0f,
 )
 
 @Serializable
