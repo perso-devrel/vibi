@@ -9,6 +9,11 @@ data class RenderConfig(
     val imageClips: List<RenderImageClip> = emptyList(),
     val frame: RenderFrame? = null,
     val bgmClips: List<RenderBgmClip> = emptyList(),
+    /**
+     * 자동더빙 결과를 원본 영상의 audio 트랙에 그대로 덮어쓸 때 사용. 멀티파트의
+     * `audio_override` 파일 키. dubClips/bgmClips 는 그 위에 mix 됨.
+     */
+    val audioOverrideKey: String? = null,
     /** my_plan: 음성분리 명세 — 모든 결과 영상에 동일 적용. */
     val separationDirectives: List<RenderSeparationDirective> = emptyList(),
     /** 결과 영상 언어 (출력 메타). */

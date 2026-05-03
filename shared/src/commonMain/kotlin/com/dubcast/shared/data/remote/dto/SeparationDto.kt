@@ -30,7 +30,9 @@ data class SeparationStatusResponse(
     val progress: Int = 0,
     val progressReason: String? = null,
     val stems: List<StemDto> = emptyList(),
-    val mixJobId: String? = null
+    val mixJobId: String? = null,
+    /** status=FAILED 시 reason. UI 에서 그대로 표시. */
+    val error: String? = null
 )
 
 @Serializable
@@ -54,5 +56,7 @@ data class MixStatusResponse(
     val mixJobId: String,
     val status: String,
     val progress: Int = 0,
-    val downloadUrl: String? = null
+    val downloadUrl: String? = null,
+    /** status=FAILED 시 reason. UI 에서 그대로 표시. */
+    val error: String? = null
 )
