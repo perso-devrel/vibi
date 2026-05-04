@@ -2031,21 +2031,11 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             var lastMiddleId: String? = null
             slices.forEach { s ->
-                // 사용자가 글로벌 timeline 에서 선택한 영역 = 새 speedScale 적용 후에도 동일 글로벌 길이
-                // 유지. sliceGlobalRange 는 현재 segment.speedScale 반영해 source 좌표로 변환했으므로
-                // origLocalLen = (글로벌 길이) × (현재 speed). 새 speed 적용 후 글로벌 길이를
-                // 그대로 두려면 source 영역을 (newSpeed / curSpeed) 배 확장해야.
-                // 즉 사용자 직관 = "선택 구간만 빠르게/느리게" 와 일치.
-                val parent = _uiState.value.segments.firstOrNull { it.id == s.segmentId }
-                val curSpeed = parent?.speedScale?.takeIf { it > 0f } ?: 1f
-                val parentTrimEnd = parent?.let {
-                    if (it.trimEndMs > 0L) it.trimEndMs else it.durationMs
-                } ?: s.localEnd
-                val origLocalLen = s.localEnd - s.localStart
-                val targetLocalLen = (origLocalLen.toDouble() * newSpeed / curSpeed).toLong()
-                    .coerceAtLeast(origLocalLen)
-                val expandedLocalEnd = (s.localStart + targetLocalLen).coerceAtMost(parentTrimEnd)
-                val r = splitSegment(s.segmentId, s.localStart, expandedLocalEnd)
+                // 사용자 직관: "2x speed → 그 구간 글로벌 길이 절반으로 줄어듦". 선택 구간을
+                // 그대로 split 한 뒤 middle 에만 speed 적용 → middle.global = source / newSpeed.
+                // (이전: source 를 newSpeed/curSpeed 배 확장해 글로벌 길이 보존했지만 사용자
+                // 호소 — 2배 올리면 길이가 늘어나 보임 — 와 반대 방향. 직관 우선.)
+                val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
                 updateSegmentSpeed(r.middle.id, value)
                 lastMiddleId = r.middle.id
             }

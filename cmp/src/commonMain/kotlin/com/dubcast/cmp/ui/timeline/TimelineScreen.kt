@@ -389,7 +389,10 @@ fun TimelineScreen(
                         com.dubcast.cmp.platform.VideoPlayerItem(
                             sourceUri = seg.sourceUri,
                             trimStartMs = seg.trimStartMs,
-                            trimEndMs = if (seg.trimEndMs > 0L) seg.trimEndMs else 0L,
+                            // iOS 는 trimEndMs=0 일 때 asset.duration 을 동기 읽기 → lazy load
+                            // 로 0/indefinite 반환 시 composition 0-길이 → 검정. caller 에서
+                            // effectiveTrimEndMs (durationMs fallback) 으로 항상 실값 전달.
+                            trimEndMs = seg.effectiveTrimEndMs,
                             speedScale = seg.speedScale,
                             volumeScale = seg.volumeScale,
                         )

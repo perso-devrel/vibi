@@ -3,12 +3,21 @@ package com.dubcast.cmp.platform
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.viewinterop.UIKitView
 import androidx.compose.ui.viewinterop.UIKitViewController
+import kotlinx.cinterop.CValue
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.ObjCAction
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import platform.AVFoundation.AVAssetTrack
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVMediaTypeAudio
@@ -18,22 +27,28 @@ import platform.AVFoundation.AVMutableCompositionTrack
 import platform.AVFoundation.AVPlayer
 import platform.AVFoundation.AVPlayerItem
 import platform.AVFoundation.AVPlayerItemDidPlayToEndTimeNotification
+import platform.AVFoundation.AVPlayerLayer
 import platform.AVFoundation.AVURLAsset
 import platform.AVFoundation.AVURLAssetPreferPreciseDurationAndTimingKey
 import platform.AVFoundation.addMutableTrackWithMediaType
+import platform.AVFoundation.currentItem
 import platform.AVFoundation.currentTime
 import platform.AVFoundation.duration
 import platform.AVFoundation.insertTimeRange
 import platform.AVFoundation.pause
 import platform.AVFoundation.play
 import platform.AVFoundation.rate
+import platform.AVFoundation.replaceCurrentItemWithPlayerItem
 import platform.AVFoundation.scaleTimeRange
 import platform.AVFoundation.seekToTime
+import platform.AVFoundation.setForwardPlaybackEndTime
 import platform.AVFoundation.setRate
 import platform.AVFoundation.setVolume
 import platform.AVFoundation.tracksWithMediaType
 import platform.AVFoundation.volume
 import platform.AVKit.AVPlayerViewController
+import platform.CoreGraphics.CGRect
+import platform.CoreGraphics.CGRectMake
 import platform.CoreMedia.CMTimeGetSeconds
 import platform.CoreMedia.CMTimeMakeWithSeconds
 import platform.CoreMedia.CMTimeRangeMake
@@ -43,21 +58,24 @@ import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplicationWillResignActiveNotification
 import platform.UIKit.UIUserInterfaceStyle
+import platform.UIKit.UIView
 import platform.darwin.NSObjectProtocol
+import kotlin.native.ObjCName
 
 /**
- * Multi-segment 미리보기를 단일 AVPlayer + AVMutableComposition 으로 구현. 각 segment 의
- * trim 영역을 composition video/audio track 에 시간순 insert + speedScale 만큼 scaleTimeRange
- * 압축. 결과: composition timeline = 사용자가 보는 글로벌 timeline 과 정확히 일치.
+ * Two-mode 미리보기:
  *
- * 이전 AVQueuePlayer multi-item 방식의 문제 (transition 추적 부정확 / 자식 segment forwardEnd
- * 누락 / volume·rate 의 carry / 삭제 후 stale state) 모두 우회. trade-off: composition 빌드는
- * playlist 변경마다 매번 재생성 (sourceUri/trim/speed 어떤 것이라도 변경) — asset lazy load
- * 영향이 있을 수 있어 AVURLAssetPreferPreciseDurationAndTimingKey=true 옵션 필수.
+ * 1) **Single-segment fast path** — items.size == 1 일 때. composition 안 만들고
+ *    `AVPlayer(playerItem = AVPlayerItem(URL))` 직결. AVPlayer 가 asset lazy load 를
+ *    내부적으로 처리하므로 검정 프레임 없음 + trim/speed/volume 변경 시 player rebuild
+ *    없이 파라미터만 패치 → 편집이 즉각 반영. 영상 편집 워크플로의 hot path.
  *
- * 미해결: per-segment volumeScale 은 AVMutableAudioMix 필요한데 K/N AVFoundation cinterop
- * 의 일부 audio mix setter 미노출 (CLAUDE.md known iOS bug). 임시: 첫 segment 의 volumeScale
- * 만 player.volume (글로벌) 로 적용.
+ * 2) **Multi-segment composition path** — items.size > 1 (split 결과 등) 일 때.
+ *    AVMutableComposition + scaleTimeRange 로 글로벌 timeline 정확히 매핑. AVQueuePlayer
+ *    의 transition/forwardEnd/volume carry 결함 회피용.
+ *
+ * sourceUri 만 다르고 trim/speed/volume 변동만 있는 경우 player 인스턴스 유지 — 재빌드
+ * 없이 setForwardPlaybackEndTime + seek + rate + volume 으로 적용.
  */
 @OptIn(ExperimentalForeignApi::class)
 @Composable
@@ -69,90 +87,101 @@ actual fun VideoPlayer(
     onEnded: () -> Unit,
     modifier: Modifier
 ) {
-    fun toFileUrl(s: String): NSURL = if (s.startsWith("file://"))
-        NSURL.URLWithString(s) ?: NSURL.fileURLWithPath(s.removePrefix("file://"))
-    else NSURL.fileURLWithPath(s)
+    if (items.isEmpty()) return
+    if (items.size == 1) {
+        SingleItemVideoPlayer(items[0], isPlaying, seekToMs, onPositionChanged, onEnded, modifier)
+    } else {
+        MultiSegmentVideoPlayer(items, isPlaying, seekToMs, onPositionChanged, onEnded, modifier)
+    }
+}
 
-    // 모든 segment 속성을 key 에 포함 — 변경 시 composition 재빌드. asset lazy load 영향 최소화.
-    val playlistKey = items.joinToString("|") {
-        "${it.sourceUri}:${it.trimStartMs}:${it.trimEndMs}:${it.speedScale}"
+private fun toFileUrl(s: String): NSURL = if (s.startsWith("file://"))
+    NSURL.URLWithString(s) ?: NSURL.fileURLWithPath(s.removePrefix("file://"))
+else NSURL.fileURLWithPath(s)
+
+/**
+ * UIView 서브클래스 — `layoutSubviews` override 로 sublayer (AVPlayerLayer) 의 frame 을
+ * 항상 bounds 에 동기화. AVPlayerViewController 는 자체 observer 가 player 속성 변경 시
+ * 내부 view hierarchy 를 재배치해 AVPlayerLayer 가 블랭크되는 결함이 있어 버리고, raw
+ * AVPlayerLayer 직결로 가서 그 영향을 제거.
+ */
+@OptIn(ExperimentalForeignApi::class, kotlin.experimental.ExperimentalObjCName::class)
+@ObjCName("VibiAVPlayerHostView")
+internal class AVPlayerHostView constructor(
+    frame: CValue<CGRect>,
+) : UIView(frame = frame) {
+    val playerLayer: AVPlayerLayer = AVPlayerLayer().apply {
+        videoGravity = AVLayerVideoGravityResizeAspect
     }
 
-    val player = remember(playlistKey) {
-        val composition = AVMutableComposition()
-        @Suppress("UNCHECKED_CAST")
-        val videoTrack = composition.addMutableTrackWithMediaType(
-            AVMediaTypeVideo, kCMPersistentTrackID_Invalid
-        ) as? AVMutableCompositionTrack
-        @Suppress("UNCHECKED_CAST")
-        val audioTrack = composition.addMutableTrackWithMediaType(
-            AVMediaTypeAudio, kCMPersistentTrackID_Invalid
-        ) as? AVMutableCompositionTrack
+    init {
+        layer.addSublayer(playerLayer)
+    }
 
-        items.forEach { item ->
-            val asset = AVURLAsset(
-                uRL = toFileUrl(item.sourceUri),
-                options = mapOf<Any?, Any>(AVURLAssetPreferPreciseDurationAndTimingKey to true),
-            )
-            @Suppress("UNCHECKED_CAST")
-            val srcVideo = (asset.tracksWithMediaType(AVMediaTypeVideo) as? List<AVAssetTrack>)
-                ?.firstOrNull()
-            @Suppress("UNCHECKED_CAST")
-            val srcAudio = (asset.tracksWithMediaType(AVMediaTypeAudio) as? List<AVAssetTrack>)
-                ?.firstOrNull()
+    @ObjCAction
+    override fun layoutSubviews() {
+        super.layoutSubviews()
+        playerLayer.frame = bounds
+    }
+}
 
-            val trimStartSec = item.trimStartMs / 1000.0
-            val trimStart = CMTimeMakeWithSeconds(trimStartSec, preferredTimescale = 1000)
-            val trimEnd = if (item.trimEndMs > 0L) {
+/**
+ * 단일 video segment fast path —
+ *
+ * 핵심 발견: AVPlayer 인스턴스에 rate/volume 같은 속성 mutation 을 누적하면 일정 시점부터
+ * AVPlayerLayer 가 frame 을 안 그리는 결함이 있음 (raw layer/AVPlayerViewController 둘 다).
+ * seekToTime/replace 우회로도 회복 안 됨. 화면 나갔다 들어오면 새 player 가 만들어져 정상.
+ *
+ * 결론: trim/speed/volume 어떤 게 바뀌든 AVPlayer + AVPlayerItem 자체를 새로 만든다.
+ *  - AVURLAsset 은 sourceUri 별 cache → 디스크 재로드 0.
+ *  - hostView/AVPlayerLayer 는 영구 유지 (UIKitView 의 factory 는 1회) → view 재attach 없음.
+ *  - UIKitView.update 에서 hostView.playerLayer.player = newPlayer 로 갈아끼움 → 즉시 new
+ *    output. AVPlayer 자체는 매우 가벼운 객체라 rebuild 비용 무시할 수 있음.
+ */
+@OptIn(ExperimentalForeignApi::class)
+@Composable
+private fun SingleItemVideoPlayer(
+    item: VideoPlayerItem,
+    isPlaying: Boolean,
+    seekToMs: Long?,
+    onPositionChanged: (Long) -> Unit,
+    onEnded: () -> Unit,
+    modifier: Modifier,
+) {
+    // Asset 은 sourceUri 별 cache. 같은 영상 편집 중엔 재로드 비용 0.
+    val asset = remember(item.sourceUri) {
+        AVURLAsset(uRL = toFileUrl(item.sourceUri), options = null)
+    }
+
+    // trim/speed 만 player rebuild 키. volume 은 mutation 으로 별도 적용 — volume 단독
+    // 변경은 layer 블랭크 트리거가 아니었음. volume 도 rebuild 키에 넣으면 사용자가 속도+볼륨
+    // 슬라이더 동시 조작 시 player rebuild 가 중첩 발생 → audio session/타이밍 충돌.
+    val player = remember(
+        item.sourceUri, item.trimStartMs, item.trimEndMs, item.speedScale,
+    ) {
+        val playerItem = AVPlayerItem(asset = asset)
+        if (item.trimEndMs > 0L) {
+            playerItem.setForwardPlaybackEndTime(
                 CMTimeMakeWithSeconds(item.trimEndMs / 1000.0, preferredTimescale = 1000)
-            } else {
-                asset.duration
-            }
-            // CMTimeRange 는 K/N 에서 CValue 라 멤버 접근 불가 — duration 변수 별도 보관.
-            val sourceDur = CMTimeSubtract(trimEnd, trimStart)
-            val sourceDurSec = CMTimeGetSeconds(sourceDur)
-            val sourceRange = CMTimeRangeMake(start = trimStart, duration = sourceDur)
-            val insertAt = composition.duration
-
-            try {
-                srcVideo?.let {
-                    videoTrack?.insertTimeRange(sourceRange, ofTrack = it, atTime = insertAt, error = null)
-                }
-                srcAudio?.let {
-                    audioTrack?.insertTimeRange(sourceRange, ofTrack = it, atTime = insertAt, error = null)
-                }
-            } catch (_: Throwable) {
-                // insertTimeRange 실패 시 (트랙 누락 / 잘못된 range) skip — 다음 item 으로 진행.
-            }
-
-            // speedScale 적용 — 방금 삽입한 영역을 scale (1/speedScale) 로 압축/확장.
-            // sourceLen / speedScale = composition 에서 차지하는 길이 = 글로벌 effectiveDur.
-            if (item.speedScale != 1f && item.speedScale > 0f && !sourceDurSec.isNaN()) {
-                val newDurSec = sourceDurSec / item.speedScale.toDouble()
-                val newDur = CMTimeMakeWithSeconds(newDurSec, preferredTimescale = 1000)
-                val insertedRange = CMTimeRangeMake(start = insertAt, duration = sourceDur)
-                videoTrack?.scaleTimeRange(insertedRange, toDuration = newDur)
-                audioTrack?.scaleTimeRange(insertedRange, toDuration = newDur)
-            }
+            )
         }
-
-        AVPlayer(playerItem = AVPlayerItem(asset = composition))
+        AVPlayer(playerItem = playerItem)
     }
 
-    val controller = remember(player) {
-        AVPlayerViewController().apply {
-            this.player = player
-            showsPlaybackControls = false
-            allowsPictureInPicturePlayback = false
-            updatesNowPlayingInfoCenter = false
-            videoGravity = AVLayerVideoGravityResizeAspect
-            overrideUserInterfaceStyle = UIUserInterfaceStyle.UIUserInterfaceStyleUnspecified
-        }
+    // volume 은 player 인스턴스에 직접 mutation. rebuild 안 함.
+    LaunchedEffect(player, item.volumeScale) {
+        player.volume = item.volumeScale.coerceIn(0f, 1f)
     }
 
-    val isPlayingState = rememberUpdatedState(isPlaying)
+    // hostView 는 한 번만. UIKitView factory 도 1회 호출 → view 재attach 없음.
+    val hostView = remember {
+        AVPlayerHostView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0))
+    }
+
     val onEndedState = rememberUpdatedState(onEnded)
+    val onPositionChangedState = rememberUpdatedState(onPositionChanged)
 
+    // Player 가 새로 만들어질 때마다 observer 재부착 + trimStart seek + 이전 player 정리.
     DisposableEffect(player) {
         val bgObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter.addObserverForName(
             name = UIApplicationWillResignActiveNotification,
@@ -160,56 +189,158 @@ actual fun VideoPlayer(
             queue = null,
             usingBlock = { _ -> player.pause() }
         )
-        // 단일 AVPlayerItem 이라 composition 끝 도달 = 전체 timeline 끝.
         val endObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter.addObserverForName(
             name = AVPlayerItemDidPlayToEndTimeNotification,
             `object` = null,
             queue = null,
             usingBlock = { _ -> onEndedState.value() }
         )
-        // 첫 segment 의 volume 만 적용 (per-segment volume 은 audioMix 필요 — known K/N 미노출).
-        items.firstOrNull()?.let { player.volume = it.volumeScale.coerceIn(0f, 1f) }
+        // 새 player 의 첫 frame 위치를 trimStart 로.
+        player.seekToTime(
+            CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
+        )
         onDispose {
             NSNotificationCenter.defaultCenter.removeObserver(bgObserver)
             NSNotificationCenter.defaultCenter.removeObserver(endObserver)
             player.pause()
-            controller.player = null
+            // 다음 player 가 player swap 으로 attach 되므로 여기선 명시 detach 안 함.
         }
     }
 
-    LaunchedEffect(isPlaying) {
+    LaunchedEffect(player, isPlaying) {
         if (isPlaying) {
-            // composition 의 scaleTimeRange 가 segment 별 speed 를 이미 처리하므로 player.rate=1 고정.
-            // 이전 (AVQueuePlayer 단계) 의 per-item rate 적용은 불필요.
-            player.rate = 1f
-            player.play()
+            player.rate = item.speedScale.coerceIn(0.25f, 4f)
         } else {
             player.pause()
         }
     }
 
-    // global seekToMs = composition timeline 의 ms 그대로. transition 추적 불필요 — 단일 player.
-    LaunchedEffect(seekToMs) {
+    // 외부 seek — 글로벌 ms × speed → segment-local ms (+ trimStart).
+    LaunchedEffect(player, seekToMs) {
         if (seekToMs == null) return@LaunchedEffect
+        val speed = if (item.speedScale > 0f) item.speedScale else 1f
+        val targetLocalSec = (seekToMs * speed) / 1000.0 + item.trimStartMs / 1000.0
         val curSec = CMTimeGetSeconds(player.currentTime())
-        val targetSec = seekToMs / 1000.0
-        // self-echo 차단: position 폴링 → ViewModel state → seekToMs 미세 변동 — 0.5초 가드.
-        if (!curSec.isNaN() && kotlin.math.abs(curSec - targetSec) <= 0.5) return@LaunchedEffect
-        player.seekToTime(CMTimeMakeWithSeconds(targetSec, preferredTimescale = 1000))
+        if (!curSec.isNaN() && kotlin.math.abs(curSec - targetLocalSec) <= 0.5) return@LaunchedEffect
+        player.seekToTime(CMTimeMakeWithSeconds(targetLocalSec, preferredTimescale = 1000))
     }
 
     LaunchedEffect(player) {
-        // composition 내 현재 재생 중인 segment 의 volumeScale 을 player.volume 에 동기화.
-        // AVMutableComposition 은 단일 AVPlayerItem → player.volume 글로벌 단일 값. multi-segment
-        // 볼륨 차이는 AVMutableAudioMix 필요한데 K/N audio mix setter 일부 미노출 (CLAUDE.md
-        // known iOS bug). 차선책: 글로벌 ms → segment idx 역검색 후 그 segment 의 volume 적용 →
-        // 재생 위치 따라 player.volume 자동 전환 (sample-accurate 는 아니지만 200ms 단위 OK).
-        var lastVolume = Float.NaN
+        val speed = if (item.speedScale > 0f) item.speedScale else 1f
+        val trimStartSec = item.trimStartMs / 1000.0
         while (true) {
             val sec = CMTimeGetSeconds(player.currentTime())
             if (!sec.isNaN()) {
+                val globalMs = (((sec - trimStartSec) / speed) * 1000.0).toLong().coerceAtLeast(0L)
+                onPositionChangedState.value(globalMs)
+            }
+            delay(200)
+        }
+    }
+
+    UIKitView(
+        factory = { hostView },
+        modifier = modifier,
+        update = { v ->
+            // player rebuild 시마다 layer 의 player 갈아끼움. layer/view 자체는 그대로.
+            if (v.playerLayer.player !== player) {
+                v.playerLayer.player = player
+            }
+        },
+    )
+}
+
+/**
+ * Multi-segment composition — split 결과 (같은 sourceUri 의 여러 세그먼트) 또는 다중 영상.
+ *
+ * SingleItem 와 동일 패턴:
+ *  - hostView/AVPlayerLayer 영구. UIKitView factory 1회.
+ *  - composition 빌드는 LaunchedEffect 에서 async (assets 의 lazy load 회피). 빌드 완료 시
+ *    UIKitView.update 를 통해 hostView.playerLayer.player = newPlayer 로 swap.
+ *  - playlistKey 변경마다 새 player 생성 — AVPlayer 속성 mutation 누적이 layer 블랭크 트리거.
+ */
+@OptIn(ExperimentalForeignApi::class)
+@Composable
+private fun MultiSegmentVideoPlayer(
+    items: List<VideoPlayerItem>,
+    isPlaying: Boolean,
+    seekToMs: Long?,
+    onPositionChanged: (Long) -> Unit,
+    onEnded: () -> Unit,
+    modifier: Modifier,
+) {
+    val playlistKey = items.joinToString("|") {
+        "${it.sourceUri}:${it.trimStartMs}:${it.trimEndMs}:${it.speedScale}"
+    }
+
+    val hostView = remember {
+        AVPlayerHostView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0))
+    }
+
+    val onEndedState = rememberUpdatedState(onEnded)
+    val onPositionChangedState = rememberUpdatedState(onPositionChanged)
+
+    // Player 는 async-built composition 이 준비될 때까지 null. 빌드 완료 시 state 업데이트 →
+    // UIKitView.update 가 layer.player 갈아끼움. tracks/duration 의 lazy load 를 await 해서
+    // composition 이 0-길이로 만들어지는 결함 차단.
+    var player by remember { mutableStateOf<AVPlayer?>(null) }
+
+    LaunchedEffect(playlistKey) {
+        val newPlayer = withContext(Dispatchers.Default) {
+            buildCompositionPlayer(items)
+        }
+        // 새 player 오면 즉시 trim/volume 적용 + 이전 player 정리는 DisposableEffect 로.
+        items.firstOrNull()?.let { newPlayer.volume = it.volumeScale.coerceIn(0f, 1f) }
+        player = newPlayer
+    }
+
+    DisposableEffect(player) {
+        val p = player ?: return@DisposableEffect onDispose {}
+        val bgObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter.addObserverForName(
+            name = UIApplicationWillResignActiveNotification,
+            `object` = null,
+            queue = null,
+            usingBlock = { _ -> p.pause() }
+        )
+        val endObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter.addObserverForName(
+            name = AVPlayerItemDidPlayToEndTimeNotification,
+            `object` = null,
+            queue = null,
+            usingBlock = { _ -> onEndedState.value() }
+        )
+        onDispose {
+            NSNotificationCenter.defaultCenter.removeObserver(bgObserver)
+            NSNotificationCenter.defaultCenter.removeObserver(endObserver)
+            p.pause()
+        }
+    }
+
+    LaunchedEffect(player, isPlaying) {
+        val p = player ?: return@LaunchedEffect
+        if (isPlaying) {
+            p.rate = 1f
+            p.play()
+        } else {
+            p.pause()
+        }
+    }
+
+    LaunchedEffect(player, seekToMs) {
+        val p = player ?: return@LaunchedEffect
+        if (seekToMs == null) return@LaunchedEffect
+        val curSec = CMTimeGetSeconds(p.currentTime())
+        val targetSec = seekToMs / 1000.0
+        if (!curSec.isNaN() && kotlin.math.abs(curSec - targetSec) <= 0.5) return@LaunchedEffect
+        p.seekToTime(CMTimeMakeWithSeconds(targetSec, preferredTimescale = 1000))
+    }
+
+    LaunchedEffect(player) {
+        val p = player ?: return@LaunchedEffect
+        var lastVolume = Float.NaN
+        while (true) {
+            val sec = CMTimeGetSeconds(p.currentTime())
+            if (!sec.isNaN()) {
                 val globalMs = (sec * 1000.0).toLong()
-                // globalMs → segment idx 역검색. 각 segment 의 글로벌 길이 = sourceLen / speedScale.
                 var acc = 0L
                 var curIdx = items.size - 1
                 for ((idx, it) in items.withIndex()) {
@@ -226,18 +357,97 @@ actual fun VideoPlayer(
                 items.getOrNull(curIdx)?.let { item ->
                     val curVol = item.volumeScale.coerceIn(0f, 1f)
                     if (curVol != lastVolume) {
-                        player.volume = curVol
+                        p.volume = curVol
                         lastVolume = curVol
                     }
                 }
-                onPositionChanged(globalMs)
+                onPositionChangedState.value(globalMs)
             }
             delay(200)
         }
     }
 
-    UIKitViewController(
-        factory = { controller },
-        modifier = modifier
+    UIKitView(
+        factory = { hostView },
+        modifier = modifier,
+        update = { v ->
+            val p = player
+            if (p != null && v.playerLayer.player !== p) {
+                v.playerLayer.player = p
+            }
+        },
     )
+}
+
+/**
+ * Async composition build — 모든 asset 의 tracks/duration 이 loaded 될 때까지 대기 후 합성.
+ * suspendCancellableCoroutine 로 loadValuesAsynchronouslyForKeys 의 callback 을 await.
+ */
+@OptIn(ExperimentalForeignApi::class)
+private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlayer {
+    val assets = items.map { item ->
+        AVURLAsset(
+            uRL = toFileUrl(item.sourceUri),
+            options = mapOf<Any?, Any>(AVURLAssetPreferPreciseDurationAndTimingKey to true),
+        )
+    }
+    // 모든 asset 의 tracks/duration 을 동시 async load 후 await.
+    assets.map { asset ->
+        suspendCancellableCoroutine<Unit> { cont ->
+            asset.loadValuesAsynchronouslyForKeys(listOf("tracks", "duration")) {
+                if (cont.isActive) cont.resume(Unit) {}
+            }
+        }
+    }
+
+    val composition = AVMutableComposition()
+    @Suppress("UNCHECKED_CAST")
+    val videoTrack = composition.addMutableTrackWithMediaType(
+        AVMediaTypeVideo, kCMPersistentTrackID_Invalid
+    ) as? AVMutableCompositionTrack
+    @Suppress("UNCHECKED_CAST")
+    val audioTrack = composition.addMutableTrackWithMediaType(
+        AVMediaTypeAudio, kCMPersistentTrackID_Invalid
+    ) as? AVMutableCompositionTrack
+
+    items.forEachIndexed { idx, item ->
+        val asset = assets[idx]
+        @Suppress("UNCHECKED_CAST")
+        val srcVideo = (asset.tracksWithMediaType(AVMediaTypeVideo) as? List<AVAssetTrack>)
+            ?.firstOrNull()
+        @Suppress("UNCHECKED_CAST")
+        val srcAudio = (asset.tracksWithMediaType(AVMediaTypeAudio) as? List<AVAssetTrack>)
+            ?.firstOrNull()
+
+        val trimStart = CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
+        val trimEnd = if (item.trimEndMs > 0L) {
+            CMTimeMakeWithSeconds(item.trimEndMs / 1000.0, preferredTimescale = 1000)
+        } else {
+            asset.duration
+        }
+        val sourceDur = CMTimeSubtract(trimEnd, trimStart)
+        val sourceDurSec = CMTimeGetSeconds(sourceDur)
+        val sourceRange = CMTimeRangeMake(start = trimStart, duration = sourceDur)
+        val insertAt = composition.duration
+
+        try {
+            srcVideo?.let {
+                videoTrack?.insertTimeRange(sourceRange, ofTrack = it, atTime = insertAt, error = null)
+            }
+            srcAudio?.let {
+                audioTrack?.insertTimeRange(sourceRange, ofTrack = it, atTime = insertAt, error = null)
+            }
+        } catch (_: Throwable) {
+        }
+
+        if (item.speedScale != 1f && item.speedScale > 0f && !sourceDurSec.isNaN()) {
+            val newDurSec = sourceDurSec / item.speedScale.toDouble()
+            val newDur = CMTimeMakeWithSeconds(newDurSec, preferredTimescale = 1000)
+            val insertedRange = CMTimeRangeMake(start = insertAt, duration = sourceDur)
+            videoTrack?.scaleTimeRange(insertedRange, toDuration = newDur)
+            audioTrack?.scaleTimeRange(insertedRange, toDuration = newDur)
+        }
+    }
+
+    return AVPlayer(playerItem = AVPlayerItem(asset = composition))
 }
