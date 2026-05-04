@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -85,9 +86,20 @@ fun ChatPanel(
                 color = tokens.onBackgroundPrimary,
             )
 
-            // 메시지 영역 — 비어있을 때 placeholder 칩 3종.
+            // 메시지 영역 — 비어있을 때 컨텍스트 인식 prompt 가이드.
             if (state.messages.isEmpty()) {
-                ExamplePromptChips(onPick = { input = it })
+                ExamplePromptChips(
+                    state = timelineState,
+                    onPick = { prompt ->
+                        // 정해진 답이 있는 가이드 질문은 Gemini 호출 없이 로컬 응답.
+                        val localReply = LOCAL_GUIDE_REPLIES[prompt]
+                        if (localReply != null) {
+                            chatVm.appendLocalGuide(prompt, localReply)
+                        } else {
+                            input = prompt
+                        }
+                    },
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier
@@ -160,21 +172,69 @@ fun ChatPanel(
     }
 }
 
+/**
+ * 채팅 가이드 — 현재 timeline state 에서 가능한/추천하는 명령을 칩으로 노출.
+ * 컨텍스트 인식 (BGM 있음/자막 없음/더빙 없음 등) 기반 우선 정렬, 항상 보이는 generic 도 섞음.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ExamplePromptChips(onPick: (String) -> Unit) {
-    val examples = listOf(
-        "외국어로 '안녕'이라고 말한 자막 찾아줘",
-        "3번 자막 텍스트를 '안녕하세요' 로 바꿔줘",
-        "이 영상 좀 활기차게 만들어줘",
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        examples.forEach { ex ->
-            AssistChip(
-                onClick = { onPick(ex) },
-                label = { Text(ex, fontSize = 12.sp) },
-            )
+private fun ExamplePromptChips(state: TimelineUiState, onPick: (String) -> Unit) {
+    val tokens = LocalDubCastColors.current
+    val prompts = remember(
+        state.segments.size,
+        state.bgmClips.size,
+        state.subtitleClips.size,
+        state.dubClips.size,
+        state.previewLangCode,
+    ) { buildPrompts(state) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "자주 쓰는 명령",
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.mutedText,
+        )
+        // FlowRow — 칩 옆에 공간 있으면 옆에 배치, 없으면 다음 줄로 wrap.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            prompts.forEach { ex ->
+                AssistChip(
+                    onClick = { onPick(ex) },
+                    label = { Text(ex, fontSize = 12.sp) },
+                )
+            }
         }
     }
+}
+
+private fun buildPrompts(state: TimelineUiState): List<String> {
+    val list = mutableListOf<String>()
+    val hasSegments = state.segments.isNotEmpty()
+    val hasBgm = state.bgmClips.isNotEmpty()
+    val hasSubtitles = state.subtitleClips.isNotEmpty()
+    val hasDub = state.dubClips.isNotEmpty()
+
+    // 항상 가장 먼저 — 처음 사용자 발견용 capability 가이드 (Gemini 호출 안 함, 정적 답).
+    list += "어떤 편집을 할 수 있는지 알려줘"
+
+    // 컨텍스트별 — 현재 상태에서 유의미한 액션부터.
+    if (hasBgm) {
+        list += "삽입한 음원에서 보컬만 분리해줘"
+        list += "BGM 음량 50%로 줄여"
+    }
+    if (hasSegments && !hasSubtitles) {
+        list += "자막 자동으로 생성해줘"
+    }
+    if (hasSegments && !hasDub) {
+        list += "영어로 자동 더빙해줘"
+    }
+    if (hasSegments) {
+        list += "원음에서 배경 소리만 빼줘"
+        list += "5초~10초 구간을 2배속으로"
+    }
+    return list.take(6)
 }
 
 @Composable
@@ -254,6 +314,21 @@ private fun ProposalCard(
 private val COST_INTENSIVE = setOf(
     "generate_subtitles", "generate_dub", "separate_audio_range",
     "generate_subtitles_for_bgm", "generate_dub_for_bgm",
+)
+
+/**
+ * 정해진 답이 있는 가이드 prompt → 정적 응답 매핑. 칩 tap 시 Gemini 호출 안 하고 직접 채팅에 push.
+ * key 는 prompt 텍스트 정확 일치 (자유 입력은 LLM 으로 라우팅됨).
+ */
+private val LOCAL_GUIDE_REPLIES = mapOf(
+    "어떤 편집을 할 수 있는지 알려줘" to """다음 같은 편집을 자연어로 요청할 수 있어요:
+
+• 자막/더빙 — "자막 자동 생성", "영어로 자동 더빙", "3번 자막 텍스트 수정"
+• 음원 — "삽입한 음원에서 보컬만 분리", "BGM 음량 50%로", "원음에서 배경 소리만"
+• 구간 편집 — "5초~10초 구간을 2배속으로", "10초~15초 구간 삭제", "구간 복제"
+• 영상 클립 — "영상 추가", "이미지 클립 추가", "선택한 영상 트림"
+
+직접 자연어로 입력해도 되고, 정확한 구간/언어/속도를 같이 말씀해 주시면 더 잘 맞춰 드립니다.""",
 )
 
 private fun formatDispatchSummary(result: DispatchResult): String = when (result) {

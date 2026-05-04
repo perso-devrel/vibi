@@ -101,6 +101,18 @@ class ChatViewModel(
         )
     }
 
+    /**
+     * 정해진 답이 있는 가이드성 질문 — Gemini 호출 없이 user/assistant 메시지를 로컬로 append.
+     * "어떤 편집을 할 수 있는지" 같은 capability 안내가 대표 케이스.
+     */
+    fun appendLocalGuide(userPrompt: String, assistantReply: String) {
+        _state.value = _state.value.copy(
+            messages = _state.value.messages +
+                ChatMessageDto(role = "user", content = userPrompt) +
+                ChatMessageDto(role = "assistant", content = assistantReply),
+        )
+    }
+
     fun clearError() {
         _state.value = _state.value.copy(error = null)
     }
