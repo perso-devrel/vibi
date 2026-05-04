@@ -12,7 +12,12 @@ import androidx.compose.runtime.Composable
 expect fun rememberAudioPreviewer(): AudioPreviewerHandle
 
 interface AudioPreviewerHandle {
-    /** url 은 BFF 서명 토큰을 포함한 절대 URL 또는 file:// 경로. */
-    fun play(url: String)
+    /**
+     * url 은 BFF 서명 토큰을 포함한 절대 URL 또는 file:// 경로.
+     * @param volume 0..1 (clamp).
+     * @param rate 0.5..2.0 (AVAudioPlayer 한계, clamp).
+     * @param onComplete 자연 종료 시 한 번 호출. stop() 으로 끊으면 호출 안 됨.
+     */
+    fun play(url: String, volume: Float = 1f, rate: Float = 1f, onComplete: () -> Unit = {})
     fun stop()
 }

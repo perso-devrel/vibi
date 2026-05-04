@@ -15,7 +15,11 @@ import platform.UIKit.UIApplication
 import platform.UIKit.UIDocumentPickerViewController
 import platform.UIKit.UIDocumentPickerDelegateProtocol
 import platform.UIKit.UIViewController
+import platform.UniformTypeIdentifiers.UTType
+import platform.UniformTypeIdentifiers.UTTypeAIFF
 import platform.UniformTypeIdentifiers.UTTypeAudio
+import platform.UniformTypeIdentifiers.UTTypeMP3
+import platform.UniformTypeIdentifiers.UTTypeMPEG4Audio
 import platform.darwin.NSObject
 
 /**
@@ -30,7 +34,16 @@ actual fun rememberAudioPicker(
     return remember {
         object : AudioPickerLauncher {
             override fun launch() {
-                val picker = UIDocumentPickerViewController(forOpeningContentTypes = listOf(UTTypeAudio))
+                // UTTypeAudio (parent) 만으로는 시뮬/일부 기기에서 매칭 누락 — 자식 UTI 도 명시
+                // 추가해 MP3/M4A/AIFF/일반 audio 모두 보이게. asCopy=true → iOS 가 자동으로
+                // 앱 sandbox 의 Inbox 로 복사 → security-scoped URL 의식 없이 read 가능.
+                val types = listOfNotNull<UTType>(
+                    UTTypeAudio, UTTypeMP3, UTTypeMPEG4Audio, UTTypeAIFF,
+                )
+                val picker = UIDocumentPickerViewController(
+                    forOpeningContentTypes = types,
+                    asCopy = true,
+                )
                 val pickerDelegate = object : NSObject(), UIDocumentPickerDelegateProtocol {
                     override fun documentPicker(
                         controller: UIDocumentPickerViewController,
@@ -38,6 +51,8 @@ actual fun rememberAudioPicker(
                     ) {
                         controller.dismissViewControllerAnimated(true, null)
                         val first = didPickDocumentsAtURLs.firstOrNull() as? NSURL ?: return
+                        // asCopy=true 이면 first 는 이미 Inbox 의 임시 path. 그래도 picked_audio
+                        // 로 한번 더 옮겨서 epheremal Inbox 정리 영향 안 받게.
                         val accessing = first.startAccessingSecurityScopedResource()
                         try {
                             val path = copyAudioToDocuments(first)

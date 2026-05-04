@@ -2587,6 +2587,18 @@ class TimelineViewModel constructor(
         }
     }
 
+    /** 클립의 startMs 를 현재 playhead 로 재고정 — "삽입" 버튼이 호출. */
+    fun onAnchorBgmAtPlayhead(clipId: String) {
+        viewModelScope.launch {
+            try {
+                updateBgmClip(clipId, startMs = _uiState.value.playbackPositionMs.coerceAtLeast(0L))
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.value = _uiState.value.copy(bgmError = e.message)
+            }
+        }
+    }
+
     // --- Audio separation (per-segment voice/background split) ---
 
     /**

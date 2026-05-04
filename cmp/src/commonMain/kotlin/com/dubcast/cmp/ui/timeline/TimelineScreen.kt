@@ -43,6 +43,8 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -399,6 +401,14 @@ fun TimelineScreen(
                         )
                     }
                 }
+                // BgmClip 들을 video 재생에 sync — clip startMs 부터 자동 재생, video pause/seek 시 같이.
+                // 영상편집 모드에선 사용자가 video 자체에 집중하므로 BGM mix-in 차단 (빈 리스트 전달
+                // → 기존 player 정리됨).
+                com.dubcast.cmp.platform.BgmPlaybackSync(
+                    clips = if (state.isSegmentEditMode) emptyList() else state.bgmClips,
+                    isPlaying = state.isPlaying,
+                    currentMs = state.playbackPositionMs,
+                )
                 VideoPlayer(
                     items = playerItems,
                     isPlaying = state.isPlaying,
@@ -575,6 +585,18 @@ fun TimelineScreen(
                 onFreeIntervalTap = { s, e -> viewModel.onSelectFreeRange(s, e) },
                 onRangeTapToggle = { viewModel.onClearRangeSelection() },
             )
+            // 재생바 밑 BGM 트랙 — 각 클립을 startMs 위치 시간 비율로 시각화.
+            // 막대 horizontal drag → startMs 갱신, tap → 액션 시트.
+            if (state.bgmClips.isNotEmpty()) {
+                BgmTimelineLane(
+                    clips = state.bgmClips,
+                    totalMs = state.videoDurationMs,
+                    accent = tokens.accent,
+                    selectedClipId = state.selectedBgmClipId,
+                    onSelectClip = { viewModel.onSelectBgmClip(it) },
+                    onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
+                )
+            }
             if (state.isRangeSelecting) {
                 Text(
                     "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
@@ -709,6 +731,20 @@ fun TimelineScreen(
                     onError = { /* TODO: bgmError 상태로 토스트 */ },
                 )
                 val recording = recorder.isRecording
+                // start() 와 실제 hardware 가 record() 시작 사이에 100~300ms 딜레이가 있어 사용자에게
+                // "준비 중" 상태를 표시 — 사용자가 즉시 녹음 누른 시점부터 isRecording=true 까지의 갭.
+                var pendingRecord by remember { mutableStateOf(false) }
+                LaunchedEffect(recording) { if (recording) pendingRecord = false }
+                // mic 입력 레벨 폴링 — 100ms tick. 녹음 중이 아닐 땐 0.
+                var micLevel by remember { mutableStateOf(0f) }
+                LaunchedEffect(recording) {
+                    if (!recording) { micLevel = 0f; return@LaunchedEffect }
+                    while (recording) {
+                        micLevel = recorder.currentLevel
+                        kotlinx.coroutines.delay(100)
+                    }
+                    micLevel = 0f
+                }
                 var audioMenuOpen by remember { mutableStateOf(false) }
                 Box {
                     OutlinedButton(
@@ -720,14 +756,34 @@ fun TimelineScreen(
                             else audioMenuOpen = true
                         },
                     ) {
-                        Text(
-                            when {
-                                state.isAddingBgm -> "⏳ 추가 중"
-                                recording -> "⏹ 녹음 종료"
-                                else -> "음원 삽입"
-                            },
-                            fontSize = 14.sp,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when {
+                                    state.isAddingBgm -> "⏳ 추가 중"
+                                    recording -> "⏹ 녹음 중"
+                                    pendingRecord -> "⏳ 준비 중"
+                                    else -> "음원 삽입"
+                                },
+                                fontSize = 14.sp,
+                            )
+                            // 녹음 중일 때만 라이브 mic level bar 노출 — 12dp 폭의 작은 막대.
+                            if (recording) {
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .height(14.dp)
+                                        .width(36.dp)
+                                        .background(tokens.timelineBarTrack, RoundedCornerShape(2.dp)),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .fillMaxWidth(micLevel.coerceIn(0f, 1f))
+                                            .background(tokens.accent, RoundedCornerShape(2.dp)),
+                                    )
+                                }
+                            }
+                        }
                     }
                     DropdownMenu(
                         expanded = audioMenuOpen,
@@ -744,6 +800,7 @@ fun TimelineScreen(
                             text = { Text("즉시 녹음") },
                             onClick = {
                                 audioMenuOpen = false
+                                pendingRecord = true
                                 recorder.start()
                             },
                         )
@@ -752,19 +809,8 @@ fun TimelineScreen(
             }
         }
 
-        // 추가된 음원(BGM) 클립 목록 — 영상편집/range 모드/자막더빙 패널 활성 시는 숨김.
-        if (state.bgmClips.isNotEmpty() &&
-            !state.isRangeSelecting && !state.localizationOpen && !state.showDetailEdit
-        ) {
-            BgmClipsPanel(
-                clips = state.bgmClips,
-                onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
-                onUpdateVolume = { id, v -> viewModel.onUpdateBgmVolume(id, v) },
-                onUpdateSpeed = { id, s -> viewModel.onUpdateBgmSpeed(id, s) },
-                onSeparate = { id -> viewModel.onStartBgmSeparation(id) },
-                onDelete = { id -> viewModel.onDeleteBgmClip(id) },
-            )
-        }
+        // BGM panel 은 inline list 가 아닌, lane 의 막대 탭 → ModalBottomSheet 로 전환.
+        // 아래 `state.selectedBgmClipId` 분기가 sheet 를 띄움.
 
         // 상세 편집 패널 — lang chip 으로 lang 필터 + cue list + 선택 cue 의 스타일/텍스트 조정.
         // 영상 미리보기 위에 자막 overlay 가 즉시 반영되어 사용자가 보면서 조정 가능.
@@ -990,6 +1036,18 @@ fun TimelineScreen(
                 )
             },
             onDismiss = { viewModel.onDismissSubtitleSheet() }
+        )
+    }
+
+    // BGM 클립 액션 sheet — lane 의 막대를 탭했을 때 selectedBgmClipId 가 set 되면 표시.
+    state.bgmClips.firstOrNull { it.id == state.selectedBgmClipId }?.let { selectedClip ->
+        BgmActionSheet(
+            clip = selectedClip,
+            onUpdateVolume = { v -> viewModel.onUpdateBgmVolume(selectedClip.id, v) },
+            onUpdateSpeed = { s -> viewModel.onUpdateBgmSpeed(selectedClip.id, s) },
+            onSeparate = { viewModel.onStartBgmSeparation(selectedClip.id) },
+            onDelete = { viewModel.onDeleteBgmClip(selectedClip.id) },
+            onDismiss = { viewModel.onSelectBgmClip(null) },
         )
     }
 
@@ -1520,111 +1578,187 @@ private fun UnifiedTimelineBar(
 }
 
 /**
- * 추가된 음원(BgmClip) 목록 패널 — 클립별 시작 위치(ms 입력) + 볼륨 + 속도 슬라이더 + 음원분리/삭제 버튼.
- * BGM 은 segment 와 독립이라 별도 panel 로 노출 — Audio separation, 위치/볼륨/속도 모두 inline 조절 가능.
+ * 재생바 직하 BGM 트랙 — 트랙 배경 없음, 막대만. 막대 horizontal drag → startMs 갱신.
+ * 막대 tap → onSelectClip (BottomSheet 띄움).
  */
 @Composable
-private fun BgmClipsPanel(
+private fun BgmTimelineLane(
     clips: List<com.dubcast.shared.domain.model.BgmClip>,
-    onUpdateStart: (clipId: String, ms: Long) -> Unit,
-    onUpdateVolume: (clipId: String, volume: Float) -> Unit,
-    onUpdateSpeed: (clipId: String, speed: Float) -> Unit,
-    onSeparate: (clipId: String) -> Unit,
-    onDelete: (clipId: String) -> Unit,
+    totalMs: Long,
+    accent: Color,
+    selectedClipId: String?,
+    onSelectClip: (String) -> Unit,
+    onUpdateStart: (String, Long) -> Unit,
 ) {
-    val tokens = LocalDubCastColors.current
-    Column(
+    if (totalMs <= 0L) return
+    val laneHeight = 10.dp
+    val density = LocalDensity.current
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .background(tokens.panelBg, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(top = 4.dp)
+            .height(laneHeight),
     ) {
-        Text(
-            "추가한 음원",
-            style = MaterialTheme.typography.titleSmall,
-            color = tokens.onBackgroundPrimary,
-        )
+        val laneWidthDp = maxWidth
+        val laneWidthPx = with(density) { laneWidthDp.toPx() }
         clips.forEach { clip ->
-            BgmClipRow(
-                clip = clip,
-                onUpdateStart = onUpdateStart,
-                onUpdateVolume = onUpdateVolume,
-                onUpdateSpeed = onUpdateSpeed,
-                onSeparate = onSeparate,
-                onDelete = onDelete,
+            val globalDurMs = ((clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))).toLong()
+                .coerceAtLeast(1L)
+            val isSelected = clip.id == selectedClipId
+            // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
+            // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
+            var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
+            var dragBaseStartMs by remember(clip.id) { mutableStateOf(0L) }
+            var dragAccumPx by remember(clip.id) { mutableStateOf(0f) }
+            val effectiveStartMs = dragOverrideMs ?: clip.startMs
+            val startFrac = (effectiveStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+            val widthFrac = (globalDurMs.toFloat() / totalMs).coerceIn(0f, 1f - startFrac)
+            val offsetDp = laneWidthDp * startFrac
+            val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
+            Box(
+                modifier = Modifier
+                    .offset(x = offsetDp)
+                    .width(widthDp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(if (isSelected) accent else accent.copy(alpha = 0.55f))
+                    .pointerInput(clip.id, totalMs, laneWidthPx) {
+                        detectTapGestures(onTap = { onSelectClip(clip.id) })
+                    }
+                    .pointerInput(clip.id, totalMs, laneWidthPx) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                dragBaseStartMs = clip.startMs
+                                dragAccumPx = 0f
+                                dragOverrideMs = clip.startMs
+                            },
+                            onHorizontalDrag = { _, dx ->
+                                dragAccumPx += dx
+                                if (laneWidthPx > 0f && totalMs > 0L) {
+                                    val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
+                                    val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
+                                    dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
+                                        .coerceIn(0L, maxStart)
+                                }
+                            },
+                            onDragEnd = {
+                                dragOverrideMs?.let { onUpdateStart(clip.id, it) }
+                                dragOverrideMs = null
+                            },
+                            onDragCancel = { dragOverrideMs = null },
+                        )
+                    },
             )
         }
     }
 }
 
+/**
+ * BGM 클립 액션 시트 — 타임라인 lane 의 막대 탭 시 ModalBottomSheet 로 표시.
+ *  - 4 액션 버튼 (음원분리 / 미리듣기 / 삽입 / 삭제) + 볼륨/속도 슬라이더 항상 노출.
+ *  - "삽입" = 현재 playhead 로 startMs 재고정.
+ *  - "미리듣기" = TODO (별도 BGM playback 인프라 필요 — stub).
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun BgmClipRow(
+private fun BgmActionSheet(
     clip: com.dubcast.shared.domain.model.BgmClip,
-    onUpdateStart: (String, Long) -> Unit,
-    onUpdateVolume: (String, Float) -> Unit,
-    onUpdateSpeed: (String, Float) -> Unit,
-    onSeparate: (String) -> Unit,
-    onDelete: (String) -> Unit,
+    onUpdateVolume: (Float) -> Unit,
+    onUpdateSpeed: (Float) -> Unit,
+    onSeparate: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val tokens = LocalDubCastColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val previewer = com.dubcast.cmp.platform.rememberAudioPreviewer()
     val displayName = clip.sourceUri.substringAfterLast('/').substringBeforeLast('.').take(28)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(tokens.chipBg, RoundedCornerShape(8.dp))
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    var isPreviewing by remember(clip.id) { mutableStateOf(false) }
+    val dismissAndStop: () -> Unit = {
+        if (isPreviewing) {
+            previewer.stop()
+            isPreviewing = false
+        }
+        onDismiss()
+    }
+    ModalBottomSheet(
+        onDismissRequest = dismissAndStop,
+        sheetState = sheetState,
+        containerColor = tokens.panelBg,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Text(
                 "🎵 $displayName",
                 color = tokens.onBackgroundPrimary,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
             )
-            TextButton(onClick = { onSeparate(clip.id) }) { Text("음원분리", fontSize = 12.sp) }
-            TextButton(onClick = { onDelete(clip.id) }) { Text("삭제", fontSize = 12.sp) }
-        }
-        // 시작 위치 — 1초 단위 슬라이더 (영상 길이 modulo 한계는 VM 에서 clamp 안 함, 사용자 자유롭게).
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("위치", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
-            Slider(
-                value = clip.startMs.toFloat(),
-                valueRange = 0f..(clip.startMs + 60_000L).toFloat().coerceAtLeast(60_000f),
-                onValueChange = { onUpdateStart(clip.id, it.toLong().coerceAtLeast(0L)) },
-                modifier = Modifier.weight(1f).scale(scaleX = 1f, scaleY = 0.7f),
-            )
-            Text("${clip.startMs / 1000}s", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("볼륨", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
-            Slider(
-                value = clip.volumeScale,
-                valueRange = com.dubcast.shared.domain.model.BgmClip.MIN_VOLUME..com.dubcast.shared.domain.model.BgmClip.MAX_VOLUME,
-                onValueChange = { onUpdateVolume(clip.id, it) },
-                modifier = Modifier.weight(1f).scale(scaleX = 1f, scaleY = 0.7f),
-            )
-            Text("${(clip.volumeScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("속도", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
-            Slider(
-                value = clip.speedScale,
-                valueRange = com.dubcast.shared.domain.model.BgmClip.MIN_SPEED..com.dubcast.shared.domain.model.BgmClip.MAX_SPEED,
-                onValueChange = { onUpdateSpeed(clip.id, it) },
-                modifier = Modifier.weight(1f).scale(scaleX = 1f, scaleY = 0.7f),
-            )
-            Text("${(clip.speedScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                TextButton(onClick = onSeparate) { Text("음원분리", fontSize = 13.sp, color = tokens.accent) }
+                TextButton(onClick = {
+                    if (isPreviewing) {
+                        previewer.stop()
+                        isPreviewing = false
+                    } else {
+                        // 현재 슬라이더 값 (volumeScale / speedScale) 을 적용해 미리듣기.
+                        // 자연 종료 → onComplete 가 isPreviewing=false 로 자동 토글.
+                        previewer.play(
+                            url = clip.sourceUri,
+                            volume = clip.volumeScale,
+                            rate = clip.speedScale,
+                            onComplete = { isPreviewing = false },
+                        )
+                        isPreviewing = true
+                    }
+                }) {
+                    Text(
+                        if (isPreviewing) "정지" else "미리듣기",
+                        fontSize = 13.sp,
+                        color = tokens.accent,
+                    )
+                }
+                TextButton(onClick = {
+                    if (isPreviewing) {
+                        previewer.stop()
+                        isPreviewing = false
+                    }
+                    onDelete()
+                    onDismiss()
+                }) { Text("삭제", fontSize = 13.sp, color = tokens.accent) }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("볼륨", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
+                Slider(
+                    value = clip.volumeScale,
+                    valueRange = com.dubcast.shared.domain.model.BgmClip.MIN_VOLUME..com.dubcast.shared.domain.model.BgmClip.MAX_VOLUME,
+                    onValueChange = onUpdateVolume,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("${(clip.volumeScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("속도", style = MaterialTheme.typography.labelSmall, color = tokens.mutedText)
+                Slider(
+                    value = clip.speedScale,
+                    valueRange = com.dubcast.shared.domain.model.BgmClip.MIN_SPEED..com.dubcast.shared.domain.model.BgmClip.MAX_SPEED,
+                    onValueChange = onUpdateSpeed,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("${(clip.speedScale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = tokens.onBackgroundPrimary)
+            }
         }
     }
 }

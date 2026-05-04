@@ -10,11 +10,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
-import androidx.compose.ui.viewinterop.UIKitViewController
 import kotlinx.cinterop.CValue
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCAction
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -31,14 +33,12 @@ import platform.AVFoundation.AVPlayerLayer
 import platform.AVFoundation.AVURLAsset
 import platform.AVFoundation.AVURLAssetPreferPreciseDurationAndTimingKey
 import platform.AVFoundation.addMutableTrackWithMediaType
-import platform.AVFoundation.currentItem
 import platform.AVFoundation.currentTime
 import platform.AVFoundation.duration
 import platform.AVFoundation.insertTimeRange
 import platform.AVFoundation.pause
 import platform.AVFoundation.play
 import platform.AVFoundation.rate
-import platform.AVFoundation.replaceCurrentItemWithPlayerItem
 import platform.AVFoundation.scaleTimeRange
 import platform.AVFoundation.seekToTime
 import platform.AVFoundation.setForwardPlaybackEndTime
@@ -46,7 +46,6 @@ import platform.AVFoundation.setRate
 import platform.AVFoundation.setVolume
 import platform.AVFoundation.tracksWithMediaType
 import platform.AVFoundation.volume
-import platform.AVKit.AVPlayerViewController
 import platform.CoreGraphics.CGRect
 import platform.CoreGraphics.CGRectMake
 import platform.CoreMedia.CMTimeGetSeconds
@@ -57,7 +56,6 @@ import platform.CoreMedia.kCMPersistentTrackID_Invalid
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplicationWillResignActiveNotification
-import platform.UIKit.UIUserInterfaceStyle
 import platform.UIKit.UIView
 import platform.darwin.NSObjectProtocol
 import kotlin.native.ObjCName
@@ -181,7 +179,6 @@ private fun SingleItemVideoPlayer(
     val onEndedState = rememberUpdatedState(onEnded)
     val onPositionChangedState = rememberUpdatedState(onPositionChanged)
 
-    // Player 가 새로 만들어질 때마다 observer 재부착 + trimStart seek + 이전 player 정리.
     DisposableEffect(player) {
         val bgObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter.addObserverForName(
             name = UIApplicationWillResignActiveNotification,
@@ -195,7 +192,6 @@ private fun SingleItemVideoPlayer(
             queue = null,
             usingBlock = { _ -> onEndedState.value() }
         )
-        // 새 player 의 첫 frame 위치를 trimStart 로.
         player.seekToTime(
             CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
         )
@@ -203,7 +199,6 @@ private fun SingleItemVideoPlayer(
             NSNotificationCenter.defaultCenter.removeObserver(bgObserver)
             NSNotificationCenter.defaultCenter.removeObserver(endObserver)
             player.pause()
-            // 다음 player 가 player swap 으로 attach 되므로 여기선 명시 detach 안 함.
         }
     }
 
@@ -215,7 +210,8 @@ private fun SingleItemVideoPlayer(
         }
     }
 
-    // 외부 seek — 글로벌 ms × speed → segment-local ms (+ trimStart).
+    // 글로벌 ms × speed → segment-local ms (+ trimStart). 0.5초 가드는 self-echo 차단용
+    // (position 폴링 → ViewModel state → seekToMs 미세 변동 루프).
     LaunchedEffect(player, seekToMs) {
         if (seekToMs == null) return@LaunchedEffect
         val speed = if (item.speedScale > 0f) item.speedScale else 1f
@@ -228,11 +224,15 @@ private fun SingleItemVideoPlayer(
     LaunchedEffect(player) {
         val speed = if (item.speedScale > 0f) item.speedScale else 1f
         val trimStartSec = item.trimStartMs / 1000.0
+        var lastReportedMs = -1L
         while (true) {
             val sec = CMTimeGetSeconds(player.currentTime())
             if (!sec.isNaN()) {
                 val globalMs = (((sec - trimStartSec) / speed) * 1000.0).toLong().coerceAtLeast(0L)
-                onPositionChangedState.value(globalMs)
+                if (globalMs != lastReportedMs) {
+                    onPositionChangedState.value(globalMs)
+                    lastReportedMs = globalMs
+                }
             }
             delay(200)
         }
@@ -337,6 +337,7 @@ private fun MultiSegmentVideoPlayer(
     LaunchedEffect(player) {
         val p = player ?: return@LaunchedEffect
         var lastVolume = Float.NaN
+        var lastReportedMs = -1L
         while (true) {
             val sec = CMTimeGetSeconds(p.currentTime())
             if (!sec.isNaN()) {
@@ -361,7 +362,10 @@ private fun MultiSegmentVideoPlayer(
                         lastVolume = curVol
                     }
                 }
-                onPositionChangedState.value(globalMs)
+                if (globalMs != lastReportedMs) {
+                    onPositionChangedState.value(globalMs)
+                    lastReportedMs = globalMs
+                }
             }
             delay(200)
         }
@@ -385,19 +389,23 @@ private fun MultiSegmentVideoPlayer(
  */
 @OptIn(ExperimentalForeignApi::class)
 private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlayer {
-    val assets = items.map { item ->
+    // Split 결과는 같은 sourceUri 를 N개 segment 가 공유 → sourceUri 별 dedupe 로 asset 1개씩만.
+    val assetBySourceUri = items.map { it.sourceUri }.toSet().associateWith { uri ->
         AVURLAsset(
-            uRL = toFileUrl(item.sourceUri),
+            uRL = toFileUrl(uri),
             options = mapOf<Any?, Any>(AVURLAssetPreferPreciseDurationAndTimingKey to true),
         )
     }
-    // 모든 asset 의 tracks/duration 을 동시 async load 후 await.
-    assets.map { asset ->
-        suspendCancellableCoroutine<Unit> { cont ->
-            asset.loadValuesAsynchronouslyForKeys(listOf("tracks", "duration")) {
-                if (cont.isActive) cont.resume(Unit) {}
+    coroutineScope {
+        assetBySourceUri.values.map { asset ->
+            async {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    asset.loadValuesAsynchronouslyForKeys(listOf("tracks", "duration")) {
+                        if (cont.isActive) cont.resume(Unit) {}
+                    }
+                }
             }
-        }
+        }.awaitAll()
     }
 
     val composition = AVMutableComposition()
@@ -410,8 +418,8 @@ private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlay
         AVMediaTypeAudio, kCMPersistentTrackID_Invalid
     ) as? AVMutableCompositionTrack
 
-    items.forEachIndexed { idx, item ->
-        val asset = assets[idx]
+    items.forEach { item ->
+        val asset = assetBySourceUri.getValue(item.sourceUri)
         @Suppress("UNCHECKED_CAST")
         val srcVideo = (asset.tracksWithMediaType(AVMediaTypeVideo) as? List<AVAssetTrack>)
             ?.firstOrNull()

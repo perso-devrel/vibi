@@ -17,17 +17,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +54,10 @@ import com.dubcast.shared.ui.timeline.stemDisplayLabel
  * legacy `AudioSeparationSheet` 의 등가. TimelineViewModel 의
  * `onUpdateSeparationSpeakers`, `onStartSeparation`, `onToggleStemSelection`,
  * `onUpdateStemVolume`, `onConfirmStemMix`, `onDismissAudioSeparationSheet` 호출.
+ *
+ * BgmActionSheet 와 동일 ModalBottomSheet 포맷 — title row + content + footer (confirm/dismiss).
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AudioSeparationSheet(
     state: AudioSeparationUiState,
@@ -66,25 +70,40 @@ fun AudioSeparationSheet(
     onDismiss: () -> Unit,
     onDelete: (() -> Unit)? = null,
 ) {
+    val tokens = com.dubcast.cmp.theme.LocalDubCastColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val previewer = rememberAudioPreviewer()
     // 전체 재생 — 선택된 stem 다수를 동시에 재생하기 위한 mixer. 개별 ▶ 는 previewer 단일 player.
     val mixer = rememberStemMixer()
     // 현재 재생 중인 stemId. "all" = 전체 미리듣기 (mixer). null = 재생 안 됨. 그 외 = 단일 stem (previewer).
     var playingId by remember { mutableStateOf<String?>(null) }
-    AlertDialog(
-        onDismissRequest = {
-            previewer.stop()
-            mixer.pause()
-            playingId = null
-            onDismiss()
-        },
-        title = {
+    val dismissAndCleanup: () -> Unit = {
+        previewer.stop()
+        mixer.pause()
+        playingId = null
+        onDismiss()
+    }
+    ModalBottomSheet(
+        onDismissRequest = dismissAndCleanup,
+        sheetState = sheetState,
+        containerColor = tokens.panelBg,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             // PICK_STEMS 단계엔 title 우측에 "▶ 전체" / "⏸ 전체" 토글.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("음원 분리", modifier = Modifier.weight(1f))
+                Text(
+                    "음원 분리",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
                 if (state.step == AudioSeparationStep.PICK_STEMS) {
                     val isAllPlaying = playingId == "all"
                     TextButton(onClick = {
@@ -124,8 +143,6 @@ fun AudioSeparationSheet(
                     }
                 }
             }
-        },
-        text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 when (state.step) {
                     AudioSeparationStep.SETUP -> {
@@ -215,47 +232,42 @@ fun AudioSeparationSheet(
                     }
                 }
             }
-        },
-        confirmButton = {
-            when (state.step) {
-                AudioSeparationStep.SETUP -> Button(
-                    enabled = state.canStart,
-                    onClick = onStart
-                ) { Text("분리 시작") }
-
-                AudioSeparationStep.PICK_STEMS -> Button(
-                    enabled = state.canMix,
-                    onClick = onConfirmMix
-                ) { Text("적용") }
-
-                AudioSeparationStep.DONE,
-                AudioSeparationStep.FAILED -> Button(onClick = onDismiss) { Text("닫기") }
-
-                else -> Unit
-            }
-        },
-        dismissButton = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Footer — confirm + dismiss/delete 한 row 에. AlertDialog 의 confirmButton/
+            // dismissButton 슬롯 등가물이지만 ModalBottomSheet 는 직접 배치.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (onDelete != null && state.step == AudioSeparationStep.PICK_STEMS) {
                     TextButton(onClick = {
                         previewer.stop()
                         mixer.pause()
                         playingId = null
                         onDelete()
-                    }) {
-                        Text("삭제", color = MaterialTheme.colorScheme.error)
-                    }
-                    Spacer(Modifier.size(4.dp))
+                    }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
                 }
-                TextButton(onClick = {
-                    previewer.stop()
-                    mixer.pause()
-                    playingId = null
-                    onDismiss()
-                }) { Text("취소") }
+                TextButton(onClick = dismissAndCleanup) { Text("취소") }
+                Spacer(Modifier.weight(1f))
+                when (state.step) {
+                    AudioSeparationStep.SETUP -> Button(
+                        enabled = state.canStart,
+                        onClick = onStart,
+                    ) { Text("분리 시작") }
+
+                    AudioSeparationStep.PICK_STEMS -> Button(
+                        enabled = state.canMix,
+                        onClick = onConfirmMix,
+                    ) { Text("적용") }
+
+                    AudioSeparationStep.DONE,
+                    AudioSeparationStep.FAILED -> Button(onClick = dismissAndCleanup) { Text("닫기") }
+
+                    else -> Unit
+                }
             }
         }
-    )
+    }
 }
 
 @Composable

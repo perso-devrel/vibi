@@ -56,6 +56,14 @@ actual fun rememberAudioRecorder(
     return remember {
         object : AudioRecorderController {
             override val isRecording: Boolean get() = recording
+            override val currentLevel: Float get() {
+                val rec = recorder ?: return 0f
+                if (!recording) return 0f
+                val amp = runCatching { rec.maxAmplitude }.getOrDefault(0)
+                if (amp <= 0) return 0f
+                val norm = (kotlin.math.log10(amp.toFloat()) - 1.5f) / 3.0f
+                return norm.coerceIn(0f, 1f)
+            }
 
             override fun start() {
                 if (recording) return

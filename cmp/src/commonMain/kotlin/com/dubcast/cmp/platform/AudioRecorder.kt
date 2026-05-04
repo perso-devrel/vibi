@@ -24,4 +24,9 @@ interface AudioRecorderController {
     fun stop()
     /** 현재 녹음 중인지. UI 의 ▶/⏹ 토글 표시용. */
     val isRecording: Boolean
+    /**
+     * 현재 마이크 입력 레벨 — 0f (무음) ~ 1f (clipping). 호출 시점 peak power 를 dB → linear
+     * 정규화. polling 으로 ~100ms 마다 읽어 시각화. 녹음 중이 아닐 땐 0f.
+     */
+    val currentLevel: Float
 }
