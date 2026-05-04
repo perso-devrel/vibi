@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
-import com.dubcast.cmp.platform.MediaPicker
+import com.dubcast.cmp.platform.rememberMediaPickerLauncher
 import com.dubcast.cmp.ui.cupertino.BodyText
 import com.dubcast.cmp.ui.cupertino.PageScaffold
 import com.dubcast.cmp.ui.cupertino.SecondaryText
@@ -68,92 +68,121 @@ fun InputScreen(
         }
     }
 
+    val pickLauncher = rememberMediaPickerLauncher { uri -> viewModel.onVideoPicked(uri) }
+
     PageScaffold(title = "영상 선택") {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
         ) {
-            // Hero placeholder — Apple TV+ 처럼 콘텐츠 hero 카드
+            // Hero CTA — 화면에 들어오자마자 가장 큰 element 가 "갤러리에서 영상 선택".
+            // 카드 전체가 클릭 가능. selectedVideo 없으면 강조 그라디언트 + 큰 갤러리 글리프 + CTA 텍스트,
+            // 있으면 같은 카드가 "다른 영상 선택" 으로 변환되며 작은 메타 표시.
             Spacer(Modifier.height(20.dp))
+            val isFirstPick = state.selectedVideo == null
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .height(if (isFirstPick) 240.dp else 180.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .background(
                         Brush.linearGradient(
-                            colors = listOf(
+                            colors = if (isFirstPick) listOf(
                                 Color(0xFF6E45E2),
                                 Color(0xFF88D3CE)
+                            ) else listOf(
+                                Color(0xFF1F2024),
+                                Color(0xFF2A2C32)
                             )
                         )
                     )
-                    .padding(24.dp),
-                contentAlignment = Alignment.BottomStart
+                    .clickable { pickLauncher() }
+                    .padding(28.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Column {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    // 큰 갤러리 글리프 — 사진 아이콘 자리. UTF 글리프로 무료, 추후 vector asset 교체 가능.
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x33FFFFFF)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "▶",
+                            style = TextStyle(
+                                fontSize = 30.sp,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        )
+                    }
+                    Spacer(Modifier.height(if (isFirstPick) 18.dp else 12.dp))
                     Text(
-                        "Vibi 로 영상을 새롭게 입혀보세요",
+                        text = if (isFirstPick) "갤러리에서 영상 선택"
+                               else "다른 영상 선택",
                         style = TextStyle(
-                            fontSize = 24.sp,
+                            fontSize = if (isFirstPick) 22.sp else 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
                         )
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "음원 분리 · 더빙 · 자막 · 간단한 영상 편집까지 한 번에.",
-                        style = TextStyle(
-                            fontSize = 14.sp,
-                            color = Color(0xCCFFFFFF)
+                    if (isFirstPick) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "음원 분리 · 더빙 · 자막을 한 번에",
+                            style = TextStyle(
+                                fontSize = 13.sp,
+                                color = Color(0xCCFFFFFF),
+                            )
                         )
-                    )
+                    }
                 }
             }
 
-            Section(header = "비디오") {
-                SectionRow {
-                    MediaPicker(
-                        label = if (state.selectedVideo == null) "갤러리에서 영상 선택"
-                                else "다른 영상 선택",
-                        onPicked = { uri -> viewModel.onVideoPicked(uri) }
-                    )
-                }
-                state.selectedVideo?.let { info ->
-                    SectionRow {
-                        Column {
-                            BodyText("선택된 영상")
-                            Spacer(Modifier.height(2.dp))
-                            SecondaryText("${info.durationMs / 1000}초 · ${info.width}×${info.height}")
+            // 선택된 영상 메타·검증 결과 — hero 아래 평범한 Section.
+            if (state.selectedVideo != null || state.isExtracting || state.validationResult != null) {
+                Section(header = "선택된 영상") {
+                    state.selectedVideo?.let { info ->
+                        SectionRow {
+                            Column {
+                                BodyText("${info.durationMs / 1000}초")
+                                Spacer(Modifier.height(2.dp))
+                                SecondaryText("${info.width}×${info.height}")
+                            }
                         }
                     }
-                }
-                if (state.isExtracting) {
-                    SectionRow { SecondaryText("메타데이터 분석 중…") }
-                }
-                when (val v = state.validationResult) {
-                    ValidationResult.Valid -> SectionRow {
-                        Text(
-                            "✓  사용 가능",
-                            style = TextStyle(
-                                fontSize = 17.sp,
-                                color = Color(0xFF30D158),
-                                fontWeight = FontWeight.Medium
-                            )
-                        )
+                    if (state.isExtracting) {
+                        SectionRow { SecondaryText("메타데이터 분석 중…") }
                     }
-                    is ValidationResult.Invalid -> SectionRow {
-                        Text(
-                            "✕  ${v.reason.name}",
-                            style = TextStyle(
-                                fontSize = 17.sp,
-                                color = Color(0xFFFF453A),
-                                fontWeight = FontWeight.Medium
+                    when (val v = state.validationResult) {
+                        ValidationResult.Valid -> SectionRow {
+                            Text(
+                                "✓  사용 가능",
+                                style = TextStyle(
+                                    fontSize = 17.sp,
+                                    color = Color(0xFF30D158),
+                                    fontWeight = FontWeight.Medium
+                                )
                             )
-                        )
+                        }
+                        is ValidationResult.Invalid -> SectionRow {
+                            Text(
+                                "✕  ${v.reason.name}",
+                                style = TextStyle(
+                                    fontSize = 17.sp,
+                                    color = Color(0xFFFF453A),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            )
+                        }
+                        null -> Unit
                     }
-                    null -> Unit
                 }
             }
 
