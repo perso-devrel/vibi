@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -596,7 +597,11 @@ fun TimelineScreen(
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
                     }
                 }
-                if (state.isSegmentEditMode) {
+                // 구간이 실제로 선택됐을 때만 (range slider 가 zero-width 가 아닐 때) 편집 옵션
+                // 노출 — 진입 직후 빈 선택 상태에선 슬라이더만 보이고 패널은 숨김.
+                if (state.isSegmentEditMode &&
+                    state.pendingRangeEndMs > state.pendingRangeStartMs
+                ) {
                     SegmentEditActionPanel(
                         volume = state.pendingRangeVolume,
                         speed = state.pendingRangeSpeed,
@@ -1132,16 +1137,19 @@ private fun SegmentEditActionPanel(
                 color = tokens.onBackgroundPrimary,
                 modifier = Modifier.weight(1f),
             )
+            // 복제/삭제 — 사용자가 가장 자주 누르는 액션이라 accent (iOS 파랑) 로 강조.
             OutlinedButton(
                 onClick = onDuplicate,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(30.dp),
-            ) { Text("복제", fontSize = 12.sp) }
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
+            ) { Text("복제", fontSize = 12.sp, color = tokens.accent) }
             OutlinedButton(
                 onClick = onDelete,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(30.dp),
-            ) { Text("삭제", fontSize = 12.sp) }
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
+            ) { Text("삭제", fontSize = 12.sp, color = tokens.accent) }
         }
 
         // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). 변경된 경우에만 "적용" 버튼이 의미 있음.
