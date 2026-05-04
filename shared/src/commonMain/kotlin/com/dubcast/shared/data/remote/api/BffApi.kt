@@ -40,11 +40,13 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 
-data class BinaryPart(
+// `data class` 대신 일반 class — 자동 생성된 equals/hashCode 가 큰 ByteArray 를 deep 비교하면
+// 무의미한 비용. multipart 빌드용 일회성 컨테이너라 referential equality 로 충분.
+class BinaryPart(
     val fieldName: String,
     val filename: String,
     val bytes: ByteArray,
-    val contentType: String
+    val contentType: String,
 )
 
 class BffApi(

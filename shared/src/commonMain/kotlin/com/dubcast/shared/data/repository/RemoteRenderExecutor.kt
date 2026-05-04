@@ -147,9 +147,11 @@ class RemoteRenderExecutor(
                 }
             }
 
+            // BFF (RenderRoutes.kt) 가 `audio_override` snake_case 로 매칭. 이전엔 camelCase
+            // `audioOverride` 라 BFF 가 silent drop → 자동더빙 결과가 원본 사운드 위에 안 덮여 씌워졌음.
             val audioOverridePart = audioOverridePath?.let { path ->
                 runCatching { readFileBytes(path) }.getOrNull()?.let { bytes ->
-                    BinaryPart("audioOverride", "audio_override.mp3", bytes, "audio/mpeg")
+                    BinaryPart("audio_override", "audio_override.mp3", bytes, "audio/mpeg")
                 }
             }
 
@@ -184,6 +186,9 @@ class RemoteRenderExecutor(
                     )
                 },
                 bgmClips = renderBgmClips,
+                // multipart audio_override 가 있을 때 BFF 가 audio_override 슬롯을 활성화하기
+                // 위해 같은 키를 config 에도 반드시 명시. 누락 시 BFF 는 multipart 파일을 무시.
+                audioOverrideKey = audioOverridePart?.let { "audio_override" },
                 separationDirectives = renderSeparationDirectives
             )
 

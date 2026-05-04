@@ -47,14 +47,19 @@ class SplitSegmentUseCase constructor(
             }
         }
 
+        // pre 는 원본 그대로 trim 만 줄임 — duplicatedFromId 가 있었다면 그대로 보존.
         val pre = if (needsPre) original.copy(trimEndMs = start) else null
 
+        // middle/post 는 split 으로 새로 만들어진 조각이지 duplicate 결과가 아님.
+        // 부모의 duplicatedFromId 를 carry 하면 timeline UI 의 edited 판정에서
+        // "사용자가 의도적으로 편집한 segment" 로 잘못 분류돼 전체가 orange 로 칠해짐.
         val middle = if (needsPre) {
             original.copy(
                 id = generateId(),
                 order = original.order + 1,
                 trimStartMs = start,
-                trimEndMs = end
+                trimEndMs = end,
+                duplicatedFromId = null,
             )
         } else {
             original.copy(trimStartMs = start, trimEndMs = end)
@@ -66,7 +71,8 @@ class SplitSegmentUseCase constructor(
                 id = generateId(),
                 order = postOrder,
                 trimStartMs = end,
-                trimEndMs = trimEnd
+                trimEndMs = trimEnd,
+                duplicatedFromId = null,
             )
         } else null
 

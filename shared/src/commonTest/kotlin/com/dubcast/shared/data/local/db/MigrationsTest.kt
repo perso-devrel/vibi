@@ -22,4 +22,13 @@ class MigrationsTest {
         assertTrue(stmts[2].contains("CREATE TABLE edit_projects_new"))
         assertTrue(stmts[5].contains("RENAME TO edit_projects"))
     }
+
+    @Test
+    fun `ALL_MIGRATIONS last entry endVersion matches max version`() {
+        // 새 migration 추가 시 ALL_MIGRATIONS 등록 누락을 잡는 일반 가드.
+        // 특정 버전을 hard-coded 하지 않으므로 maintenance 비용 없음.
+        val maxVersion = ALL_MIGRATIONS.maxOf { it.endVersion }
+        val latest = ALL_MIGRATIONS.last()
+        assertEquals(latest.endVersion, maxVersion)
+    }
 }

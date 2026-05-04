@@ -160,21 +160,29 @@ fun TimelineScreen(
         }
     }
 
-    // 구간 모드 진입 시 재생 위치가 구간 밖이면 시작점으로 정렬
+    // 구간 모드 진입 + 선택 있는 경우만 재생 위치 정렬 (zero-width 선택 = 자유 재생 허용).
     LaunchedEffect(state.isRangeSelecting) {
-        if (state.isRangeSelecting) {
+        if (state.isRangeSelecting && state.pendingRangeEndMs > state.pendingRangeStartMs) {
             val pos = state.playbackPositionMs
             if (pos < state.pendingRangeStartMs || pos > state.pendingRangeEndMs) {
                 viewModel.onUpdatePlaybackPosition(state.pendingRangeStartMs)
             }
         }
     }
-    // 재생 중 구간 끝 도달 시 시작점으로 자동 seek (loop). 사용자 수동 seek 와 충돌 방지를 위해
-    // endMs 를 넘었을 때만 보정 — 시작점보다 앞으로 가는 건 사용자 의도일 수 있어 손대지 않음.
+    // 재생 중 구간 끝 도달 시 시작점으로 자동 seek (loop). 단 선택이 있을 때만 — 빈 선택 상태에선
+    // loop 없이 영상 끝까지 자유 재생.
+    //
+    // LaunchedEffect 의 block 안 `state` 는 launch 시점 캡처라 stale — playbackPositionMs / pendingRangeEnd
+    // 가 갱신되어도 while 조건이 옛 값을 보고 동작 안 함 (음원만 계속 진행 / 재생바만 멈추는 결함).
+    // viewModel.uiState.value 로 매 tick fresh fetch.
     LaunchedEffect(state.isRangeSelecting, state.isPlaying) {
-        while (state.isRangeSelecting && state.isPlaying) {
-            if (state.playbackPositionMs >= state.pendingRangeEndMs) {
-                viewModel.onUpdatePlaybackPosition(state.pendingRangeStartMs)
+        while (true) {
+            val cur = viewModel.uiState.value
+            if (!cur.isRangeSelecting || !cur.isPlaying) break
+            if (cur.pendingRangeEndMs > cur.pendingRangeStartMs &&
+                cur.playbackPositionMs >= cur.pendingRangeEndMs
+            ) {
+                viewModel.onUpdatePlaybackPosition(cur.pendingRangeStartMs)
             }
             delay(100)
         }
@@ -256,8 +264,10 @@ fun TimelineScreen(
                     )
                 }
                 // 저장 아이콘 — 진행 중이면 percent 텍스트로 토글.
+                // segments 비어있으면 ExportWithDubbingUseCase 가 require(isNotEmpty) 에서 throw →
+                // 사용자가 silent crash 보기 전에 버튼 단계에서 차단.
                 IconButton(
-                    enabled = !saving && !saveAnyJobRunning,
+                    enabled = !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
                     onClick = { viewModel.onSaveAllVariants() },
                     modifier = Modifier.size(40.dp),
                 ) {
@@ -354,12 +364,39 @@ fun TimelineScreen(
             contentAlignment = Alignment.Center
         ) {
             if (state.videoUri.isNotEmpty()) {
-                // 미리보기 언어 선택 시 BFF 가 mux 한 mp4 path 로 video uri 자체 swap.
-                // 없으면 (생성 미완료 / mux 실패) 원본 영상 fallback.
-                val previewVideoUri = state.previewLangCode?.let { state.dubbedVideoPaths[it] }
-                    ?: state.videoUri
+                // 미리보기 언어 선택 시 BFF 가 mux 한 단일 mp4 (전체 timeline 더빙 결과) 사용.
+                // BFF AutoDubService 는 영상 전체를 한 번에 더빙해 timeline 전체용 결과 1 개를 반환 →
+                // split 으로 segment 가 여러개여도 미리보기는 단일 player item 으로 collapse.
+                // (이전: 첫 segment 만 swap → 후반부 원본 사운드로 재생되던 결함)
+                val previewMuxUri = state.previewLangCode?.let { state.dubbedVideoPaths[it] }
+                val videoSegs = state.segments.filter {
+                    it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO
+                }
+                val playerItems = if (previewMuxUri != null) {
+                    listOf(
+                        com.dubcast.cmp.platform.VideoPlayerItem(
+                            sourceUri = previewMuxUri,
+                            trimStartMs = 0L,
+                            trimEndMs = 0L,
+                            speedScale = 1f,
+                            volumeScale = 1f,
+                        )
+                    )
+                } else {
+                    // segments 를 VideoPlayerItem playlist 로 변환 — multi-segment / 복제 / 삭제 결과
+                    // 모두 미리보기에 즉시 반영. trim/speed/volume per-item 적용.
+                    videoSegs.map { seg ->
+                        com.dubcast.cmp.platform.VideoPlayerItem(
+                            sourceUri = seg.sourceUri,
+                            trimStartMs = seg.trimStartMs,
+                            trimEndMs = if (seg.trimEndMs > 0L) seg.trimEndMs else 0L,
+                            speedScale = seg.speedScale,
+                            volumeScale = seg.volumeScale,
+                        )
+                    }
+                }
                 VideoPlayer(
-                    uri = previewVideoUri,
+                    items = playerItems,
                     isPlaying = state.isPlaying,
                     seekToMs = state.playbackPositionMs.takeIf { state.videoDurationMs > 0 },
                     onPositionChanged = { ms -> viewModel.onUpdatePlaybackPosition(ms) },
@@ -524,6 +561,7 @@ fun TimelineScreen(
                 trackColor = tokens.timelineBarTrack,
                 segmentColor = tokens.timelineBarSegment,
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
+                directiveColor = tokens.timelineBarDirective,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
                 onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
@@ -678,7 +716,7 @@ fun TimelineScreen(
                             when {
                                 state.isAddingBgm -> "⏳ 추가 중"
                                 recording -> "⏹ 녹음 종료"
-                                else -> "🎵 음원 삽입"
+                                else -> "음원 삽입"
                             },
                             fontSize = 14.sp,
                         )
@@ -688,14 +726,14 @@ fun TimelineScreen(
                         onDismissRequest = { audioMenuOpen = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("📁 업로드 하기") },
+                            text = { Text("파일 업로드") },
                             onClick = {
                                 audioMenuOpen = false
                                 audioPicker.launch()
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("🎙 즉시 녹음하기") },
+                            text = { Text("즉시 녹음") },
                             onClick = {
                                 audioMenuOpen = false
                                 recorder.start()
@@ -1198,6 +1236,7 @@ private fun UnifiedTimelineBar(
     trackColor: Color,
     segmentColor: Color,
     segmentEditedColor: Color,
+    directiveColor: Color,
     onSegmentTap: (String) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
@@ -1297,11 +1336,12 @@ private fun UnifiedTimelineBar(
                 horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
             ) {
                 segments.forEach { seg ->
-                    val edited = seg.volumeScale != 1.0f ||
-                        seg.speedScale != 1.0f ||
-                        seg.trimStartMs > 0L ||
-                        (seg.trimEndMs > 0L && seg.trimEndMs < seg.durationMs) ||
-                        seg.duplicatedFromId != null
+                    // 편집됨 = 사용자가 의도적으로 변경한 속성. trim 만으로는 split 결과 (자동 발생)
+                    // 와 구분 안 되므로 색 표시에서 제외 — 100% 볼륨/속도, duplicatedFromId 미사용 도
+                    // 미편집 취급.
+                    val edited = (seg.volumeScale != 1.0f) ||
+                        (seg.speedScale != 1.0f) ||
+                        (seg.duplicatedFromId != null)
                     // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
                     Box(
                         modifier = Modifier
@@ -1324,10 +1364,11 @@ private fun UnifiedTimelineBar(
                     if (gap > 0L) Spacer(Modifier.weight(gap.toFloat()))
                     val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
                     // range 모드에서는 directive 탭 비활성 — 음원분리 sheet 안 열리도록.
+                    // 색은 edited segment 와 구별되는 짙은 grey — 사용자 가이드.
                     val directiveModifier = Modifier
                         .weight(w.toFloat())
                         .fillMaxHeight()
-                        .background(segmentEditedColor)
+                        .background(directiveColor)
                         .let { if (!showRange) it.clickable { onDirectiveTap(directive.id) } else it }
                     Box(modifier = directiveModifier)
                     prevEnd = directive.rangeEndMs

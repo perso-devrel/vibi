@@ -29,8 +29,17 @@ data class DubCastColors(
     val timelineBarTrack: Color,
     /** 통합 타임라인 바 — 기본 segment / directive 블록 색. 중성 회색 톤. */
     val timelineBarSegment: Color,
-    /** 통합 타임라인 바 — 편집 적용된 segment 색. 기본보다 한 단계 밝은 회색. */
+    /**
+     * 통합 타임라인 바 — 편집 적용된 segment 색. accent (selection 표시) 와도, 기본 segment 색과도
+     * 명확히 구별되는 warm tint. volumeScale != 1 / speedScale != 1 / trim / duplicatedFromId 중
+     * 하나라도 있으면 사용.
+     */
     val timelineBarSegmentEdited: Color,
+    /**
+     * 통합 타임라인 바 — 음성분리 directive 블록 색. 사용자 가이드: "edited segment 와 명확히 구별,
+     * 짙은 회색". directive 는 사용자가 분리 적용한 구간이지 segment 자체 편집과 다름.
+     */
+    val timelineBarDirective: Color,
 )
 
 val DarkDubCastColors = DubCastColors(
@@ -45,7 +54,8 @@ val DarkDubCastColors = DubCastColors(
     accent = Color(0xFF0A84FF),
     timelineBarTrack = Color(0xFF1F1F22),
     timelineBarSegment = Color(0xFF3A3A3C),
-    timelineBarSegmentEdited = Color(0xFF6B6B6E),
+    timelineBarSegmentEdited = Color(0xFFFF9F0A),  // iOS systemOrange (다크) — accent 파랑과 시각 분리
+    timelineBarDirective = Color(0xFF6B6B6E),  // segment 보다 약간 짙은 grey
 )
 
 val LightDubCastColors = DubCastColors(
@@ -60,7 +70,8 @@ val LightDubCastColors = DubCastColors(
     accent = Color(0xFF007AFF),
     timelineBarTrack = Color(0xFFE5E5EA),
     timelineBarSegment = Color(0xFFC7C7CC),
-    timelineBarSegmentEdited = Color(0xFF8E8E93),
+    timelineBarSegmentEdited = Color(0xFFFF9500),  // iOS systemOrange (라이트) — accent 와 시각 분리
+    timelineBarDirective = Color(0xFF8E8E93),  // segment 보다 약간 짙은 grey
 )
 
 val LocalDubCastColors = staticCompositionLocalOf { DarkDubCastColors }

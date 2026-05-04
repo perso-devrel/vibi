@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class PreviewDubClip(
@@ -702,13 +703,15 @@ class TimelineViewModel constructor(
 
     fun onUpdatePlaybackPosition(positionMs: Long) {
         val s = _uiState.value
-        // 음원분리 range 모드: 재생 marker 는 선택된 pendingRange 안으로 clamp.
-        // 영상편집 모드: 자유 scrub (clamp 안 함). 평상시: 영상 길이 안으로만.
+        val total = s.videoDurationMs.coerceAtLeast(0L)
+        val hasSelection = s.pendingRangeEndMs > s.pendingRangeStartMs
+        // range 모드 (음원분리/영상편집) + 선택 있음 → pendingRange 안으로 clamp.
+        // zero-width 선택 또는 평상 모드 → 영상 전체 자유 재생.
         val clamped = when {
-            s.isRangeSelecting && !s.isSegmentEditMode ->
+            s.isRangeSelecting && hasSelection ->
                 positionMs.coerceIn(s.pendingRangeStartMs, s.pendingRangeEndMs)
             else ->
-                positionMs.coerceIn(0L, s.videoDurationMs.coerceAtLeast(0L))
+                positionMs.coerceIn(0L, total)
         }
         _uiState.value = s.copy(playbackPositionMs = clamped)
     }
@@ -1602,10 +1605,13 @@ class TimelineViewModel constructor(
      * 선택 상태로 만든다. 볼륨/속도 슬라이더 초기값도 그 segment 의 현재 값으로.
      * 재생 헤드를 segment 시작점으로 이동 — 사용자가 어느 segment 를 보고 있는지 즉시 확인.
      */
+    /**
+     * 사용자 탭 진입점. 같은 segment 재탭 → 선택 해제 토글. 다른 id → 그 segment 로 select.
+     * 시스템(편집 후 자동 reselect) 용 path 는 [selectSegmentInEditInternal] 직접 호출 — 토글 로직 우회.
+     */
     fun onSelectSegmentInEdit(segmentId: String) {
         val state = _uiState.value
         if (!state.isSegmentEditMode) return
-        // 같은 segment 재탭 → 선택 해제 (영상편집 모드 유지, range 만 비움).
         if (state.selectedSegmentId == segmentId &&
             state.pendingRangeEndMs > state.pendingRangeStartMs
         ) {
@@ -1617,6 +1623,16 @@ class TimelineViewModel constructor(
             )
             return
         }
+        selectSegmentInEditInternal(segmentId)
+    }
+
+    /**
+     * 토글 없이 강제 select — 시스템에서 호출 (apply/duplicate/delete 직후 새 middle 로 reselect).
+     * 사용자 탭 동작과 분리해 race 가 deselect 로 빠지지 않게 한다.
+     */
+    private fun selectSegmentInEditInternal(segmentId: String) {
+        val state = _uiState.value
+        if (!state.isSegmentEditMode) return
         val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
         val segStart = segmentStartOffsetMs(state.segments, seg.id)
@@ -1668,16 +1684,22 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             if (baseline != null) {
                 restoreSnapshot(baseline)
+                // restoreSnapshot 은 Room 만 복원 → state.segments 는 collector emit 에 의존하는데
+                // emit 지연 시 사용자가 변경 후 segments 를 그대로 보게 되어 "적용된 것처럼" 보임.
+                // 즉시 fetch 로 강제 동기화.
+                refreshSegmentsStateFromDb()
             }
             preEditBaseline = null
             editModeUndoRedoManager.clear()
-            _uiState.value = _uiState.value.copy(
-                isRangeSelecting = false,
-                isSegmentEditMode = false,
-                rangeTargetSegmentId = null,
-                showRangeActionSheet = false,
-                selectedSegmentId = null,
-            )
+            _uiState.update {
+                it.copy(
+                    isRangeSelecting = false,
+                    isSegmentEditMode = false,
+                    rangeTargetSegmentId = null,
+                    showRangeActionSheet = false,
+                    selectedSegmentId = null,
+                )
+            }
             updateUndoRedoState()
         }
     }
@@ -1805,18 +1827,13 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 영상편집 모드: 현재 selectedSegmentId 의 segment global bounds 안으로 clamp.
+     * 영상편집 모드: 전체 timeline [0, totalMs] — sliceGlobalRange 가 다중 segment 자동 처리.
      * 음원분리 모드: directive-free interval 안으로 clamp.
      */
     private fun rangeBoundsForCurrentMode(): Pair<Long, Long> {
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(0L)
         if (state.isSegmentEditMode) {
-            val seg = state.segments.firstOrNull { it.id == state.selectedSegmentId }
-            if (seg != null) {
-                val segStart = segmentStartOffsetMs(state.segments, seg.id)
-                return segStart to (segStart + seg.effectiveDurationMs)
-            }
             return 0L to total
         }
         val freeFromEnd = freeIntervalContaining(state.pendingRangeEndMs)
@@ -1915,6 +1932,30 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(pendingRangeSpeed = value.coerceIn(0.25f, 4f))
     }
 
+    /**
+     * 편집 mutation (split/remove/duplicate/volume/speed) 직후 _uiState.segments 를 동기 fetch 로
+     * 강제 갱신 — Room observe Flow emit 지연이 reselect 시점에 stale segments 보게 만드는 race 우회.
+     * loadSegments collector 가 다음 emit 에서 같은 값으로 덮어쓰지만 결과는 idempotent.
+     *
+     * `_uiState.update {}` (atomic CAS) 로 다른 launch 의 read-modify-write 와 인터리브 시
+     * stale state 위에 segments 만 partial update 되는 race 차단. 본 함수가 await 하는 동안
+     * 다른 mutation handler 가 selectedSegmentId 등을 갱신해도 그 값을 보존.
+     */
+    private suspend fun refreshSegmentsStateFromDb() {
+        val fresh = segmentRepository.getByProjectId(projectId)
+        val total = fresh.sumOf { it.effectiveDurationMs }
+        val first = fresh.firstOrNull()
+        _uiState.update { current ->
+            current.copy(
+                segments = fresh,
+                videoDurationMs = total,
+                videoUri = first?.sourceUri.orEmpty(),
+                videoWidth = first?.width ?: 0,
+                videoHeight = first?.height ?: 0,
+            )
+        }
+    }
+
     fun onDuplicateRange() {
         val state = _uiState.value
         val start = state.pendingRangeStartMs
@@ -1922,17 +1963,15 @@ class TimelineViewModel constructor(
         if (end - start < MIN_RANGE_MS) return
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
         val wasSegmentEdit = state.isSegmentEditMode
-        // Hide UI immediately for instant feedback; the actual split work
-        // continues in the background.
         resetRangeMode()
         viewModelScope.launch {
             var lastDuplicated: com.dubcast.shared.domain.model.Segment? = null
             slices.forEach { s ->
                 lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
             }
-            // 영상편집 모드: 새로 생긴 duplicate 를 selection 으로 — 사용자가 후속 편집 바로 가능.
+            refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
-                lastDuplicated?.id?.let { onSelectSegmentInEdit(it) }
+                lastDuplicated?.id?.let { selectSegmentInEditInternal(it) }
             }
             pushUndoState()
         }
@@ -1948,10 +1987,10 @@ class TimelineViewModel constructor(
         resetRangeMode()
         viewModelScope.launch {
             slices.forEach { s -> removeSegmentRange(s.segmentId, s.localStart, s.localEnd) }
-            // 영상편집 모드: 삭제 후 선택 segment 가 사라졌을 수 있어 첫 video segment 로 reselect.
+            refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
-                    ?.id?.let { onSelectSegmentInEdit(it) }
+                    ?.id?.let { selectSegmentInEditInternal(it) }
             }
             pushUndoState()
         }
@@ -1972,9 +2011,9 @@ class TimelineViewModel constructor(
                 updateSegmentVolume(r.middle.id, value)
                 lastMiddleId = r.middle.id
             }
-            // 영상편집 모드: 분할로 새 segment 가 생겼으면 그걸 select — selection stale 방지.
+            refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
-                lastMiddleId?.let { onSelectSegmentInEdit(it) }
+                lastMiddleId?.let { selectSegmentInEditInternal(it) }
             }
             pushUndoState()
         }
@@ -1987,16 +2026,32 @@ class TimelineViewModel constructor(
         if (end - start < MIN_RANGE_MS) return
         val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
         val wasSegmentEdit = state.isSegmentEditMode
+        val newSpeed = if (value > 0f) value else 1f
         resetRangeMode()
         viewModelScope.launch {
             var lastMiddleId: String? = null
             slices.forEach { s ->
-                val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
+                // 사용자가 글로벌 timeline 에서 선택한 영역 = 새 speedScale 적용 후에도 동일 글로벌 길이
+                // 유지. sliceGlobalRange 는 현재 segment.speedScale 반영해 source 좌표로 변환했으므로
+                // origLocalLen = (글로벌 길이) × (현재 speed). 새 speed 적용 후 글로벌 길이를
+                // 그대로 두려면 source 영역을 (newSpeed / curSpeed) 배 확장해야.
+                // 즉 사용자 직관 = "선택 구간만 빠르게/느리게" 와 일치.
+                val parent = _uiState.value.segments.firstOrNull { it.id == s.segmentId }
+                val curSpeed = parent?.speedScale?.takeIf { it > 0f } ?: 1f
+                val parentTrimEnd = parent?.let {
+                    if (it.trimEndMs > 0L) it.trimEndMs else it.durationMs
+                } ?: s.localEnd
+                val origLocalLen = s.localEnd - s.localStart
+                val targetLocalLen = (origLocalLen.toDouble() * newSpeed / curSpeed).toLong()
+                    .coerceAtLeast(origLocalLen)
+                val expandedLocalEnd = (s.localStart + targetLocalLen).coerceAtMost(parentTrimEnd)
+                val r = splitSegment(s.segmentId, s.localStart, expandedLocalEnd)
                 updateSegmentSpeed(r.middle.id, value)
                 lastMiddleId = r.middle.id
             }
+            refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
-                lastMiddleId?.let { onSelectSegmentInEdit(it) }
+                lastMiddleId?.let { selectSegmentInEditInternal(it) }
             }
             pushUndoState()
         }
@@ -2630,14 +2685,22 @@ class TimelineViewModel constructor(
      */
     fun onMockSeparationReady() {
         // BFF testdata/separation/list 호출 → 폴더별 (startSec-endSec) directive 생성.
-        // 폴더 비어있거나 BFF 미응답 시 fallback: 영상 전체 단일 directive.
+        // 실패 (BFF down / IP mismatch / 폴더 빈 list) 시 separationError 에 메시지 노출.
         viewModelScope.launch {
             val base = bffBaseUrl.trimEnd('/')
             val state = _uiState.value
-            // 기존 directive 모두 삭제 → idempotent.
             state.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
-            val folders = runCatching { bffApi.listSeparationTestdata() }.getOrNull().orEmpty()
-            if (folders.isEmpty()) return@launch
+            val foldersResult = runCatching { bffApi.listSeparationTestdata() }
+            val folders = foldersResult.getOrNull()
+            if (folders == null) {
+                val err = foldersResult.exceptionOrNull()
+                setSeparationFailed("분리 mock 실패 (BFF=$base): ${err?.message ?: "알 수 없는 오류"}")
+                return@launch
+            }
+            if (folders.isEmpty()) {
+                setSeparationFailed("분리 mock testdata 폴더가 비어있습니다 (BFF testdata/0-30/ 등 폴더 확인)")
+                return@launch
+            }
             folders.forEach { folder ->
                 val rangeStart = folder.startSec * 1000L
                 val rangeEnd = folder.endSec * 1000L
@@ -2662,9 +2725,33 @@ class TimelineViewModel constructor(
                     )
                 )
             }
-            // 영상 전체 음성 mute (분리 구간 안의 stem 들이 그 자리를 메움).
             _uiState.value.segments.filter { it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO }
                 .forEach { updateSegmentVolume(it.id, 0f) }
+            // 성공 시 separation status 도 READY 로 표시 (UI 시그널).
+            editProjectRepository.getProject(projectId)?.let { p ->
+                editProjectRepository.updateProject(
+                    p.copy(
+                        separationStatus = AutoJobStatus.READY,
+                        separationError = null,
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * separation mock / 실제 분리 흐름의 공통 실패 처리. EditProject 의 separationStatus/Error 를
+     * FAILED 로 갱신하고 콘솔에 로그.
+     */
+    private suspend fun setSeparationFailed(msg: String) {
+        println("[Separation] $msg")
+        editProjectRepository.getProject(projectId)?.let { p ->
+            editProjectRepository.updateProject(
+                p.copy(
+                    separationStatus = AutoJobStatus.FAILED,
+                    separationError = msg,
+                )
+            )
         }
     }
 
