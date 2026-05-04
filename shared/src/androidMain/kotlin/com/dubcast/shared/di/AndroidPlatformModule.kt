@@ -3,6 +3,7 @@ package com.dubcast.shared.di
 import com.dubcast.shared.data.repository.AndroidAudioMetadataExtractor
 import com.dubcast.shared.data.repository.AndroidGallerySaver
 import com.dubcast.shared.data.repository.AndroidImageMetadataExtractor
+import com.dubcast.shared.data.repository.AndroidShareSheetLauncher
 import com.dubcast.shared.data.repository.AndroidVideoMetadataExtractor
 import com.dubcast.shared.platform.AndroidVideoThumbnailExtractor
 import com.dubcast.shared.platform.VideoThumbnailExtractor
@@ -15,6 +16,7 @@ import com.dubcast.shared.domain.usecase.input.AudioMetadataExtractor
 import com.dubcast.shared.domain.usecase.input.ImageMetadataExtractor
 import com.dubcast.shared.domain.usecase.input.VideoMetadataExtractor
 import com.dubcast.shared.domain.usecase.share.GallerySaver
+import com.dubcast.shared.domain.usecase.share.ShareSheetLauncher
 import com.dubcast.shared.ui.export.AndroidExportPlatformAdapter
 import com.dubcast.shared.ui.export.ExportPlatformAdapter
 import org.koin.android.ext.koin.androidContext
@@ -32,6 +34,7 @@ val androidPlatformModule = module {
     single<AudioMetadataExtractor> { AndroidAudioMetadataExtractor(androidContext()) }
     single<ImageMetadataExtractor> { AndroidImageMetadataExtractor(androidContext()) }
     single<GallerySaver> { AndroidGallerySaver(androidContext()) }
+    single<ShareSheetLauncher> { AndroidShareSheetLauncher(androidContext()) }
 
     single { MediaJobUploader(androidContext()) }
     single<AutoDubRepository> { AutoDubRepositoryImpl(api = get(), uploader = get(), context = androidContext()) }

@@ -6,6 +6,7 @@ import com.dubcast.shared.data.repository.IosAutoSubtitleRepositoryImpl
 import com.dubcast.shared.data.repository.IosGallerySaver
 import com.dubcast.shared.data.repository.IosImageMetadataExtractor
 import com.dubcast.shared.data.repository.IosMediaJobUploader
+import com.dubcast.shared.data.repository.IosShareSheetLauncher
 import com.dubcast.shared.data.repository.IosVideoMetadataExtractor
 import com.dubcast.shared.platform.IosVideoThumbnailExtractor
 import com.dubcast.shared.platform.VideoThumbnailExtractor
@@ -15,6 +16,7 @@ import com.dubcast.shared.domain.usecase.input.AudioMetadataExtractor
 import com.dubcast.shared.domain.usecase.input.ImageMetadataExtractor
 import com.dubcast.shared.domain.usecase.input.VideoMetadataExtractor
 import com.dubcast.shared.domain.usecase.share.GallerySaver
+import com.dubcast.shared.domain.usecase.share.ShareSheetLauncher
 import com.dubcast.shared.ui.export.ExportPlatformAdapter
 import com.dubcast.shared.ui.export.IosExportPlatformAdapter
 import org.koin.dsl.module
@@ -25,6 +27,7 @@ import org.koin.dsl.module
 val iosPlatformModule = module {
     single<ExportPlatformAdapter> { IosExportPlatformAdapter(exportWithDubbing = get()) }
     single<GallerySaver> { IosGallerySaver() }
+    single<ShareSheetLauncher> { IosShareSheetLauncher() }
     single<VideoMetadataExtractor> { IosVideoMetadataExtractor() }
     single<VideoThumbnailExtractor> { IosVideoThumbnailExtractor() }
     single<AudioMetadataExtractor> { IosAudioMetadataExtractor() }

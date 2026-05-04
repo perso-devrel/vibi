@@ -70,6 +70,7 @@ val viewModelModule = module {
             generateAutoDub = get(),
             separationDirectiveRepository = get(),
             saveAllVariants = get(),
+            shareSheetLauncher = get(),
         )
     }
     factory { ChatViewModel(chatRepository = get()) }

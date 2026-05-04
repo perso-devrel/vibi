@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import com.dubcast.cmp.platform.VideoPlayer
 import com.dubcast.cmp.ui.cupertino.StepHero
 import com.dubcast.shared.ui.timeline.SaveStatus
+import com.dubcast.shared.ui.timeline.ShareStatus
 import com.dubcast.shared.ui.timeline.TimelineViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
@@ -253,18 +254,27 @@ fun TimelineScreen(
                     )
                 }
             } else {
-                // 공유 아이콘 — 추후 기능. 지금은 disabled icon button.
-                // (분기 진입 시 isSegmentEditMode == false)
+                // 공유 아이콘 — export → 시스템 share sheet.
+                val sharing = state.shareStatus is ShareStatus.RUNNING
+                val sharingPercent = (state.shareStatus as? ShareStatus.RUNNING)?.progress ?: 0
                 IconButton(
-                    onClick = { /* TODO: 공유 기능 */ },
-                    enabled = false,
+                    enabled = !sharing && !saveAnyJobRunning && !saving && state.segments.isNotEmpty(),
+                    onClick = { viewModel.onShareExport() },
                     modifier = Modifier.size(40.dp),
                 ) {
-                    Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
-                        contentDescription = "공유 (준비중)",
-                        tint = tokens.onBackgroundPrimary.copy(alpha = 0.4f),
-                    )
+                    if (sharing) {
+                        Text(
+                            "${sharingPercent}%",
+                            fontSize = 11.sp,
+                            color = tokens.onBackgroundPrimary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
+                            contentDescription = "공유",
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                    }
                 }
                 // 저장 아이콘 — 진행 중이면 percent 텍스트로 토글.
                 // segments 비어있으면 ExportWithDubbingUseCase 가 require(isNotEmpty) 에서 throw →

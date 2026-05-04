@@ -99,6 +99,16 @@ sealed interface SaveStatus {
     data class FAILED(val message: String) : SaveStatus
 }
 
+/**
+ * 공유 흐름 상태 — Save 와 분리. 공유는 갤러리 저장 X, 프로젝트 보존, navigate 안 함.
+ */
+sealed interface ShareStatus {
+    data object IDLE : ShareStatus
+    data class RUNNING(val progress: Int) : ShareStatus
+    data object DONE : ShareStatus
+    data class FAILED(val message: String) : ShareStatus
+}
+
 data class TimelineUiState(
     val projectId: String = "",
     val segments: List<Segment> = emptyList(),
@@ -231,7 +241,9 @@ data class TimelineUiState(
     /** 언어 코드 → BFF 가 video+dubAudio mux 한 mp4 local path. 미리보기 swap source. */
     val dubbedVideoPaths: Map<String, String> = emptyMap(),
     /** Timeline 헤더 "저장" 버튼이 트리거하는 multi-variant 갤러리 저장의 진행 상태. */
-    val saveStatus: SaveStatus = SaveStatus.IDLE
+    val saveStatus: SaveStatus = SaveStatus.IDLE,
+    /** 공유 흐름 진행 상태 — 저장과 별도. 공유는 프로젝트 보존, navigate 안 함. */
+    val shareStatus: ShareStatus = ShareStatus.IDLE
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -306,6 +318,7 @@ class TimelineViewModel constructor(
     private val bffBaseUrl: String,
     private val bffApi: com.dubcast.shared.data.remote.api.BffApi,
     private val saveAllVariants: com.dubcast.shared.domain.usecase.save.SaveAllVariantsUseCase,
+    private val shareSheetLauncher: com.dubcast.shared.domain.usecase.share.ShareSheetLauncher,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -1391,9 +1404,12 @@ class TimelineViewModel constructor(
         if (_uiState.value.saveStatus is SaveStatus.RUNNING) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(0))
-            val result = saveAllVariants(projectId) { percent ->
-                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(percent))
-            }
+            val result = saveAllVariants(
+                projectId = projectId,
+                onProgress = { percent ->
+                    _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(percent))
+                },
+            )
             result.fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.DONE)
@@ -1414,6 +1430,61 @@ class TimelineViewModel constructor(
     /** Snackbar 닫기 등 — UI 에서 호출 후 idle 로 복귀. */
     fun onClearSaveStatus() {
         _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.IDLE)
+    }
+
+    /**
+     * Timeline 헤더 "공유" 버튼 — 모든 variant 를 BG 에서 렌더한 뒤 첫 번째 결과 path 를
+     * 시스템 share sheet 으로 띄움. 갤러리 저장 X, EditProject 보존, navigate 안 함.
+     *
+     * 사용자가 공유한 후 동일 프로젝트로 다시 편집/저장 가능.
+     */
+    fun onShareExport() {
+        if (_uiState.value.shareStatus is ShareStatus.RUNNING) return
+        if (_uiState.value.segments.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(0))
+            val result = saveAllVariants(
+                projectId = projectId,
+                onProgress = { percent ->
+                    _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(percent))
+                },
+                saveToGallery = false,
+            )
+            result.fold(
+                onSuccess = { variants ->
+                    val path = variants.firstOrNull()?.outputPath
+                    if (path == null) {
+                        _uiState.value = _uiState.value.copy(
+                            shareStatus = ShareStatus.FAILED("공유할 결과가 없음")
+                        )
+                        return@fold
+                    }
+                    shareSheetLauncher.shareVideo(
+                        sourcePath = path,
+                        mimeType = "video/mp4",
+                        title = "DubCast",
+                    ).fold(
+                        onSuccess = {
+                            _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.DONE)
+                        },
+                        onFailure = { e ->
+                            _uiState.value = _uiState.value.copy(
+                                shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
+                            )
+                        }
+                    )
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
+                    )
+                }
+            )
+        }
+    }
+
+    fun onClearShareStatus() {
+        _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.IDLE)
     }
 
     fun onShowAppendSheet() {

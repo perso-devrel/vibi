@@ -51,6 +51,7 @@ class SaveAllVariantsUseCase(
     suspend operator fun invoke(
         projectId: String,
         onProgress: (percent: Int) -> Unit,
+        saveToGallery: Boolean = true,
     ): Result<List<SavedVariant>> = runCatching {
         val project = editProjectRepository.getProject(projectId)
             ?: error("Project not found: $projectId")
@@ -147,24 +148,27 @@ class SaveAllVariantsUseCase(
         //   - original 또는 무자막/무더빙 → "VID_"
         //   - 더빙된 언어 (dubbedAudioPaths 또는 dubbedVideoPaths 보유) → "DUB_<LANG>"
         //   - 자막만 있는 언어 → "SUB_<LANG>"
+        // saveToGallery=false (공유 흐름) 면 갤러리 저장 스킵 — caller 가 결과 path 로 share sheet 등 후속.
         val saved = mutableListOf<SavedVariant>()
         targetLanguages.forEachIndexed { i, languageCode ->
             val path = renderedPaths[i]
-            val isOriginal = languageCode == "original"
-            val hasDub = !isOriginal && (
-                project.dubbedAudioPaths.containsKey(languageCode) ||
-                    project.dubbedVideoPaths.containsKey(languageCode)
-                )
-            val hasSubtitle = !isOriginal && languageCode in langsWithSubtitle
-            val langTag = languageCode.uppercase()
-            val displayName = when {
-                isOriginal -> "VID_${projectId.hashCode().toUInt()}_$i"
-                hasDub -> "DUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
-                hasSubtitle -> "SUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
-                else -> "VID_${langTag}_${projectId.hashCode().toUInt()}_$i"
-            }
-            gallerySaver.saveVideo(path, displayName).getOrElse { e ->
-                error("Gallery save failed for $languageCode: ${e.message}")
+            if (saveToGallery) {
+                val isOriginal = languageCode == "original"
+                val hasDub = !isOriginal && (
+                    project.dubbedAudioPaths.containsKey(languageCode) ||
+                        project.dubbedVideoPaths.containsKey(languageCode)
+                    )
+                val hasSubtitle = !isOriginal && languageCode in langsWithSubtitle
+                val langTag = languageCode.uppercase()
+                val displayName = when {
+                    isOriginal -> "VID_${projectId.hashCode().toUInt()}_$i"
+                    hasDub -> "DUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
+                    hasSubtitle -> "SUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
+                    else -> "VID_${langTag}_${projectId.hashCode().toUInt()}_$i"
+                }
+                gallerySaver.saveVideo(path, displayName).getOrElse { e ->
+                    error("Gallery save failed for $languageCode: ${e.message}")
+                }
             }
             variantProgress[i] = 100
             publishProgress()
