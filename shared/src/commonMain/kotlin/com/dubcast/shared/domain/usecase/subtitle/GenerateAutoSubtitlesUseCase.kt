@@ -9,6 +9,8 @@ import com.dubcast.shared.domain.repository.AutoSubtitleRepository
 import com.dubcast.shared.domain.repository.AutoSubtitleStatus
 import com.dubcast.shared.domain.repository.EditProjectRepository
 import com.dubcast.shared.domain.repository.SubtitleClipRepository
+import com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase
+import com.dubcast.shared.domain.usecase.render.RenderKind
 import com.dubcast.shared.platform.generateId
 
 private const val POLL_INTERVAL_MS = 5_000L
@@ -17,7 +19,8 @@ private const val MAX_POLL_ATTEMPTS = 360
 class GenerateAutoSubtitlesUseCase(
     private val autoSubtitleRepository: AutoSubtitleRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
-    private val editProjectRepository: EditProjectRepository
+    private val editProjectRepository: EditProjectRepository,
+    private val ensureLatestRender: EnsureLatestRenderUseCase,
 ) {
     /**
      * 1 STT + N 번역 패턴. 영상 1회 업로드, BFF 가 STT 1회 + targetLanguageCodes 각 lang 에 대해
@@ -30,7 +33,8 @@ class GenerateAutoSubtitlesUseCase(
         mediaType: String,
         sourceLanguageCode: String,
         targetLanguageCodes: List<String>,
-        numberOfSpeakers: Int = 1
+        numberOfSpeakers: Int = 1,
+        onRenderProgress: (percent: Int) -> Unit = {},
     ): Result<Int> = runCatching {
         println("[GenerateAutoSubtitles] enter projectId=$projectId targets=$targetLanguageCodes")
         var project = editProjectRepository.getProject(projectId)
@@ -44,12 +48,32 @@ class GenerateAutoSubtitlesUseCase(
         )
         editProjectRepository.updateProject(project)
 
+        // 편집 영상이 필요한 경우 audio-only render 잡 ID 보장 (자막은 audio 만 필요 — 5–10x 빠름).
+        // null = 무편집 → 원본 sourceUri 사용.
+        val editedRenderJobId = ensureLatestRender(
+            projectId = projectId,
+            kind = RenderKind.AUDIO,
+            onProgress = onRenderProgress,
+        ).getOrElse { e ->
+            println("[GenerateAutoSubtitles] ensureLatestRender failed: ${e.message}")
+            markFailed(project, "편집 영상 준비 실패")
+            throw e
+        }
+        // ensureLatestRender 가 project 를 갱신했을 수 있으므로 다시 읽음.
+        project = editProjectRepository.getProject(projectId) ?: project
+
+        // audio-only render 결과를 source 로 쓸 때는 mediaType 을 "AUDIO" 로 강제. BFF 의 자막 서비스가
+        // mediaType 기준으로 `-vn` 추출을 분기하므로 일치 필수. editedRenderJobId 가 null 이면 원본
+        // sourceUri 의 mediaType (caller 가 전달한 값) 그대로 사용.
+        val effectiveMediaType = if (editedRenderJobId != null) "AUDIO" else mediaType
+
         val jobId = autoSubtitleRepository.submit(
             sourceUri = sourceUri,
-            mediaType = mediaType,
+            mediaType = effectiveMediaType,
             sourceLanguageCode = sourceLanguageCode,
             targetLanguageCodes = targetLanguageCodes,
-            numberOfSpeakers = numberOfSpeakers
+            numberOfSpeakers = numberOfSpeakers,
+            editedRenderJobId = editedRenderJobId,
         ).getOrElse { e ->
             println("[GenerateAutoSubtitles] submit failed: ${e.message}")
             markFailed(project, "자막 요청 실패")
@@ -88,6 +112,11 @@ class GenerateAutoSubtitlesUseCase(
                 sourceLanguageCode !in ready.translatedSrtUrlsByLang
             ) {
                 put(sourceLanguageCode, ready.originalSrtUrl)
+            }
+            // "원본만" 모드 (targetLanguageCodes=[]): sourceLanguageCode="auto" 라도 originalSrt 를
+            // lang="" 로 저장해 사용자에게 표시 가능. 이후 RegenerateSubtitles 가 source 로 사용.
+            if (targetLanguageCodes.isEmpty() && !containsKey("")) {
+                put("", ready.originalSrtUrl)
             }
         }
         var totalCues = 0

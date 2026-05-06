@@ -206,6 +206,12 @@ data class TimelineUiState(
     /** "subtitle" | "dub" */
     val localizationMode: String = "subtitle",
     val localizationLangs: Set<String> = emptySet(),
+    /**
+     * 자막 모드 한정 — true 면 "원본 언어 (스크립트만)" : BFF 에 targetLanguageCodes=[] 로 호출,
+     * STT 결과 originalSrt 만 받고 번역은 skip. false 면 기존 흐름 (사용자가 lang chip 으로 번역 langs 선택).
+     * dub 모드에선 사용 안 함 (현재 dropdown 그대로).
+     */
+    val localizationOriginalOnly: Boolean = false,
     /** 자막 생성 전 STT 스크립트 검토·수정 단계 활성화 여부. dub 모드는 미지원 (BFF 추가 필요). */
     val reviewScriptBeforeGenerate: Boolean = false,
     /** STT only 결과 cue 들. 검토 sheet 의 데이터 source. null = STT 미실행 또는 검토 완료. */
@@ -225,7 +231,13 @@ data class TimelineUiState(
     /** Timeline 헤더 "저장" 버튼이 트리거하는 multi-variant 갤러리 저장의 진행 상태. */
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     /** 공유 흐름 진행 상태 — 저장과 별도. 공유는 프로젝트 보존, navigate 안 함. */
-    val shareStatus: ShareStatus = ShareStatus.IDLE
+    val shareStatus: ShareStatus = ShareStatus.IDLE,
+    /**
+     * 자막/더빙/분리 시작 직전 EnsureLatestRenderUseCase 가 BFF 에 편집 영상 render 잡을 보내고
+     * 폴링 중일 때의 진행률(0..100). null = 진행 중 아님 (또는 무편집 → render skip).
+     * UI 가 "편집 영상 준비 중… (xx%)" 노출.
+     */
+    val editedVideoRenderProgress: Int? = null,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -298,6 +310,7 @@ class TimelineViewModel constructor(
     private val bffApi: com.dubcast.shared.data.remote.api.BffApi,
     private val saveAllVariants: com.dubcast.shared.domain.usecase.save.SaveAllVariantsUseCase,
     private val shareSheetLauncher: com.dubcast.shared.domain.usecase.share.ShareSheetLauncher,
+    private val ensureLatestRender: com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -341,6 +354,21 @@ class TimelineViewModel constructor(
         observeTextOverlays()
         observeBgmClips()
         observeSeparationDirectives()
+    }
+
+    /**
+     * Timeline mutation 이 발생하면 즉시 호출 — 다음 자막/더빙/분리 시점에 EnsureLatestRender 가
+     * 새로 BFF render 잡을 보내도록 표시. mutation handler 들을 wrapping 하지 않고 caller 가 명시 호출.
+     *
+     * 이미 stale 상태면 no-op (불필요한 DB write 방지). pushUndoState 와 함께 호출되는 곳마다
+     * 한 줄 추가하면 됨 — segment add/remove/trim/speed/volume/split/duplicate/range mutate 등.
+     */
+    private fun markRenderStale() {
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
+            if (project.isRenderStale) return@launch
+            editProjectRepository.updateProject(project.copy(isRenderStale = true))
+        }
     }
 
     private fun observeBgmClips() {
@@ -387,7 +415,8 @@ class TimelineViewModel constructor(
                     )
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
-                        pushUndoState()
+                        // 첫 진입 — DB 의 현재 상태 baseline 만 push. mutation 아니라 stale 마킹 안 함.
+                        pushUndoState(markStale = false)
                     }
                     maybeTriggerAutoPipelines(project)
                 }
@@ -492,12 +521,17 @@ class TimelineViewModel constructor(
                     mediaType = "VIDEO",
                     sourceLanguageCode = sourceLang,
                     targetLanguageCodes = listOfNotNull(targetLang),
-                    numberOfSpeakers = project.numberOfSpeakers
+                    numberOfSpeakers = project.numberOfSpeakers,
+                    onRenderProgress = { p ->
+                        _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                    },
                 )
+                _uiState.update { it.copy(editedVideoRenderProgress = null) }
                 // The use case wrote FAILED on its own; re-arm so a fresh
                 // retry path (button or status reset) can trigger again.
                 if (result.isFailure) subtitleGate = TriggerGate.ARMED
             } catch (e: kotlinx.coroutines.CancellationException) {
+                _uiState.update { it.copy(editedVideoRenderProgress = null) }
                 subtitleGate = TriggerGate.ARMED
                 throw e
             }
@@ -529,10 +563,15 @@ class TimelineViewModel constructor(
                         mediaType = "VIDEO",
                         sourceLanguageCode = "auto",
                         targetLanguageCode = lang,
-                        numberOfSpeakers = project.numberOfSpeakers
+                        numberOfSpeakers = project.numberOfSpeakers,
+                        onRenderProgress = { p ->
+                            _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                        },
                     )
+                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
                     if (result.isFailure) anyFailure = true
                 } catch (e: kotlinx.coroutines.CancellationException) {
+                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
                     dubGate = TriggerGate.ARMED
                     throw e
                 }
@@ -665,9 +704,15 @@ class TimelineViewModel constructor(
         )
     }
 
-    private fun pushUndoState() {
+    /**
+     * @param markStale true 면 EditProject.isRenderStale=true 로 마킹 — 다음 자막/더빙/분리
+     *   시점에 EnsureLatestRender 가 새로 BFF render 잡을 보냄. 일반 mutation 후 호출 시 true 가 default;
+     *   초기 seed 또는 reset 후 baseline 푸시는 false.
+     */
+    private fun pushUndoState(markStale: Boolean = true) {
         activeUndoManager().pushState(buildSnapshot())
         updateUndoRedoState()
+        if (markStale) markRenderStale()
     }
 
     private fun updateUndoRedoState() {
@@ -1138,6 +1183,8 @@ class TimelineViewModel constructor(
             val snapshot = activeUndoManager().undo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
+            // undo 도 segments / volumes / speeds 를 변경하므로 render 캐시 무효화.
+            markRenderStale()
         }
     }
 
@@ -1146,6 +1193,7 @@ class TimelineViewModel constructor(
             val snapshot = activeUndoManager().redo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
+            markRenderStale()
         }
     }
 
@@ -1711,7 +1759,7 @@ class TimelineViewModel constructor(
         // 3) 진행 중 잡 폴링 취소
         separationJob?.cancel()
         separationJob = null
-        // 4) EditProject 의 자동 잡/더빙 결과 필드 초기화
+        // 4) EditProject 의 자동 잡/더빙 결과 필드 초기화 + render 캐시 무효화 (영상편집 결과로 source 변경).
         editProjectRepository.getProject(projectId)?.let { p ->
             editProjectRepository.updateProject(
                 p.copy(
@@ -1731,6 +1779,11 @@ class TimelineViewModel constructor(
                     separationStatus = AutoJobStatus.IDLE,
                     separationError = null,
                     pendingReviewTargetLangsCsv = null,
+                    // 영상편집 모드 결과 reset 시 render output 도 stale — 다음 자막/더빙/분리 시 새로 render.
+                    // audio/video 두 슬롯 모두 비움 (timeline 자체가 변경됐으므로 어느 종류도 재사용 불가).
+                    isRenderStale = true,
+                    currentAudioRenderJobId = null,
+                    currentVideoRenderJobId = null,
                 )
             )
         }
@@ -1871,9 +1924,12 @@ class TimelineViewModel constructor(
             val overlapEnd = minOf(segGlobalEnd, globalEnd)
             if (overlapEnd - overlapStart < MIN_RANGE_MS) continue
             // global ms (timeline) → source-media ms 변환 — speedScale 만큼 stretch.
+            // round() 후 toLong() — `.toLong()` 단독은 truncate 라 (overlap*speed) = 999.67 같은
+            // 값에서 999 로 떨어져 1ms 미만 잔재 segment 가 생김. 인접 segment 의 trimStart 와
+            // 어긋나 audio render 가 silent fallback 으로 빠지는 원인.
             val speed = if (seg.speedScale > 0f) seg.speedScale else 1f
-            val localStart = seg.trimStartMs + ((overlapStart - segGlobalStart) * speed).toLong()
-            val localEnd = seg.trimStartMs + ((overlapEnd - segGlobalStart) * speed).toLong()
+            val localStart = seg.trimStartMs + kotlin.math.round((overlapStart - segGlobalStart) * speed).toLong()
+            val localEnd = seg.trimStartMs + kotlin.math.round((overlapEnd - segGlobalStart) * speed).toLong()
             out += SegmentRangeSlice(seg.id, seg.order, localStart, localEnd)
         }
         return out
@@ -2882,6 +2938,13 @@ class TimelineViewModel constructor(
     fun onSetLocalizationMode(mode: String) {
         _uiState.value = _uiState.value.copy(localizationMode = mode)
     }
+    /**
+     * 자막 모드 한정 — "원본 언어" / "번역 언어 선택" 라디오 토글.
+     * true = 원본만 (langs 무시 + BFF 가 STT 만), false = 기존 다국어 번역.
+     */
+    fun onSetLocalizationOriginalOnly(originalOnly: Boolean) {
+        _uiState.value = _uiState.value.copy(localizationOriginalOnly = originalOnly)
+    }
     fun onToggleLocalizationLang(code: String) {
         val current = _uiState.value.localizationLangs
         val next = if (code in current) current - code else current + code
@@ -2889,16 +2952,19 @@ class TimelineViewModel constructor(
     }
     fun onStartLocalization() {
         val s = _uiState.value
-        println("[Localization] onStartLocalization mode=${s.localizationMode} langs=${s.localizationLangs} segCount=${s.segments.size}")
+        println("[Localization] onStartLocalization mode=${s.localizationMode} langs=${s.localizationLangs} originalOnly=${s.localizationOriginalOnly} segCount=${s.segments.size}")
         val source = s.segments.firstOrNull()?.sourceUri
         if (source.isNullOrBlank()) {
             println("[Localization] aborted: no source segment")
             return
         }
         val mode = s.localizationMode
-        val langs = s.localizationLangs.toList()
-        if (langs.isEmpty()) {
-            println("[Localization] aborted: empty langs")
+        // 자막 + 원본 모드: targetLanguageCodes 비워서 BFF 가 STT only 경로 (originalSrt 만 반환).
+        // 그 외 모드 / 사용자 lang 선택 흐름: 기존 동작.
+        val isSubtitleOriginalOnly = mode == "subtitle" && s.localizationOriginalOnly
+        val langs = if (isSubtitleOriginalOnly) emptyList() else s.localizationLangs.toList()
+        if (langs.isEmpty() && !isSubtitleOriginalOnly) {
+            println("[Localization] aborted: empty langs (and not original-only)")
             return
         }
         viewModelScope.launch {
@@ -2930,7 +2996,11 @@ class TimelineViewModel constructor(
                         projectId = projectId,
                         sourceUri = source,
                         mediaType = "VIDEO",
+                        onRenderProgress = { p ->
+                            _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                        },
                     )
+                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
                     if (r.isSuccess) {
                         reviewSheetGate = TriggerGate.FIRED
                         _uiState.value = _uiState.value.copy(
@@ -2954,8 +3024,13 @@ class TimelineViewModel constructor(
                         mediaType = "VIDEO",
                         sourceLanguageCode = "auto",
                         targetLanguageCodes = langs,
-                        numberOfSpeakers = 1
+                        numberOfSpeakers = 1,
+                        onRenderProgress = { p ->
+                            _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                        },
                     )
+                    // render 진행 표시 reset — STT/번역 단계로 넘어갔거나 실패.
+                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
                     println("[Localization] subtitle result isSuccess=${r.isSuccess} cues=${r.getOrNull()} err=${r.exceptionOrNull()?.message}")
                     // 미리보기 chip 자동 전환 — source=auto 이므로 originalSrt 는 저장 안 됨.
                     // 현재 미리보기가 null("기본") 이거나 새로 추가된 langs 와 무관할 때만 첫 lang 으로 전환
@@ -2976,9 +3051,14 @@ class TimelineViewModel constructor(
                             mediaType = "VIDEO",
                             sourceLanguageCode = "auto",
                             targetLanguageCode = lang,
-                            numberOfSpeakers = 1
+                            numberOfSpeakers = 1,
+                            onRenderProgress = { p ->
+                                _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                            },
                         )
                     }.onFailure { println("[Localization] dub failed lang=$lang err=${it.message}") }
+                    // 첫 dub 성공 후 cache hit 으로 render skip 되는 langs 도 있음 — 매 lang 끝에 reset.
+                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
                 }
                 else -> println("[Localization] unknown mode=$mode")
             }
@@ -3017,12 +3097,32 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(showAudioSeparationSheet = false)
         separationJob = viewModelScope.launch {
             updateSeparation { it.copy(step = AudioSeparationStep.PROCESSING, errorMessage = null) }
+            // 편집 영상이 필요한 경우 BFF 에 audio-only render 잡 1개 보내고 jobId 회수 — multipart
+            // `file` 업로드 절약. 분리는 audio 만 필요하므로 AUDIO kind (5–10x 빠름).
+            val editedRenderJobId = ensureLatestRender(
+                projectId = projectId,
+                kind = com.dubcast.shared.domain.usecase.render.RenderKind.AUDIO,
+                onProgress = { p ->
+                    _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                },
+            ).getOrElse { err ->
+                _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message) }
+                editProjectRepository.getProject(projectId)?.let {
+                    editProjectRepository.updateProject(
+                        it.copy(separationStatus = AutoJobStatus.FAILED, separationError = err.message)
+                    )
+                }
+                return@launch
+            }
+            _uiState.update { it.copy(editedVideoRenderProgress = null) }
             val startResult = startAudioSeparation(
                 sourceUri = segment.sourceUri,
                 mediaType = SeparationMediaType.VIDEO,
                 numberOfSpeakers = sep.numberOfSpeakers,
                 trimStartMs = effStart,
                 trimEndMs = effEnd,
+                editedRenderJobId = editedRenderJobId,
             )
             val jobId = startResult.getOrElse { err ->
                 updateSeparation {

@@ -12,6 +12,7 @@ import com.dubcast.shared.domain.usecase.image.UpdateImageClipUseCase
 import com.dubcast.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.dubcast.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.dubcast.shared.domain.usecase.input.ValidateVideoUseCase
+import com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase
 import com.dubcast.shared.domain.usecase.separation.PollSeparationUseCase
 import com.dubcast.shared.domain.usecase.separation.StartAudioSeparationUseCase
 import com.dubcast.shared.domain.usecase.subtitle.AddSubtitleClipUseCase
@@ -64,7 +65,7 @@ val useCaseModule = module {
     factoryOf(::GenerateAutoSubtitlesUseCase)
     factoryOf(::GenerateAutoDubUseCase)
     factory { RegenerateSubtitlesUseCase(get(), get()) }
-    factory { GenerateOriginalScriptUseCase(get(), get(), get()) }
+    factory { GenerateOriginalScriptUseCase(get(), get(), get(), get()) }
 
     // save (timeline header → 모든 variant 렌더 + 갤러리 저장 — drafts 폐기 후 단일 저장 흐름)
     factory {
@@ -86,6 +87,9 @@ val useCaseModule = module {
     // separation
     factoryOf(::StartAudioSeparationUseCase)
     factoryOf(::PollSeparationUseCase)
+
+    // render — 자막/더빙/분리 시작 직전 편집 영상 source 보장
+    factoryOf(::EnsureLatestRenderUseCase)
 
     // bgm
     factoryOf(::AddBgmClipUseCase)

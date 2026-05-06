@@ -56,6 +56,27 @@ data class EditProject(
     val separationMuteOriginal: Boolean = true,
     val separationStatus: AutoJobStatus = AutoJobStatus.IDLE,
     val separationError: String? = null,
+    /**
+     * BFF 에 가장 최근에 제출한 audio-only render jobId (RenderKind.AUDIO).
+     * 자막/STT/음성분리 가 편집 영상을 source 로 쓸 때 `editedRenderJobId` 로 전송하면 BFF 가
+     * 캐시된 audio m4a 를 재사용한다. 이전 jobId 는 보존하지 않음 (최신 1개만).
+     */
+    val currentAudioRenderJobId: String? = null,
+    /**
+     * BFF 에 가장 최근에 제출한 video render jobId (RenderKind.VIDEO).
+     * 자동 더빙이 편집 영상을 source 로 쓸 때 `editedRenderJobId` 로 전송. AUDIO 와 별도 슬롯 —
+     * 한 종류 캐시 hit 이 다른 종류로 cross-contaminate 하지 않도록.
+     */
+    val currentVideoRenderJobId: String? = null,
+    /**
+     * 마지막 render 후 timeline mutation (segment add/remove/trim/speed/volume/reorder 등) 가
+     * 발생했는지. true 면 [currentAudioRenderJobId] / [currentVideoRenderJobId] 모두 신뢰할 수 없어
+     * EnsureLatestRenderUseCase 가 요청된 kind 로 새로 render. 신규 프로젝트는 true.
+     *
+     * jobId 자체는 stale 마킹 시에도 비우지 않음 — 다음 ensureLatestRender 호출이 그 kind 슬롯만
+     * 갱신하고 isRenderStale=false 로 떨어뜨리는 방식이 단순. 다른 kind 는 다음 호출에서 새로 render.
+     */
+    val isRenderStale: Boolean = true,
 ) {
     val isAutoLocalizationEnabled: Boolean
         get() = enableAutoSubtitles && enableAutoDubbing

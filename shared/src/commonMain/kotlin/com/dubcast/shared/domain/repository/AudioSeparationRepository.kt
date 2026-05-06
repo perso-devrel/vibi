@@ -64,13 +64,18 @@ data class StemSelection(
 )
 
 interface AudioSeparationRepository {
+    /**
+     * @param editedRenderJobId non-null 이면 BFF 가 본 jobId 의 render output 을 source 로 사용 →
+     *   multipart `file` part 자체를 송신하지 않음.
+     */
     suspend fun startSeparation(
         sourceUri: String,
         mediaType: SeparationMediaType,
         numberOfSpeakers: Int,
         sourceLanguageCode: String = "auto",
         trimStartMs: Long? = null,
-        trimEndMs: Long? = null
+        trimEndMs: Long? = null,
+        editedRenderJobId: String? = null,
     ): Result<String>
 
     suspend fun pollStatus(jobId: String): Result<SeparationStatus>

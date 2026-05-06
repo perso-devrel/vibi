@@ -8,7 +8,13 @@ data class AutoDubSpec(
     val sourceLanguageCode: String,
     val targetLanguageCode: String,
     val numberOfSpeakers: Int = 1,
-    val ttsModel: String? = null
+    val ttsModel: String? = null,
+    /**
+     * non-null 이면 BFF 가 본 jobId 의 render output 을 source 로 사용하고 multipart `file` 은 무시.
+     * 클라이언트는 file part 자체를 보내지 않는 것을 권장. BFF 는 lastAccessedAt 을 자동 갱신해
+     * TTL (2시간 sliding window) 을 연장.
+     */
+    val editedRenderJobId: String? = null
 )
 
 @Serializable

@@ -15,7 +15,7 @@ vibi `:cmp` — **Compose Multiplatform UI 모듈**. 타임라인 에디터, 더
 
 ```bash
 # 워크스페이스 루트에서
-./gradlew :cmp:assembleDebug --no-configuration-cache
+./gradlew :cmp:assembleDebug
 ```
 
 ## 현재 구조

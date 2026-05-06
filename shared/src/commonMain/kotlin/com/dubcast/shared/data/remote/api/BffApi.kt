@@ -156,15 +156,20 @@ class BffApi(
     suspend fun downloadRenderResult(jobId: String): ByteArray =
         client.get("api/v2/render/$jobId/download").readRawBytes()
 
+    /**
+     * @param file null 이면 multipart `file` part 자체를 생략. spec.editedRenderJobId 가 non-null 일 때
+     *   BFF 가 render output 을 source 로 사용하므로 file 업로드 불필요. file 보내도 BFF 가 무시하지만
+     *   네트워크 비용 절약 위해 호출자가 null 권장.
+     */
     suspend fun startSeparation(
-        file: BinaryPart,
+        file: BinaryPart?,
         spec: SeparationSpec
     ): SeparationJobResponse =
         client.post("api/v2/separate") {
             setBody(
                 MultiPartFormDataContent(
                     formData {
-                        append(file)
+                        file?.let { append(it) }
                         append("spec", json.encodeToString(SeparationSpec.serializer(), spec))
                     }
                 )
@@ -190,15 +195,18 @@ class BffApi(
 
     // Auto subtitles (Perso STT + Gemini translate)
 
+    /**
+     * @param file null 이면 multipart `file` part 자체를 생략 — spec.editedRenderJobId 활용 흐름.
+     */
     suspend fun submitSubtitleJob(
-        file: BinaryPart,
+        file: BinaryPart?,
         spec: SubtitleSpec
     ): SubtitleJobResponse =
         client.post("api/v2/subtitles") {
             setBody(
                 MultiPartFormDataContent(
                     formData {
-                        append(file)
+                        file?.let { append(it) }
                         append("spec", json.encodeToString(SubtitleSpec.serializer(), spec))
                     }
                 )
@@ -232,15 +240,18 @@ class BffApi(
 
     // Auto dubbing (Perso translate, no lipsync)
 
+    /**
+     * @param file null 이면 multipart `file` part 자체를 생략 — spec.editedRenderJobId 활용 흐름.
+     */
     suspend fun submitAutoDubJob(
-        file: BinaryPart,
+        file: BinaryPart?,
         spec: AutoDubSpec
     ): AutoDubJobResponse =
         client.post("api/v2/autodub") {
             setBody(
                 MultiPartFormDataContent(
                     formData {
-                        append(file)
+                        file?.let { append(it) }
                         append("spec", json.encodeToString(AutoDubSpec.serializer(), spec))
                     }
                 )

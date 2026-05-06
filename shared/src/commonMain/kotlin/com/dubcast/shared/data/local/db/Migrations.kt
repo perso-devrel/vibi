@@ -412,6 +412,112 @@ val MIGRATION_29_30 = object : Migration(29, 30) {
     }
 }
 
+/**
+ * v31 — 편집 영상 render 캐시 영속화.
+ *  - currentRenderJobId: BFF 에 가장 최근에 제출한 render jobId (null = 아직 render 한 적 없음).
+ *  - isRenderStale: 마지막 render 이후 timeline mutation 발생했는지. true 면 다음 자막/더빙/분리 작업 시
+ *    EnsureLatestRenderUseCase 가 새로 render. 기존 row 는 default true (영상이 stale 하다고 가정해야 안전).
+ */
+val MIGRATION_30_31 = object : Migration(30, 31) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE edit_projects ADD COLUMN currentRenderJobId TEXT")
+        connection.execSQL("ALTER TABLE edit_projects ADD COLUMN isRenderStale INTEGER NOT NULL DEFAULT 1")
+    }
+}
+
+/**
+ * v32 — BFF audio-only render 모드 도입에 따른 jobId 슬롯 분리.
+ *  - currentRenderJobId 컬럼 제거 (단일 슬롯 → 종류별 슬롯 2개로 대체).
+ *  - currentAudioRenderJobId TEXT NULL — 자막/STT/음성분리 (audio-only m4a render 결과) 캐시.
+ *  - currentVideoRenderJobId TEXT NULL — 자동 더빙 (full mp4 render 결과) 캐시.
+ *
+ * 마이그레이션: 기존 currentRenderJobId 값은 v31 시점에서 video render 결과 (당시 BFF 는 video 모드만)
+ * 이므로 currentVideoRenderJobId 로 이관. audio 슬롯은 비움. SQLite ALTER ... DROP COLUMN 의 환경 호환을
+ * 위해 테이블 재생성 패턴 사용 (CREATE new + INSERT SELECT + DROP old + RENAME).
+ */
+val MIGRATION_31_32_STATEMENTS: List<String> = listOf(
+    """CREATE TABLE edit_projects_new (
+        projectId TEXT NOT NULL PRIMARY KEY,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        title TEXT,
+        pendingReviewTargetLangsCsv TEXT,
+        frameWidth INTEGER NOT NULL DEFAULT 0,
+        frameHeight INTEGER NOT NULL DEFAULT 0,
+        backgroundColorHex TEXT NOT NULL DEFAULT '#000000',
+        videoScale REAL NOT NULL DEFAULT 1.0,
+        videoOffsetXPct REAL NOT NULL DEFAULT 0.0,
+        videoOffsetYPct REAL NOT NULL DEFAULT 0.0,
+        targetLanguageCode TEXT NOT NULL DEFAULT 'original',
+        targetLanguageCodesJson TEXT NOT NULL DEFAULT '',
+        enableAutoDubbing INTEGER NOT NULL DEFAULT 0,
+        enableAutoSubtitles INTEGER NOT NULL DEFAULT 0,
+        showSubtitlesOnPreview INTEGER NOT NULL DEFAULT 1,
+        showDubbingOnPreview INTEGER NOT NULL DEFAULT 1,
+        numberOfSpeakers INTEGER NOT NULL DEFAULT 1,
+        dubbedAudioPath TEXT,
+        dubbedAudioPathsJson TEXT NOT NULL DEFAULT '',
+        dubbedVideoPathsJson TEXT NOT NULL DEFAULT '',
+        autoDubStatusByLangJson TEXT NOT NULL DEFAULT '',
+        autoDubJobIdByLangJson TEXT NOT NULL DEFAULT '',
+        autoSubtitleStatus TEXT NOT NULL DEFAULT 'IDLE',
+        autoDubStatus TEXT NOT NULL DEFAULT 'IDLE',
+        autoSubtitleJobId TEXT,
+        autoDubJobId TEXT,
+        autoSubtitleError TEXT,
+        autoDubError TEXT,
+        separationJobId TEXT,
+        separationSegmentId TEXT,
+        separationNumberOfSpeakers INTEGER NOT NULL DEFAULT 2,
+        separationMuteOriginal INTEGER NOT NULL DEFAULT 1,
+        separationStatus TEXT NOT NULL DEFAULT 'IDLE',
+        separationError TEXT,
+        currentAudioRenderJobId TEXT,
+        currentVideoRenderJobId TEXT,
+        isRenderStale INTEGER NOT NULL DEFAULT 1
+    )""",
+    """INSERT INTO edit_projects_new (
+        projectId, createdAt, updatedAt, title, pendingReviewTargetLangsCsv,
+        frameWidth, frameHeight, backgroundColorHex,
+        videoScale, videoOffsetXPct, videoOffsetYPct,
+        targetLanguageCode, targetLanguageCodesJson,
+        enableAutoDubbing, enableAutoSubtitles,
+        showSubtitlesOnPreview, showDubbingOnPreview,
+        numberOfSpeakers,
+        dubbedAudioPath, dubbedAudioPathsJson, dubbedVideoPathsJson,
+        autoDubStatusByLangJson, autoDubJobIdByLangJson,
+        autoSubtitleStatus, autoDubStatus,
+        autoSubtitleJobId, autoDubJobId, autoSubtitleError, autoDubError,
+        separationJobId, separationSegmentId, separationNumberOfSpeakers,
+        separationMuteOriginal, separationStatus, separationError,
+        currentAudioRenderJobId, currentVideoRenderJobId, isRenderStale
+    )
+    SELECT
+        projectId, createdAt, updatedAt, title, pendingReviewTargetLangsCsv,
+        frameWidth, frameHeight, backgroundColorHex,
+        videoScale, videoOffsetXPct, videoOffsetYPct,
+        targetLanguageCode, targetLanguageCodesJson,
+        enableAutoDubbing, enableAutoSubtitles,
+        showSubtitlesOnPreview, showDubbingOnPreview,
+        numberOfSpeakers,
+        dubbedAudioPath, dubbedAudioPathsJson, dubbedVideoPathsJson,
+        autoDubStatusByLangJson, autoDubJobIdByLangJson,
+        autoSubtitleStatus, autoDubStatus,
+        autoSubtitleJobId, autoDubJobId, autoSubtitleError, autoDubError,
+        separationJobId, separationSegmentId, separationNumberOfSpeakers,
+        separationMuteOriginal, separationStatus, separationError,
+        NULL, currentRenderJobId, isRenderStale
+    FROM edit_projects""",
+    "DROP TABLE edit_projects",
+    "ALTER TABLE edit_projects_new RENAME TO edit_projects"
+)
+
+val MIGRATION_31_32 = object : Migration(31, 32) {
+    override fun migrate(connection: SQLiteConnection) {
+        MIGRATION_31_32_STATEMENTS.forEach { connection.execSQL(it) }
+    }
+}
+
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
@@ -420,5 +526,5 @@ val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
     MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
     MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
-    MIGRATION_28_29, MIGRATION_29_30,
+    MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32,
 )

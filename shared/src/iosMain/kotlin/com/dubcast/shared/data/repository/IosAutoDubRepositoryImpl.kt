@@ -6,8 +6,6 @@ import com.dubcast.shared.domain.repository.AutoDubJobStatus
 import com.dubcast.shared.domain.repository.AutoDubRepository
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.allocArrayOf
-import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.addressOf
 import kotlinx.coroutines.Dispatchers
@@ -32,15 +30,20 @@ class IosAutoDubRepositoryImpl(
         sourceLanguageCode: String,
         targetLanguageCode: String,
         numberOfSpeakers: Int,
-        ttsModel: String?
+        ttsModel: String?,
+        editedRenderJobId: String?,
     ): Result<String> = runCatching {
-        val part = uploader.loadAsBinaryPart(sourceUri, mediaType, "autodub")
+        // editedRenderJobId 가 있으면 BFF 가 render output 을 source 로 — file 업로드 자체 생략.
+        val part = if (editedRenderJobId == null) {
+            uploader.loadAsBinaryPart(sourceUri, mediaType, "autodub")
+        } else null
         val spec = AutoDubSpec(
             mediaType = mediaType,
             sourceLanguageCode = sourceLanguageCode,
             targetLanguageCode = targetLanguageCode,
             numberOfSpeakers = numberOfSpeakers,
-            ttsModel = ttsModel
+            ttsModel = ttsModel,
+            editedRenderJobId = editedRenderJobId,
         )
         api.submitAutoDubJob(part, spec).jobId
     }

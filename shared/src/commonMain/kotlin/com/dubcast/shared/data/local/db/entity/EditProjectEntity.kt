@@ -47,4 +47,10 @@ data class EditProjectEntity(
     val separationMuteOriginal: Boolean = true,
     val separationStatus: String = "IDLE",
     val separationError: String? = null,
+    /** 가장 최근 BFF audio-only render jobId (RenderKind.AUDIO). 자막/STT/분리 가 사용. */
+    val currentAudioRenderJobId: String? = null,
+    /** 가장 최근 BFF video render jobId (RenderKind.VIDEO). 자동 더빙이 사용. */
+    val currentVideoRenderJobId: String? = null,
+    /** 1 = render 후 timeline mutation 있음 (다시 render 필요). 0 = 최신 render 와 동기화. 기본 1. */
+    val isRenderStale: Boolean = true,
 )

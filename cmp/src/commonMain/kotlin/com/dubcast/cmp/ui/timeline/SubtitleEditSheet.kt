@@ -63,7 +63,8 @@ fun SubtitleEditSheet(
                         FilterChip(
                             selected = lang == selectedLang,
                             onClick = { onSelectLang(lang) },
-                            label = { Text(lang.uppercase()) }
+                            // 빈 lang code 는 "원본" — STT 자동 감지 결과로 lang 라벨 미부여 (auto 모드).
+                            label = { Text(if (lang.isBlank()) "원본" else lang.uppercase()) }
                         )
                     }
                 }
@@ -81,7 +82,8 @@ fun SubtitleEditSheet(
                 Text("자막 텍스트", style = MaterialTheme.typography.titleSmall)
 
                 if (cues.isEmpty()) {
-                    Text("$activeLang 자막이 없습니다.", style = MaterialTheme.typography.bodySmall)
+                    val activeLabel = if (activeLang.isBlank()) "원본" else activeLang.uppercase()
+                    Text("$activeLabel 자막이 없습니다.", style = MaterialTheme.typography.bodySmall)
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
@@ -148,7 +150,7 @@ private fun CueEditRow(clip: SubtitleClip, onSave: (clipId: String, newText: Str
         OutlinedTextField(
             value = draft,
             onValueChange = { draft = it },
-            label = { Text(clip.languageCode.uppercase()) },
+            label = { Text(if (clip.languageCode.isBlank()) "원본" else clip.languageCode.uppercase()) },
             modifier = Modifier.fillMaxWidth(),
         )
     }

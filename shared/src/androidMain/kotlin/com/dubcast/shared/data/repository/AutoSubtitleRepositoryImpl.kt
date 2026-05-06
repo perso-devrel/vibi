@@ -16,14 +16,19 @@ class AutoSubtitleRepositoryImpl(
         mediaType: String,
         sourceLanguageCode: String,
         targetLanguageCodes: List<String>,
-        numberOfSpeakers: Int
+        numberOfSpeakers: Int,
+        editedRenderJobId: String?,
     ): Result<String> = runCatching {
-        val part = uploader.loadAsBinaryPart(sourceUri, mediaType, "subtitle")
+        // editedRenderJobId 가 있으면 BFF 가 render output 을 source 로 — file 업로드 자체 생략.
+        val part = if (editedRenderJobId == null) {
+            uploader.loadAsBinaryPart(sourceUri, mediaType, "subtitle")
+        } else null
         val spec = SubtitleSpec(
             mediaType = mediaType,
             sourceLanguageCode = sourceLanguageCode,
             targetLanguageCodes = targetLanguageCodes,
-            numberOfSpeakers = numberOfSpeakers
+            numberOfSpeakers = numberOfSpeakers,
+            editedRenderJobId = editedRenderJobId,
         )
         api.submitSubtitleJob(part, spec).jobId
     }

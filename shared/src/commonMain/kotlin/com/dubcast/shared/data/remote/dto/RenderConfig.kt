@@ -17,7 +17,14 @@ data class RenderConfig(
     /** my_plan: 음성분리 명세 — 모든 결과 영상에 동일 적용. */
     val separationDirectives: List<RenderSeparationDirective> = emptyList(),
     /** 결과 영상 언어 (출력 메타). */
-    val outputLanguageCode: String = "original"
+    val outputLanguageCode: String = "original",
+    /**
+     * BFF render 출력 모드. "video" (기본) = 풀 mp4 mux. "audio" = audio-only m4a (AAC 192k) —
+     * 5–10x 빠름. 자막/음성분리/STT 단계가 audio 만 필요할 때 사용. 본 jobId 가 자막/분리 스펙의
+     * `editedRenderJobId` 로 송신되면 BFF 의 `-vn` 추출 분기가 mediaType=AUDIO 를 기준으로 동작하므로
+     * 호출자는 spec.mediaType 도 "AUDIO" 로 강제해야 한다.
+     */
+    val outputKind: String = "video"
 )
 
 @Serializable

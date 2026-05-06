@@ -127,6 +127,9 @@ class EditProjectRepositoryImpl constructor(
         separationMuteOriginal = separationMuteOriginal,
         separationStatus = parseStatus(separationStatus),
         separationError = separationError,
+        currentAudioRenderJobId = currentAudioRenderJobId,
+        currentVideoRenderJobId = currentVideoRenderJobId,
+        isRenderStale = isRenderStale,
     )
 
     private fun EditProject.toEntity() = EditProjectEntity(
@@ -165,6 +168,9 @@ class EditProjectRepositoryImpl constructor(
         separationMuteOriginal = separationMuteOriginal,
         separationStatus = separationStatus.name,
         separationError = separationError,
+        currentAudioRenderJobId = currentAudioRenderJobId,
+        currentVideoRenderJobId = currentVideoRenderJobId,
+        isRenderStale = isRenderStale,
     )
 
     /** {key:value, ...} 단순 직렬화. value 에 콤마/콜론/따옴표 없는 경로·jobId 가정. */

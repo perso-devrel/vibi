@@ -5,13 +5,16 @@ import com.dubcast.shared.domain.model.EditProject
 import com.dubcast.shared.domain.repository.AutoDubJobStatus
 import com.dubcast.shared.domain.repository.AutoDubRepository
 import com.dubcast.shared.domain.repository.EditProjectRepository
+import com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase
+import com.dubcast.shared.domain.usecase.render.RenderKind
 
 private const val POLL_INTERVAL_MS = 5_000L
 private const val MAX_POLL_ATTEMPTS = 360
 
 class GenerateAutoDubUseCase(
     private val autoDubRepository: AutoDubRepository,
-    private val editProjectRepository: EditProjectRepository
+    private val editProjectRepository: EditProjectRepository,
+    private val ensureLatestRender: EnsureLatestRenderUseCase,
 ) {
     suspend operator fun invoke(
         projectId: String,
@@ -19,7 +22,8 @@ class GenerateAutoDubUseCase(
         mediaType: String,
         sourceLanguageCode: String,
         targetLanguageCode: String,
-        numberOfSpeakers: Int = 1
+        numberOfSpeakers: Int = 1,
+        onRenderProgress: (percent: Int) -> Unit = {},
     ): Result<String> = runCatching {
         var project = editProjectRepository.getProject(projectId)
             ?: throw IllegalStateException("Project not found: $projectId")
@@ -34,12 +38,30 @@ class GenerateAutoDubUseCase(
         )
         editProjectRepository.updateProject(project)
 
+        // 편집 영상이 필요한 경우 video render 잡 ID 보장 — 더빙은 영상 mux 까지 필요.
+        // null = 무편집 → 원본 sourceUri 사용.
+        val editedRenderJobId = ensureLatestRender(
+            projectId = projectId,
+            kind = RenderKind.VIDEO,
+            onProgress = onRenderProgress,
+        ).getOrElse { e ->
+            markFailed(project, targetLanguageCode, "편집 영상 준비 실패")
+            throw e
+        }
+        // ensureLatestRender 가 project 를 갱신했을 수 있으므로 다시 읽음.
+        project = editProjectRepository.getProject(projectId) ?: project
+
+        // 편집 영상이 사용되는 경우 BFF 는 mp4 mux 결과를 본다 → mediaType 은 항상 VIDEO 로 강제.
+        // (GenerateAutoSubtitlesUseCase / GenerateOriginalScriptUseCase / StartAudioSeparationUseCase
+        // 와 동일 패턴.)
+        val effectiveMediaType = if (editedRenderJobId != null) "VIDEO" else mediaType
         val jobId = autoDubRepository.submit(
             sourceUri = sourceUri,
-            mediaType = mediaType,
+            mediaType = effectiveMediaType,
             sourceLanguageCode = sourceLanguageCode,
             targetLanguageCode = targetLanguageCode,
-            numberOfSpeakers = numberOfSpeakers
+            numberOfSpeakers = numberOfSpeakers,
+            editedRenderJobId = editedRenderJobId,
         ).getOrElse { e ->
             markFailed(project, targetLanguageCode, "더빙 요청 실패")
             throw e

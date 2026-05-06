@@ -8,6 +8,8 @@ import com.dubcast.shared.domain.repository.AutoSubtitleRepository
 import com.dubcast.shared.domain.repository.AutoSubtitleStatus
 import com.dubcast.shared.domain.repository.EditProjectRepository
 import com.dubcast.shared.domain.repository.SubtitleClipRepository
+import com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase
+import com.dubcast.shared.domain.usecase.render.RenderKind
 import com.dubcast.shared.platform.generateId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -22,6 +24,7 @@ class GenerateOriginalScriptUseCase(
     private val autoSubtitleRepository: AutoSubtitleRepository,
     private val subtitleClipRepository: SubtitleClipRepository,
     private val editProjectRepository: EditProjectRepository,
+    private val ensureLatestRender: EnsureLatestRenderUseCase,
     private val pollIntervalMs: Long = 3_000L,
     private val maxAttempts: Int = 600,
 ) {
@@ -29,6 +32,7 @@ class GenerateOriginalScriptUseCase(
         projectId: String,
         sourceUri: String,
         mediaType: String = "VIDEO",
+        onRenderProgress: (percent: Int) -> Unit = {},
     ): Result<Int> = runCatching {
         val project = editProjectRepository.getProject(projectId)
             ?: error("프로젝트를 찾을 수 없습니다: $projectId")
@@ -41,12 +45,25 @@ class GenerateOriginalScriptUseCase(
             )
         )
 
+        // 편집 영상이 필요한 경우 audio-only render 잡 ID 보장 (STT 만 필요 — 5–10x 빠름).
+        // null = 무편집 → 원본 sourceUri 업로드.
+        val editedRenderJobId = ensureLatestRender(
+            projectId = projectId,
+            kind = RenderKind.AUDIO,
+            onProgress = onRenderProgress,
+        ).getOrThrow()
+
+        // audio render 결과를 source 로 쓸 때는 mediaType 을 "AUDIO" 로 강제 — BFF 의 자막 서비스가
+        // mediaType 기준으로 `-vn` 분기를 결정.
+        val effectiveMediaType = if (editedRenderJobId != null) "AUDIO" else mediaType
+
         val jobId = autoSubtitleRepository.submit(
             sourceUri = sourceUri,
-            mediaType = mediaType,
+            mediaType = effectiveMediaType,
             sourceLanguageCode = "auto",
             targetLanguageCodes = emptyList(),
             numberOfSpeakers = 1,
+            editedRenderJobId = editedRenderJobId,
         ).getOrThrow()
 
         editProjectRepository.updateProject(

@@ -25,25 +25,29 @@ class AudioSeparationRepositoryImpl(
         numberOfSpeakers: Int,
         sourceLanguageCode: String,
         trimStartMs: Long?,
-        trimEndMs: Long?
+        trimEndMs: Long?,
+        editedRenderJobId: String?,
     ): Result<String> = runCatching {
-        val (ext, contentType) = when (mediaType) {
-            SeparationMediaType.VIDEO -> "mp4" to "video/mp4"
-            SeparationMediaType.AUDIO -> "mp3" to "audio/mpeg"
-        }
-        val bytes = readFileBytes(sourceUri)
-        val part = BinaryPart(
-            fieldName = "file",
-            filename = "separation.$ext",
-            bytes = bytes,
-            contentType = contentType
-        )
+        val part = if (editedRenderJobId == null) {
+            val (ext, contentType) = when (mediaType) {
+                SeparationMediaType.VIDEO -> "mp4" to "video/mp4"
+                SeparationMediaType.AUDIO -> "mp3" to "audio/mpeg"
+            }
+            val bytes = readFileBytes(sourceUri)
+            BinaryPart(
+                fieldName = "file",
+                filename = "separation.$ext",
+                bytes = bytes,
+                contentType = contentType
+            )
+        } else null
         val spec = SeparationSpec(
             mediaType = mediaType.wireName,
             numberOfSpeakers = numberOfSpeakers,
             sourceLanguageCode = sourceLanguageCode,
             trimStartMs = trimStartMs,
-            trimEndMs = trimEndMs
+            trimEndMs = trimEndMs,
+            editedRenderJobId = editedRenderJobId,
         )
         api.startSeparation(file = part, spec = spec).jobId
     }

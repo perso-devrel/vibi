@@ -64,7 +64,9 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -869,25 +871,63 @@ fun TimelineScreen(
 
                 // 원본 언어는 Perso STT 가 자동 감지함 — 사용자 선택 불필요.
 
-                Text("번역 대상 언어 (다중)", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf(
-                        "en" to "English",
-                        "ko" to "한국어",
-                        "ja" to "日本語",
-                        "zh" to "中文",
-                        "es" to "Español",
-                        "fr" to "Français",
-                        "de" to "Deutsch"
-                    ).forEach { (code, label) ->
-                        FilterChip(
-                            selected = code in state.localizationLangs,
-                            onClick = { viewModel.onToggleLocalizationLang(code) },
-                            label = { Text(label) }
-                        )
+                // 자막 모드: "원본 언어" / "번역 언어 선택" 라디오. 더빙 모드는 기존 다중 선택 그대로.
+                if (state.localizationMode == "subtitle") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = state.localizationOriginalOnly,
+                                onClick = { viewModel.onSetLocalizationOriginalOnly(true) }
+                            )
+                            Text(
+                                "원본 언어 (스크립트만)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = tokens.onBackgroundPrimary,
+                                modifier = Modifier.clickable {
+                                    viewModel.onSetLocalizationOriginalOnly(true)
+                                }
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = !state.localizationOriginalOnly,
+                                onClick = { viewModel.onSetLocalizationOriginalOnly(false) }
+                            )
+                            Text(
+                                "번역 언어 선택",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = tokens.onBackgroundPrimary,
+                                modifier = Modifier.clickable {
+                                    viewModel.onSetLocalizationOriginalOnly(false)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // 번역 langs chip 영역 — 자막 + 원본만 모드면 숨김 (확정 차원에서 disable).
+                val showLangChips = !(state.localizationMode == "subtitle" && state.localizationOriginalOnly)
+                if (showLangChips) {
+                    Text("번역 대상 언어 (다중)", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            "en" to "English",
+                            "ko" to "한국어",
+                            "ja" to "日本語",
+                            "zh" to "中文",
+                            "es" to "Español",
+                            "fr" to "Français",
+                            "de" to "Deutsch"
+                        ).forEach { (code, label) ->
+                            FilterChip(
+                                selected = code in state.localizationLangs,
+                                onClick = { viewModel.onToggleLocalizationLang(code) },
+                                label = { Text(label) }
+                            )
+                        }
                     }
                 }
                 // 자막 모드 한정: STT 결과 미리 검토 후 다국어 자막 생성. dub 는 BFF 추가 필요해 현재 미지원.
@@ -898,10 +938,13 @@ fun TimelineScreen(
                         label = { Text("📝 스크립트 먼저 검토") }
                     )
                 }
+                // "생성 시작" enable 조건: 자막+원본만 OR 번역 lang 1개 이상.
+                val startEnabled = (state.localizationMode == "subtitle" && state.localizationOriginalOnly) ||
+                    state.localizationLangs.isNotEmpty()
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         modifier = Modifier.weight(1f),
-                        enabled = state.localizationLangs.isNotEmpty(),
+                        enabled = startEnabled,
                         onClick = { viewModel.onStartLocalization() }
                     ) { Text("생성 시작") }
                     OutlinedButton(onClick = { viewModel.onDismissLocalization() }) {
@@ -912,6 +955,29 @@ fun TimelineScreen(
         }
 
         Spacer(Modifier.height(8.dp))
+
+        // 편집 영상 render 진행 — 자막/더빙/분리 시작 직전 BFF 가 새 영상을 만드는 중.
+        // null = 진행 중 아님. 0..100 = 폴링 진행률.
+        state.editedVideoRenderProgress?.let { progress ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(tokens.panelBg, RoundedCornerShape(8.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    "편집 영상 준비 중… ($progress%)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.onBackgroundPrimary,
+                )
+                LinearProgressIndicator(
+                    progress = { (progress / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         // 저장 상태 메시지 (실패 시) — 헤더 저장 버튼이 진행률을 자체 표시하므로
         // running/done 은 별도 표시 안 함. 실패 메시지만 사용자에게 알림.

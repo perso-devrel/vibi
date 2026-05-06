@@ -23,13 +23,18 @@ sealed class AutoSubtitleStatus {
 }
 
 interface AutoSubtitleRepository {
+    /**
+     * @param editedRenderJobId non-null 이면 BFF 가 본 jobId 의 render output 을 source 로 사용 →
+     *   multipart `file` part 자체를 송신하지 않음. null 이면 기존처럼 [sourceUri] 의 원본 파일 업로드.
+     */
     suspend fun submit(
         sourceUri: String,
         mediaType: String,
         sourceLanguageCode: String,
         /** 빈 리스트면 STT 만 (originalSrt). N개 lang 이면 STT 1회 + Gemini 번역 N회. */
         targetLanguageCodes: List<String>,
-        numberOfSpeakers: Int = 1
+        numberOfSpeakers: Int = 1,
+        editedRenderJobId: String? = null,
     ): Result<String>
 
     /**

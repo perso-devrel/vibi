@@ -7,6 +7,8 @@ import com.dubcast.shared.data.repository.EditProjectRepositoryImpl
 import com.dubcast.shared.data.repository.ImageClipRepositoryImpl
 import com.dubcast.shared.data.repository.LanguageRepositoryImpl
 import com.dubcast.shared.data.repository.RemoteRenderExecutor
+import com.dubcast.shared.data.repository.RenderJobSubmitter
+import com.dubcast.shared.data.repository.RenderRepositoryImpl
 import com.dubcast.shared.data.repository.SegmentRepositoryImpl
 import com.dubcast.shared.data.repository.SubtitleClipRepositoryImpl
 import com.dubcast.shared.data.repository.TextOverlayRepositoryImpl
@@ -16,6 +18,7 @@ import com.dubcast.shared.domain.repository.DubClipRepository
 import com.dubcast.shared.domain.repository.EditProjectRepository
 import com.dubcast.shared.domain.repository.ImageClipRepository
 import com.dubcast.shared.domain.repository.LanguageRepository
+import com.dubcast.shared.domain.repository.RenderRepository
 import com.dubcast.shared.domain.repository.SegmentRepository
 import com.dubcast.shared.domain.repository.SubtitleClipRepository
 import com.dubcast.shared.domain.repository.TextOverlayRepository
@@ -44,6 +47,8 @@ val repositoryModule = module {
     single<BgmClipRepository> { BgmClipRepositoryImpl(get()) }
     single<AudioSeparationRepository> { AudioSeparationRepositoryImpl(get()) }
     single<FfmpegExecutor> { RemoteRenderExecutor(api = get()) }
+    single { RenderJobSubmitter(api = get()) }
+    single<RenderRepository> { RenderRepositoryImpl(submitter = get()) }
     single<LanguageRepository> { LanguageRepositoryImpl(api = get()) }
     single<com.dubcast.shared.domain.repository.SeparationDirectiveRepository> {
         com.dubcast.shared.data.repository.SeparationDirectiveRepositoryImpl(dao = get())

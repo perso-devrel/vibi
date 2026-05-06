@@ -68,6 +68,7 @@ val viewModelModule = module {
             separationDirectiveRepository = get(),
             saveAllVariants = get(),
             shareSheetLauncher = get(),
+            ensureLatestRender = get(),
         )
     }
     factory { ChatViewModel(chatRepository = get()) }
