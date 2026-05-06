@@ -97,3 +97,21 @@ data class EditProject(
 }
 
 enum class AutoJobStatus { IDLE, RUNNING, READY, FAILED }
+
+/**
+ * 원본 언어 자막 (lang="" SubtitleClip) 이 export variant / preview chip 에 노출 가능한 상태인지.
+ *
+ * 조건:
+ *  - lang="" 클립이 1개 이상 존재
+ *  - review 대기 마킹 ([EditProject.pendingReviewTargetLangsCsv]) 가 null
+ *    (= review 모드 미사용 또는 사용자 confirm 완료)
+ *
+ * SSOT — UI chip 노출 ([TimelineScreen]) 과 export variant 산출
+ * ([SaveAllVariantsUseCase.computeAllVariantKeys]) 양쪽이 본 헬퍼만 호출.
+ * 조건 추가 시 한 곳만 수정.
+ */
+fun hasConfirmedOriginalSubtitle(
+    subtitleClips: List<SubtitleClip>,
+    pendingReviewTargetLangsCsv: String?,
+): Boolean = subtitleClips.any { it.languageCode.isBlank() } &&
+    pendingReviewTargetLangsCsv == null

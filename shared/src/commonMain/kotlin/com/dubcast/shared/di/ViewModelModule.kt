@@ -67,6 +67,7 @@ val viewModelModule = module {
             generateAutoDub = get(),
             separationDirectiveRepository = get(),
             saveAllVariants = get(),
+            listExportVariants = get(),
             shareSheetLauncher = get(),
             ensureLatestRender = get(),
         )

@@ -9,6 +9,7 @@ import kotlin.uuid.Uuid
 import com.dubcast.shared.domain.model.AutoJobStatus
 import com.dubcast.shared.domain.model.DubClip
 import com.dubcast.shared.domain.model.EditProject
+import com.dubcast.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.dubcast.shared.domain.model.ImageClip
 import com.dubcast.shared.domain.model.Segment
 import com.dubcast.shared.domain.model.SegmentType
@@ -29,6 +30,7 @@ import com.dubcast.shared.domain.repository.StemSelection
 import com.dubcast.shared.domain.repository.SubtitleClipRepository
 import com.dubcast.shared.domain.repository.TextOverlayRepository
 import com.dubcast.shared.domain.model.SeparationMediaType
+import com.dubcast.shared.data.remote.api.BffApi
 import com.dubcast.shared.domain.usecase.image.AddImageClipUseCase
 import com.dubcast.shared.domain.usecase.image.DeleteImageClipUseCase
 import com.dubcast.shared.domain.usecase.image.UpdateImageClipUseCase
@@ -39,12 +41,19 @@ import com.dubcast.shared.domain.usecase.input.AudioMetadataExtractor
 import com.dubcast.shared.domain.usecase.input.ImageMetadataExtractor
 import com.dubcast.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.dubcast.shared.domain.usecase.input.VideoMetadataExtractor
+import com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase
+import com.dubcast.shared.domain.usecase.save.ExportVariant
+import com.dubcast.shared.domain.usecase.save.ListExportVariantsUseCase
+import com.dubcast.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.dubcast.shared.domain.usecase.separation.PollSeparationUseCase
 import com.dubcast.shared.domain.usecase.separation.StartAudioSeparationUseCase
+import com.dubcast.shared.domain.usecase.share.ShareSheetLauncher
 import com.dubcast.shared.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.dubcast.shared.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.dubcast.shared.domain.usecase.subtitle.GenerateAutoDubUseCase
 import com.dubcast.shared.domain.usecase.subtitle.GenerateAutoSubtitlesUseCase
+import com.dubcast.shared.domain.usecase.subtitle.GenerateOriginalScriptUseCase
+import com.dubcast.shared.domain.usecase.subtitle.RegenerateSubtitlesUseCase
 import com.dubcast.shared.domain.usecase.subtitle.UndoRedoManager
 import com.dubcast.shared.domain.usecase.text.AddTextOverlayUseCase
 import com.dubcast.shared.domain.usecase.text.DeleteTextOverlayUseCase
@@ -95,6 +104,27 @@ sealed interface ShareStatus {
     data class RUNNING(val progress: Int) : ShareStatus
     data object DONE : ShareStatus
     data class FAILED(val message: String) : ShareStatus
+}
+
+/**
+ * 저장/공유 흐름 진입 시 노출하는 variant picker sheet 상태.
+ * variant 가 1개 이하면 picker 안 띄움 (즉시 동작) — 이 state 는 null.
+ *
+ *  - [Save] : multi-select. default 는 모든 variant 선택. confirm 시 갤러리 저장.
+ *  - [Share] : single-select. default 는 "original". confirm 시 share sheet.
+ */
+sealed class ExportVariantPickerState {
+    abstract val variants: List<ExportVariant>
+
+    data class Save(
+        override val variants: List<ExportVariant>,
+        val selected: Set<String>,
+    ) : ExportVariantPickerState()
+
+    data class Share(
+        override val variants: List<ExportVariant>,
+        val selected: String,
+    ) : ExportVariantPickerState()
 }
 
 data class TimelineUiState(
@@ -176,7 +206,7 @@ data class TimelineUiState(
     /** AudioSeparationSheet 표시 여부 — audioSeparation (데이터) 과 분리해 자동 팝업 회피. */
     val showAudioSeparationSheet: Boolean = false,
     /** Phase 1 commit 후 timeline 재생 시 stem mixer 가 사용. */
-    val separationDirectives: List<com.dubcast.shared.domain.model.SeparationDirective> = emptyList(),
+    val separationDirectives: List<SeparationDirective> = emptyList(),
     /** EditProject.separationStatus 미러 — 백그라운드 진행/완료 상태 표면화. */
     val separationStatus: AutoJobStatus = AutoJobStatus.IDLE,
     val targetLanguageCode: String = TargetLanguage.CODE_ORIGINAL,
@@ -222,6 +252,18 @@ data class TimelineUiState(
     /** STT only 진행 상태 — RUNNING 시 chip spinner. */
     val sttPreflightStatus: AutoJobStatus = AutoJobStatus.IDLE,
     val sttPreflightError: String? = null,
+    /**
+     * STT review-mode 로 시작했고 사용자가 검토 confirm 안 한 상태.
+     * `EditProject.pendingReviewTargetLangsCsv != null` 와 동기화 — 빈 string 도 review pending
+     * (= original-only review). UI 가 "스크립트 생성 완료" 진입 버튼 표시 여부 결정.
+     */
+    val subtitleReviewPending: Boolean = false,
+    /**
+     * 원본 자막 (lang="" SubtitleClip) 이 chip / export variant 에 노출 가능한지.
+     * SSOT — [hasConfirmedOriginalSubtitle] 결과를
+     * observeProject 에서 set. UI 와 export use case 가 같은 헬퍼를 보므로 갈라질 일 없음.
+     */
+    val hasOriginalSubtitleVariant: Boolean = false,
     /** null = 원본, 그 외 = 미리보기로 볼 언어 코드. 비디오 소스 swap 은 미구현 (UI 선택만). */
     val previewLangCode: String? = null,
     /** 언어 코드 → 더빙된 audio mp3 local path. (legacy / export 합성용) */
@@ -238,6 +280,11 @@ data class TimelineUiState(
      * UI 가 "편집 영상 준비 중… (xx%)" 노출.
      */
     val editedVideoRenderProgress: Int? = null,
+    /**
+     * 저장/공유 흐름 진입 시 사용자가 어떤 variant 를 출력할지 고르는 picker sheet state.
+     * null = picker 미노출 (variant 1개라 즉시 동작 중이거나 흐름 idle).
+     */
+    val exportVariantPicker: ExportVariantPickerState? = null,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -302,15 +349,16 @@ class TimelineViewModel constructor(
     private val startAudioSeparation: StartAudioSeparationUseCase,
     private val pollSeparation: PollSeparationUseCase,
     private val generateAutoSubtitles: GenerateAutoSubtitlesUseCase,
-    private val regenerateSubtitles: com.dubcast.shared.domain.usecase.subtitle.RegenerateSubtitlesUseCase,
-    private val generateOriginalScript: com.dubcast.shared.domain.usecase.subtitle.GenerateOriginalScriptUseCase,
+    private val regenerateSubtitles: RegenerateSubtitlesUseCase,
+    private val generateOriginalScript: GenerateOriginalScriptUseCase,
     private val generateAutoDub: GenerateAutoDubUseCase,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val bffBaseUrl: String,
-    private val bffApi: com.dubcast.shared.data.remote.api.BffApi,
-    private val saveAllVariants: com.dubcast.shared.domain.usecase.save.SaveAllVariantsUseCase,
-    private val shareSheetLauncher: com.dubcast.shared.domain.usecase.share.ShareSheetLauncher,
-    private val ensureLatestRender: com.dubcast.shared.domain.usecase.render.EnsureLatestRenderUseCase,
+    private val bffApi: BffApi,
+    private val saveAllVariants: SaveAllVariantsUseCase,
+    private val listExportVariants: ListExportVariantsUseCase,
+    private val shareSheetLauncher: ShareSheetLauncher,
+    private val ensureLatestRender: EnsureLatestRenderUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -336,6 +384,19 @@ class TimelineViewModel constructor(
 
     private fun activeUndoManager(): UndoRedoManager<TimelineSnapshot> =
         if (_uiState.value.isSegmentEditMode) editModeUndoRedoManager else undoRedoManager
+
+    /**
+     * `editedVideoRenderProgress` 단일 필드 mutation helper.
+     *
+     * BFF 편집 영상 render 잡 (자막·자동더빙·분리 시작 직전 EnsureLatestRender) 의 진행률(0..100)을
+     * UiState 에 반영하는 패턴이 본 ViewModel 곳곳에 반복되어 helper 로 단일화.
+     *
+     *  - `percent != null` → "편집 영상 준비 중… (xx%)" 노출.
+     *  - `percent == null` → 진행 중 아님 (또는 무편집 → render skip / 다음 단계 진입).
+     */
+    private fun setRenderProgress(percent: Int?) {
+        _uiState.update { it.copy(editedVideoRenderProgress = percent) }
+    }
 
     // Auto-trigger gates: prevent re-firing background pipelines on every
     // project emission. ARMED → eligible to fire; FIRED → already running
@@ -391,7 +452,12 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             editProjectRepository.observeProject(projectId).collect { project ->
                 if (project != null) {
-                    _uiState.value = _uiState.value.copy(
+                    val current = _uiState.value
+                    val originalVariant = hasConfirmedOriginalSubtitle(
+                        subtitleClips = current.subtitleClips,
+                        pendingReviewTargetLangsCsv = project.pendingReviewTargetLangsCsv,
+                    )
+                    _uiState.value = current.copy(
                         frameWidth = project.frameWidth,
                         frameHeight = project.frameHeight,
                         backgroundColorHex = project.backgroundColorHex,
@@ -412,6 +478,10 @@ class TimelineViewModel constructor(
                         dubbedAudioPaths = project.dubbedAudioPaths,
                         dubbedVideoPaths = project.dubbedVideoPaths,
                         separationStatus = project.separationStatus,
+                        // null = 검토 대기 없음. 빈 string 도 review pending (original-only review)
+                        // 이므로 isNullOrBlank 가 아니라 != null 로 판정.
+                        subtitleReviewPending = project.pendingReviewTargetLangsCsv != null,
+                        hasOriginalSubtitleVariant = originalVariant,
                     )
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
@@ -459,7 +529,8 @@ class TimelineViewModel constructor(
 
     private fun shouldShowPendingReview(project: EditProject): Boolean =
         reviewSheetGate == TriggerGate.ARMED &&
-            !project.pendingReviewTargetLangsCsv.isNullOrBlank() &&
+            // null 검사 — 빈 string 은 original-only review (langs=[]) 의 pending 신호이므로 그대로 통과.
+            project.pendingReviewTargetLangsCsv != null &&
             project.autoSubtitleStatus == AutoJobStatus.READY
 
     private fun shouldResumeSeparation(project: EditProject): Boolean =
@@ -523,15 +594,15 @@ class TimelineViewModel constructor(
                     targetLanguageCodes = listOfNotNull(targetLang),
                     numberOfSpeakers = project.numberOfSpeakers,
                     onRenderProgress = { p ->
-                        _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                        setRenderProgress(p)
                     },
                 )
-                _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                setRenderProgress(null)
                 // The use case wrote FAILED on its own; re-arm so a fresh
                 // retry path (button or status reset) can trigger again.
                 if (result.isFailure) subtitleGate = TriggerGate.ARMED
             } catch (e: kotlinx.coroutines.CancellationException) {
-                _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                setRenderProgress(null)
                 subtitleGate = TriggerGate.ARMED
                 throw e
             }
@@ -565,13 +636,13 @@ class TimelineViewModel constructor(
                         targetLanguageCode = lang,
                         numberOfSpeakers = project.numberOfSpeakers,
                         onRenderProgress = { p ->
-                            _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                            setRenderProgress(p)
                         },
                     )
-                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                    setRenderProgress(null)
                     if (result.isFailure) anyFailure = true
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                    setRenderProgress(null)
                     dubGate = TriggerGate.ARMED
                     throw e
                 }
@@ -669,10 +740,19 @@ class TimelineViewModel constructor(
                 imageClipRepository.observeClips(projectId)
             ) { dubs, subs, images -> Triple(dubs, subs, images) }
                 .collect { (dubs, subs, images) ->
-                    _uiState.value = _uiState.value.copy(
+                    val current = _uiState.value
+                    // SSOT — UI chip / export variant picker 산출이 같은 헬퍼 결과를 본다.
+                    // subtitleReviewPending 은 observeProject 에서 set 되고 pendingReviewTargetLangsCsv != null 과 동기화.
+                    // helper 입력으로 sentinel csv ("pending") 를 넘기되 의미는 "review pending = csv != null 이면 false 반환".
+                    val originalVariant = hasConfirmedOriginalSubtitle(
+                        subtitleClips = subs,
+                        pendingReviewTargetLangsCsv = if (current.subtitleReviewPending) "pending" else null,
+                    )
+                    _uiState.value = current.copy(
                         dubClips = dubs,
                         subtitleClips = subs,
-                        imageClips = images
+                        imageClips = images,
+                        hasOriginalSubtitleVariant = originalVariant,
                     )
                 }
         }
@@ -1341,36 +1421,99 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * Timeline 헤더 "저장" 버튼 — 모든 variant (`original` + 자막/더빙 lang 들) 를 BG 에서 렌더한 뒤
-     * 갤러리에 저장. 완료 후 EditProject 삭제 + InputScreen 으로 navigate.
-     *
-     * 진행 상태는 [TimelineUiState.saveStatus] 로 노출 (UI 에서 snackbar / 버튼 라벨).
+     * Timeline 헤더 "저장" 버튼 — variant 1개면 즉시 모두 렌더 + 갤러리 저장.
+     * 2+ 면 picker sheet 노출하고 사용자 선택을 기다림 ([onConfirmSavePicker] 가 실제 호출).
      */
     fun onSaveAllVariants() {
         if (_uiState.value.saveStatus is SaveStatus.RUNNING) return
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(0))
-            val result = saveAllVariants(
-                projectId = projectId,
-                onProgress = { percent ->
-                    _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(percent))
-                },
-            )
-            result.fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.DONE)
-                    // 저장 성공 — EditProject 삭제 후 InputScreen 복귀 신호. drafts 가 사라졌으므로
-                    // 사용자는 새 영상 선택부터 다시.
-                    runCatching { editProjectRepository.deleteProject(projectId) }
-                    _navigateBackHome.emit(Unit)
-                },
-                onFailure = { e ->
-                    _uiState.value = _uiState.value.copy(
-                        saveStatus = SaveStatus.FAILED(e.message ?: "저장 실패")
-                    )
-                }
+        if (_uiState.value.exportVariantPicker != null) return
+        // 새 시도 진입 — 직전 FAILED 흔적 (snackbar) 제거. RUNNING 가드는 위에서 통과했으므로 충돌 없음.
+        run {
+            val s = _uiState.value
+            _uiState.value = s.copy(
+                saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
+                shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
             )
         }
+        viewModelScope.launch {
+            val variants = listExportVariants(projectId).getOrElse { e ->
+                _uiState.value = _uiState.value.copy(
+                    saveStatus = SaveStatus.FAILED(e.message ?: "저장 준비 실패")
+                )
+                return@launch
+            }
+            if (variants.size <= 1) {
+                runSaveAllVariants(selectedKeys = null)
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    // Picker 와 다른 sheet 의 z-order 충돌 방지 — picker open 직전에 동시 열려있을 수 있는
+                    // sheet flag 들 하향.
+                    showScriptReviewSheet = false,
+                    exportVariantPicker = ExportVariantPickerState.Save(
+                        variants = variants,
+                        selected = variants.map { it.key }.toSet(),
+                    )
+                )
+            }
+        }
+    }
+
+    /** Picker sheet 의 "저장" 버튼 — 현재 선택된 variant 들로 본 저장 흐름 시작. */
+    fun onConfirmSavePicker() {
+        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Save ?: return
+        if (current.selected.isEmpty()) return
+        _uiState.value = _uiState.value.copy(exportVariantPicker = null)
+        viewModelScope.launch { runSaveAllVariants(selectedKeys = current.selected) }
+    }
+
+    /** Picker 안에서 항목 체크박스 토글. */
+    fun onToggleSavePickerVariant(key: String) {
+        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Save ?: return
+        val next = if (key in current.selected) current.selected - key else current.selected + key
+        _uiState.value = _uiState.value.copy(
+            exportVariantPicker = current.copy(selected = next)
+        )
+    }
+
+    /**
+     * Save / Share 양쪽 picker 의 취소 버튼.
+     *
+     * picker 취소가 새 시도의 entry 라는 의미 — 직전 FAILED 메시지는 클리어해서 snackbar 잔존 방지.
+     * RUNNING 중에는 picker 가 떠있을 수 없으니 그 상태는 보존 (RUNNING 가드 onSaveAllVariants/onShareExport 에 있음).
+     */
+    fun onCancelExportVariantPicker() {
+        val s = _uiState.value
+        if (s.exportVariantPicker == null) return
+        _uiState.value = s.copy(
+            exportVariantPicker = null,
+            saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
+            shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
+        )
+    }
+
+    private suspend fun runSaveAllVariants(selectedKeys: Set<String>?) {
+        _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(0))
+        val result = saveAllVariants(
+            projectId = projectId,
+            onProgress = { percent ->
+                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(percent))
+            },
+            selectedVariantKeys = selectedKeys,
+        )
+        result.fold(
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.DONE)
+                // 저장 성공 — EditProject 삭제 후 InputScreen 복귀 신호. drafts 가 사라졌으므로
+                // 사용자는 새 영상 선택부터 다시.
+                runCatching { editProjectRepository.deleteProject(projectId) }
+                _navigateBackHome.emit(Unit)
+            },
+            onFailure = { e ->
+                _uiState.value = _uiState.value.copy(
+                    saveStatus = SaveStatus.FAILED(e.message ?: "저장 실패")
+                )
+            }
+        )
     }
 
     /** Snackbar 닫기 등 — UI 에서 호출 후 idle 로 복귀. */
@@ -1379,54 +1522,105 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * Timeline 헤더 "공유" 버튼 — 모든 variant 를 BG 에서 렌더한 뒤 첫 번째 결과 path 를
-     * 시스템 share sheet 으로 띄움. 갤러리 저장 X, EditProject 보존, navigate 안 함.
-     *
-     * 사용자가 공유한 후 동일 프로젝트로 다시 편집/저장 가능.
+     * Timeline 헤더 "공유" 버튼 — variant 1개면 즉시 그것을 렌더해서 share sheet.
+     * 2+ 면 picker sheet 노출 (single-select, default "original").
      */
     fun onShareExport() {
         if (_uiState.value.shareStatus is ShareStatus.RUNNING) return
         if (_uiState.value.segments.isEmpty()) return
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(0))
-            val result = saveAllVariants(
-                projectId = projectId,
-                onProgress = { percent ->
-                    _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(percent))
-                },
-                saveToGallery = false,
-            )
-            result.fold(
-                onSuccess = { variants ->
-                    val path = variants.firstOrNull()?.outputPath
-                    if (path == null) {
-                        _uiState.value = _uiState.value.copy(
-                            shareStatus = ShareStatus.FAILED("공유할 결과가 없음")
-                        )
-                        return@fold
-                    }
-                    shareSheetLauncher.shareVideo(
-                        sourcePath = path,
-                        mimeType = "video/mp4",
-                        title = "DubCast",
-                    ).fold(
-                        onSuccess = {
-                            _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.DONE)
-                        },
-                        onFailure = { e ->
-                            _uiState.value = _uiState.value.copy(
-                                shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
-                            )
-                        }
-                    )
-                },
-                onFailure = { e ->
-                    _uiState.value = _uiState.value.copy(
-                        shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
-                    )
-                }
+        if (_uiState.value.exportVariantPicker != null) return
+        // 새 시도 진입 — 직전 FAILED 흔적 제거. RUNNING 가드 위에서 통과했으므로 충돌 없음.
+        run {
+            val s = _uiState.value
+            _uiState.value = s.copy(
+                saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
+                shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
             )
         }
+        viewModelScope.launch {
+            val variants = listExportVariants(projectId).getOrElse { e ->
+                _uiState.value = _uiState.value.copy(
+                    shareStatus = ShareStatus.FAILED(e.message ?: "공유 준비 실패")
+                )
+                return@launch
+            }
+            if (variants.size <= 1) {
+                runShareExport(selectedKey = null)
+            } else {
+                // computeAllVariantKeys 가 KEY_ORIGINAL 을 항상 첫 항목으로 보장 — fallback (variants.first())
+                // 은 invariant 위반 시 안전망. 실제 호출 경로에서 발동되지 않는 dead path.
+                val defaultKey = variants.firstOrNull { it.key == ExportVariant.KEY_ORIGINAL }?.key
+                    ?: variants.first().key
+                _uiState.value = _uiState.value.copy(
+                    // Picker 와 다른 sheet 의 z-order 충돌 방지 — picker open 직전에 동시 열려있을 수 있는
+                    // sheet flag 들 하향. (RUNNING 가드는 위에서 통과했으므로 진행 중 흐름은 영향 없음.)
+                    showScriptReviewSheet = false,
+                    exportVariantPicker = ExportVariantPickerState.Share(
+                        variants = variants,
+                        selected = defaultKey,
+                    )
+                )
+            }
+        }
+    }
+
+    /** Share picker 의 라디오 선택 변경. */
+    fun onSelectSharePickerVariant(key: String) {
+        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Share ?: return
+        if (current.selected == key) return
+        _uiState.value = _uiState.value.copy(
+            exportVariantPicker = current.copy(selected = key)
+        )
+    }
+
+    /** Share picker "공유" 버튼 — 선택된 variant 한 건만 렌더 후 share sheet. */
+    fun onConfirmSharePicker() {
+        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Share ?: return
+        val key = current.selected
+        _uiState.value = _uiState.value.copy(exportVariantPicker = null)
+        viewModelScope.launch { runShareExport(selectedKey = key) }
+    }
+
+    private suspend fun runShareExport(selectedKey: String?) {
+        _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(0))
+        val result = saveAllVariants(
+            projectId = projectId,
+            onProgress = { percent ->
+                _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(percent))
+            },
+            saveToGallery = false,
+            selectedVariantKeys = selectedKey?.let { setOf(it) },
+        )
+        result.fold(
+            onSuccess = { variants ->
+                val path = variants.firstOrNull()?.outputPath
+                if (path == null) {
+                    _uiState.value = _uiState.value.copy(
+                        shareStatus = ShareStatus.FAILED("공유할 결과가 없음")
+                    )
+                    return@fold
+                }
+                shareSheetLauncher.shareVideo(
+                    sourcePath = path,
+                    mimeType = "video/mp4",
+                    title = "DubCast",
+                ).fold(
+                    onSuccess = {
+                        _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.DONE)
+                    },
+                    onFailure = { e ->
+                        _uiState.value = _uiState.value.copy(
+                            shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
+                        )
+                    }
+                )
+            },
+            onFailure = { e ->
+                _uiState.value = _uiState.value.copy(
+                    shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
+                )
+            }
+        )
     }
 
     fun onClearShareStatus() {
@@ -1802,6 +1996,8 @@ class TimelineViewModel constructor(
             regenerateSubtitleError = null,
             pendingReviewCues = null,
             pendingReviewTargetLangs = emptyList(),
+            // observeProject 가 한 프레임 뒤 DB(null csv) 보고 동기화하지만 즉시 false 로 — 라벨 깜빡임 방지.
+            subtitleReviewPending = false,
             showScriptReviewSheet = false,
             showSubtitleEditSheet = false,
             showRegenerateSubtitleSheet = false,
@@ -1989,7 +2185,7 @@ class TimelineViewModel constructor(
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
-            var lastDuplicated: com.dubcast.shared.domain.model.Segment? = null
+            var lastDuplicated: Segment? = null
             slices.forEach { s ->
                 lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
             }
@@ -2751,7 +2947,7 @@ class TimelineViewModel constructor(
                     )
                 )
             }
-            _uiState.value.segments.filter { it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO }
+            _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
                 .forEach { updateSegmentVolume(it.id, 0f) }
             // 성공 시 separation status 도 READY 로 표시 (UI 시그널).
             editProjectRepository.getProject(projectId)?.let { p ->
@@ -2861,7 +3057,7 @@ class TimelineViewModel constructor(
             }
             editingDirectiveId = null
             // 모든 video segment audio 복원 (분리 시 mute 했던 거 되돌림).
-            _uiState.value.segments.filter { it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO }
+            _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
                 .forEach { updateSegmentVolume(it.id, 1f) }
             _uiState.value = _uiState.value.copy(
                 audioSeparation = null,
@@ -2893,6 +3089,34 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * "스크립트 생성 완료" 버튼(자막 패널) 클릭 시 review sheet 다시 열기.
+     * subtitleReviewPending 이 true 일 때만 동작 — 그렇지 않으면 사용자가 이미 confirm 한 상태라 no-op.
+     *
+     * timeline 재진입 시 자동 sheet 복귀 (`maybeTriggerAutoPipelines` → `shouldShowPendingReview`)
+     * 가 작동하지 않거나 사용자가 sheet 를 dismiss 한 뒤 다시 열어야 할 때의 explicit 진입점.
+     *
+     * pendingReviewTargetLangs 는 observeProject 가 csv 에서 hydrate 한 값을 그대로 둔다.
+     */
+    fun onReopenScriptReviewSheet() {
+        val s = _uiState.value
+        if (!s.subtitleReviewPending) return
+        // pendingReviewTargetLangs 가 비어 있을 수 있음 (timeline 재진입 직후 in-memory copy 만 비어 있고
+        // csv 는 영속화돼 있는 경우). 영속화된 csv 에서 다시 hydrate.
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId)
+            val targets = project?.pendingReviewTargetLangsCsv
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                ?: emptyList()
+            _uiState.value = _uiState.value.copy(
+                showScriptReviewSheet = true,
+                pendingReviewTargetLangs = targets,
+            )
+        }
+    }
+
+    /**
      * 사용자 검토 완료 — 저장된 source lang clips 을 source 로 RegenerateSubtitlesUseCase 호출하여
      * target 언어 자막 일괄 생성. cue 의 텍스트 수정은 이미 SubtitleEditSheet/inline 편집으로 DB 에 반영됨.
      */
@@ -2920,6 +3144,9 @@ class TimelineViewModel constructor(
                     p.copy(pendingReviewTargetLangsCsv = null)
                 )
             }
+            // observeProject 가 다시 emit 하면서 subtitleReviewPending = false 로 동기화되지만,
+            // 즉시 UI 라벨이 "스크립트 생성 완료" 에서 "생성 시작" 으로 돌아가도록 explicit set.
+            _uiState.value = _uiState.value.copy(subtitleReviewPending = false)
             if (targets.isEmpty()) {
                 _uiState.value = _uiState.value.copy(
                     pendingReviewTargetLangs = emptyList(),
@@ -2997,15 +3224,16 @@ class TimelineViewModel constructor(
                         sourceUri = source,
                         mediaType = "VIDEO",
                         onRenderProgress = { p ->
-                            _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                            setRenderProgress(p)
                         },
                     )
-                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                    setRenderProgress(null)
                     if (r.isSuccess) {
                         reviewSheetGate = TriggerGate.FIRED
                         _uiState.value = _uiState.value.copy(
                             sttPreflightStatus = AutoJobStatus.IDLE,
                             showScriptReviewSheet = true,
+                            subtitleReviewPending = true,
                         )
                     } else {
                         _uiState.value = _uiState.value.copy(
@@ -3026,11 +3254,11 @@ class TimelineViewModel constructor(
                         targetLanguageCodes = langs,
                         numberOfSpeakers = 1,
                         onRenderProgress = { p ->
-                            _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                            setRenderProgress(p)
                         },
                     )
                     // render 진행 표시 reset — STT/번역 단계로 넘어갔거나 실패.
-                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                    setRenderProgress(null)
                     println("[Localization] subtitle result isSuccess=${r.isSuccess} cues=${r.getOrNull()} err=${r.exceptionOrNull()?.message}")
                     // 미리보기 chip 자동 전환 — source=auto 이므로 originalSrt 는 저장 안 됨.
                     // 현재 미리보기가 null("기본") 이거나 새로 추가된 langs 와 무관할 때만 첫 lang 으로 전환
@@ -3053,12 +3281,12 @@ class TimelineViewModel constructor(
                             targetLanguageCode = lang,
                             numberOfSpeakers = 1,
                             onRenderProgress = { p ->
-                                _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                                setRenderProgress(p)
                             },
                         )
                     }.onFailure { println("[Localization] dub failed lang=$lang err=${it.message}") }
                     // 첫 dub 성공 후 cache hit 으로 render skip 되는 langs 도 있음 — 매 lang 끝에 reset.
-                    _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                    setRenderProgress(null)
                 }
                 else -> println("[Localization] unknown mode=$mode")
             }
@@ -3103,10 +3331,10 @@ class TimelineViewModel constructor(
                 projectId = projectId,
                 kind = com.dubcast.shared.domain.usecase.render.RenderKind.AUDIO,
                 onProgress = { p ->
-                    _uiState.update { it.copy(editedVideoRenderProgress = p) }
+                    setRenderProgress(p)
                 },
             ).getOrElse { err ->
-                _uiState.update { it.copy(editedVideoRenderProgress = null) }
+                setRenderProgress(null)
                 updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message) }
                 editProjectRepository.getProject(projectId)?.let {
                     editProjectRepository.updateProject(
@@ -3115,7 +3343,7 @@ class TimelineViewModel constructor(
                 }
                 return@launch
             }
-            _uiState.update { it.copy(editedVideoRenderProgress = null) }
+            setRenderProgress(null)
             val startResult = startAudioSeparation(
                 sourceUri = segment.sourceUri,
                 mediaType = SeparationMediaType.VIDEO,
@@ -3319,7 +3547,7 @@ class TimelineViewModel constructor(
                     updateSegmentVolume(segment.id, 0f)
                 } else {
                     // 영상 전체 분리 — 모든 video segment 의 원본 audio mute.
-                    state.segments.filter { it.type == com.dubcast.shared.domain.model.SegmentType.VIDEO }
+                    state.segments.filter { it.type == SegmentType.VIDEO }
                         .forEach { updateSegmentVolume(it.id, 0f) }
                 }
                 // 적용 즉시 sheet 닫음 — DONE 단계의 "완료" 팝업 노출 안 함.

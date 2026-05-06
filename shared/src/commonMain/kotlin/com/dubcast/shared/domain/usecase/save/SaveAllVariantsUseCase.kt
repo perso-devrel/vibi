@@ -3,8 +3,11 @@ package com.dubcast.shared.domain.usecase.save
 import com.dubcast.shared.data.remote.api.BffApi
 import com.dubcast.shared.data.remote.api.BinaryPart
 import com.dubcast.shared.domain.model.DubClip
+import com.dubcast.shared.domain.model.EditProject
 import com.dubcast.shared.domain.model.Segment
 import com.dubcast.shared.domain.model.SegmentType
+import com.dubcast.shared.domain.model.SubtitleClip
+import com.dubcast.shared.domain.model.hasConfirmedOriginalSubtitle
 import com.dubcast.shared.domain.repository.BgmClipRepository
 import com.dubcast.shared.domain.repository.DubClipRepository
 import com.dubcast.shared.domain.repository.EditProjectRepository
@@ -33,6 +36,8 @@ import kotlinx.coroutines.flow.first
  *  5. 한 건이라도 실패하면 message 와 함께 Result.failure (호출자가 EditProject 보존 결정).
  *
  * 진행 상태 (0..100) 는 [onProgress] 로 보고. 모든 variant 의 평균 percent.
+ *
+ * [selectedVariantKeys] = null 이면 모든 variant (기존 동작). non-null 이면 그 안에 든 키만 렌더.
  */
 class SaveAllVariantsUseCase(
     private val platformAdapter: ExportPlatformAdapter,
@@ -52,24 +57,33 @@ class SaveAllVariantsUseCase(
         projectId: String,
         onProgress: (percent: Int) -> Unit,
         saveToGallery: Boolean = true,
+        selectedVariantKeys: Set<String>? = null,
     ): Result<List<SavedVariant>> = runCatching {
+        // 명시적 방어 — ViewModel 단에서 빈 set 막아야 하지만 use case 도 입구 체크.
+        require(selectedVariantKeys == null || selectedVariantKeys.isNotEmpty()) {
+            "selectedVariantKeys must be null or non-empty"
+        }
+
         val project = editProjectRepository.getProject(projectId)
             ?: error("Project not found: $projectId")
         val segments = segmentRepository.getByProjectId(projectId)
         require(segments.isNotEmpty()) { "Project has no segments" }
 
         val allSubtitleClips = subtitleClipRepository.observeClips(projectId).first()
-        val langsWithSubtitle = allSubtitleClips
-            .map { it.languageCode }
-            .filter { it.isNotBlank() }
-            .toSet()
-        val langsWithDub = (project.dubbedAudioPaths.keys + project.dubbedVideoPaths.keys)
-            .filter { it.isNotBlank() }
-            .toSet()
-        val translationLangs = project.effectiveTargetLanguages
-            .filter { it.isNotBlank() && !it.equals("original", ignoreCase = true) }
-            .filter { it in langsWithSubtitle || it in langsWithDub }
-        val targetLanguages: List<String> = listOf("original") + translationLangs
+        // 갤러리 저장 단계의 displayName 분기 (DUB / SUB / DUBSUB) 에서만 사용 — variant 키 산출은
+        // computeAllVariantKeys 가 내부에서 자체 호출하므로 여기서는 별도 산출 불필요.
+        val langsWithSubtitle = collectLangsWithSubtitle(allSubtitleClips)
+        // selectedVariantKeys != null → picker open 시점에 freeze 된 키들. 그 사이 timeline mutation
+        // (자동더빙 결과 도착, 자막 클립 삭제 등) 으로 computeAllVariantKeys 가 다른 set 을 반환하더라도
+        // 사용자가 confirm 한 의도를 우선. selected 키가 더 이상 valid 하지 않은 케이스 (예: "ko" 자막이
+        // 삭제됨) 는 정상 처리됨 — variantSubtitles 가 emptyList 면 자막 없는 영상 burn,
+        // audioOverridePath lookup 결과 null 이면 원본 오디오 사용.
+        val targetLanguages: List<String> = if (selectedVariantKeys != null) {
+            selectedVariantKeys.toList()
+        } else {
+            computeAllVariantKeys(project, allSubtitleClips)
+        }
+        require(targetLanguages.isNotEmpty()) { "No variants selected" }
 
         val dubClips = dubClipRepository.observeClips(projectId).first()
         val imageClips = imageClipRepository.observeClips(projectId).first()
@@ -82,7 +96,7 @@ class SaveAllVariantsUseCase(
             segments[0].trimStartMs == 0L && segments[0].trimEndMs == 0L
 
         val renderVariantCount = targetLanguages.count { lang ->
-            !(lang == "original" && noEdits)
+            !(lang == ExportVariant.KEY_ORIGINAL && noEdits)
         }
         val preUploadedInputId: String? = if (renderVariantCount >= 2) {
             runCatching { uploadInputCacheOnce(segments, dubClips) }.getOrNull()
@@ -100,15 +114,19 @@ class SaveAllVariantsUseCase(
         val renderedPaths: List<String> = coroutineScope {
             targetLanguages.mapIndexed { index, languageCode ->
                 async {
-                    val isOriginal = languageCode == "original"
+                    val isOriginal = languageCode == ExportVariant.KEY_ORIGINAL
+                    val isOriginalSubtitle = languageCode == ExportVariant.KEY_ORIGINAL_SUBTITLE
                     if (isOriginal && noEdits) {
                         variantProgress[index] = 100
                         publishProgress()
                         return@async segments[0].sourceUri
                     }
-                    val variantSubtitles = if (isOriginal) emptyList()
-                        else allSubtitleClips.filter { it.languageCode == languageCode }
-                    val audioOverridePath: String? = if (isOriginal) null
+                    val variantSubtitles = when {
+                        isOriginal -> emptyList()
+                        isOriginalSubtitle -> allSubtitleClips.filter { it.languageCode.isBlank() }
+                        else -> allSubtitleClips.filter { it.languageCode == languageCode }
+                    }
+                    val audioOverridePath: String? = if (isOriginal || isOriginalSubtitle) null
                         else project.dubbedAudioPaths[languageCode] ?: project.dubbedAudioPath
 
                     val request = ExportRequest(
@@ -153,15 +171,20 @@ class SaveAllVariantsUseCase(
         targetLanguages.forEachIndexed { i, languageCode ->
             val path = renderedPaths[i]
             if (saveToGallery) {
-                val isOriginal = languageCode == "original"
-                val hasDub = !isOriginal && (
+                val isOriginal = languageCode == ExportVariant.KEY_ORIGINAL
+                val isOriginalSubtitle = languageCode == ExportVariant.KEY_ORIGINAL_SUBTITLE
+                val hasDub = !isOriginal && !isOriginalSubtitle && (
                     project.dubbedAudioPaths.containsKey(languageCode) ||
                         project.dubbedVideoPaths.containsKey(languageCode)
                     )
-                val hasSubtitle = !isOriginal && languageCode in langsWithSubtitle
+                val hasSubtitle = !isOriginal && !isOriginalSubtitle && languageCode in langsWithSubtitle
                 val langTag = languageCode.uppercase()
+                // 더빙 + 같은 lang 자막 동시 burn 케이스는 prefix "DUBSUB_" 로 구분 — 사용자가 갤러리에서
+                // "DUB_KO" 와 "DUBSUB_KO" 를 혼동 없이 식별하도록.
                 val displayName = when {
                     isOriginal -> "VID_${projectId.hashCode().toUInt()}_$i"
+                    isOriginalSubtitle -> "SUB_원본_${projectId.hashCode().toUInt()}_$i"
+                    hasDub && hasSubtitle -> "DUBSUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
                     hasDub -> "DUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
                     hasSubtitle -> "SUB_${langTag}_${projectId.hashCode().toUInt()}_$i"
                     else -> "VID_${langTag}_${projectId.hashCode().toUInt()}_$i"
@@ -207,6 +230,50 @@ class SaveAllVariantsUseCase(
             )
         }
         return bffApi.uploadRenderInputs(video = videoPart, audios = audioParts).inputId
+    }
+
+    companion object {
+        /**
+         * 공통 헬퍼 — 이 use case 와 [ListExportVariantsUseCase] 가 같은 키 순서를 쓰도록 한 곳에서 결정.
+         *
+         * 순서: [ExportVariant.KEY_ORIGINAL] → [ExportVariant.KEY_ORIGINAL_SUBTITLE] (원본 자막) →
+         * translation langs (effectiveTargetLanguages 순서 보존).
+         * Translation lang 은 자막 또는 더빙이 실제로 있는 lang 만 포함.
+         */
+        internal fun computeAllVariantKeys(
+            project: EditProject,
+            allSubtitleClips: List<SubtitleClip>,
+        ): List<String> {
+            val langsWithSubtitle = collectLangsWithSubtitle(allSubtitleClips)
+            val langsWithDub = collectLangsWithDub(project)
+            val translationLangs = project.effectiveTargetLanguages
+                .filter { it.isNotBlank() && !it.equals(ExportVariant.KEY_ORIGINAL, ignoreCase = true) }
+                .filter { it in langsWithSubtitle || it in langsWithDub }
+            // 원본 자막 변종 — "" sentinel 로 SUB_원본_ 저장 대상 분리. SSOT 헬퍼 사용.
+            val originalSubtitleVariant: List<String> =
+                if (hasConfirmedOriginalSubtitle(allSubtitleClips, project.pendingReviewTargetLangsCsv)) {
+                    listOf(ExportVariant.KEY_ORIGINAL_SUBTITLE)
+                } else emptyList()
+            return listOf(ExportVariant.KEY_ORIGINAL) + originalSubtitleVariant + translationLangs
+        }
+
+        /**
+         * 자막이 존재하는 lang 집합 (원본 lang="" 은 제외 — 별도 sentinel 로 처리).
+         * `:save` use case 들이 공유하는 산출 helper.
+         */
+        internal fun collectLangsWithSubtitle(allSubtitleClips: List<SubtitleClip>): Set<String> =
+            allSubtitleClips
+                .map { it.languageCode }
+                .filter { it.isNotBlank() }
+                .toSet()
+
+        /**
+         * 더빙이 존재하는 lang 집합. `dubbedAudioPaths` 와 `dubbedVideoPaths` 의 union.
+         */
+        internal fun collectLangsWithDub(project: EditProject): Set<String> =
+            (project.dubbedAudioPaths.keys + project.dubbedVideoPaths.keys)
+                .filter { it.isNotBlank() }
+                .toSet()
     }
 }
 

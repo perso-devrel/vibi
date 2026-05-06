@@ -18,6 +18,7 @@ import com.dubcast.shared.domain.usecase.separation.StartAudioSeparationUseCase
 import com.dubcast.shared.domain.usecase.subtitle.AddSubtitleClipUseCase
 import com.dubcast.shared.domain.usecase.subtitle.DeleteSubtitleClipUseCase
 import com.dubcast.shared.domain.usecase.subtitle.EditSubtitleClipUseCase
+import com.dubcast.shared.domain.usecase.save.ListExportVariantsUseCase
 import com.dubcast.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.dubcast.shared.domain.usecase.subtitle.GenerateAutoDubUseCase
 import com.dubcast.shared.domain.usecase.subtitle.GenerateAutoSubtitlesUseCase
@@ -83,6 +84,8 @@ val useCaseModule = module {
             bffApi = get(),
         )
     }
+    // picker sheet 가 노출할 variant 목록 — SaveAllVariantsUseCase 와 같은 키 산출 로직 공유.
+    factoryOf(::ListExportVariantsUseCase)
 
     // separation
     factoryOf(::StartAudioSeparationUseCase)

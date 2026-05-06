@@ -316,8 +316,13 @@ fun TimelineScreen(
         }
 
         // 버전 선택 — DropdownMenu 대신 inline pill row. 가로 스크롤 가능.
+        // "" sentinel = 원본 자막 (lang="" 클립). review 완료 후에만 chip 노출.
+        // SSOT — TimelineViewModel 이 hasConfirmedOriginalSubtitle 헬퍼로 set. export variant
+        // 산출 (SaveAllVariantsUseCase.computeAllVariantKeys) 도 같은 헬퍼를 본다.
+        val hasOriginalSubtitleChip = state.hasOriginalSubtitleVariant
         val versions = buildList<Pair<String?, String>> {
             add(null to "기본")
+            if (hasOriginalSubtitleChip) add("" to "원본 자막")
             state.targetLanguageCodes.forEach { add(it to it.uppercase()) }
         }
         val isJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
@@ -442,11 +447,10 @@ fun TimelineScreen(
             // 자막 overlay — 비디오 위 하단에 오버레이. Compose 의 Box 스택. previewLangCode 의
             // 자막만 싱크 맞춰 표시. (iOS UIKitView z-order 한계로 Android 에서만 시각적으로 정확히
             // 영상 위에 그려지고, iOS 는 Swift bridge 도입 시까지 가시성 제한적.)
+            // previewLangCode null = "기본" (자막 X). "" = "원본 자막" chip (lang="" 매칭). "ko"/"en" = 해당 lang.
             val activeSubtitleClip = run {
-                // 원본 미리보기(previewLangCode == null) 에는 자막 표시 안 함. lang="" SubtitleClip
-                // 들은 STT 검토 용도라 timeline preview 에서 보이면 안 됨.
                 val lang = state.previewLangCode
-                if (lang.isNullOrBlank()) null
+                if (lang == null) null
                 else state.subtitleClips
                     .filter { it.languageCode == lang }
                     .firstOrNull { clip -> state.playbackPositionMs in clip.startMs..clip.endMs }
@@ -941,12 +945,40 @@ fun TimelineScreen(
                 // "생성 시작" enable 조건: 자막+원본만 OR 번역 lang 1개 이상.
                 val startEnabled = (state.localizationMode == "subtitle" && state.localizationOriginalOnly) ||
                     state.localizationLangs.isNotEmpty()
+                // 3-state 라벨:
+                //  진행 중 → "자막/더빙 생성 중" (disabled)
+                //  자막 review pending (script ready) → "스크립트 생성 완료" → review sheet 재오픈
+                //  그 외 → "생성 시작"
+                val isGenerating = state.editedVideoRenderProgress != null ||
+                    state.sttPreflightStatus == AutoJobStatus.RUNNING ||
+                    state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+                    state.autoDubStatus == AutoJobStatus.RUNNING
+                val showReviewReady = state.localizationMode == "subtitle" &&
+                    state.subtitleReviewPending &&
+                    !isGenerating
+                val (buttonLabel, buttonEnabled, buttonOnClick) = when {
+                    isGenerating -> Triple<String, Boolean, () -> Unit>(
+                        "자막/더빙 생성 중",
+                        false,
+                        { /* no-op */ },
+                    )
+                    showReviewReady -> Triple<String, Boolean, () -> Unit>(
+                        "스크립트 생성 완료",
+                        true,
+                        { viewModel.onReopenScriptReviewSheet() },
+                    )
+                    else -> Triple<String, Boolean, () -> Unit>(
+                        "생성 시작",
+                        startEnabled,
+                        { viewModel.onStartLocalization() },
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         modifier = Modifier.weight(1f),
-                        enabled = startEnabled,
-                        onClick = { viewModel.onStartLocalization() }
-                    ) { Text("생성 시작") }
+                        enabled = buttonEnabled,
+                        onClick = buttonOnClick
+                    ) { Text(buttonLabel) }
                     OutlinedButton(onClick = { viewModel.onDismissLocalization() }) {
                         Text("취소")
                     }
@@ -1128,6 +1160,24 @@ fun TimelineScreen(
     }
 
     // 구간 선택 — popup sheet 대신 인라인 RangeSlider 로 처리하므로 sheet 제거
+
+    // 저장/공유 variant picker sheet — variant 2+ 일 때만 ViewModel 이 state set.
+    state.exportVariantPicker?.let { picker ->
+        ExportVariantPickerSheet(
+            picker = picker,
+            onToggleSave = { key -> viewModel.onToggleSavePickerVariant(key) },
+            onSelectShare = { key -> viewModel.onSelectSharePickerVariant(key) },
+            onConfirm = {
+                when (picker) {
+                    is com.dubcast.shared.ui.timeline.ExportVariantPickerState.Save ->
+                        viewModel.onConfirmSavePicker()
+                    is com.dubcast.shared.ui.timeline.ExportVariantPickerState.Share ->
+                        viewModel.onConfirmSharePicker()
+                }
+            },
+            onCancel = { viewModel.onCancelExportVariantPicker() },
+        )
+    }
 
     // 채팅 어시스턴트 sheet — 영상편집 모드와 무관하게 띄울 수 있지만 위 FAB 가 모드 중엔 숨김.
     if (chatSheetVisible) {
