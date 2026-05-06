@@ -595,10 +595,12 @@ fun TimelineScreen(
             val (processingRangeStart, processingRangeEnd) = when {
                 processingSep == null -> null to null
                 processingSep.segmentId.isBlank() -> null to null  // BGM 분리 → timeline overlay 안 함
-                processingSep.rangeStartMs != null && processingSep.rangeEndMs != null &&
-                    processingSep.rangeEndMs > processingSep.rangeStartMs ->
-                    processingSep.rangeStartMs to processingSep.rangeEndMs
-                else -> 0L to state.videoDurationMs
+                else -> {
+                    val s = processingSep.rangeStartMs
+                    val e = processingSep.rangeEndMs
+                    if (s != null && e != null && e > s) s to e
+                    else 0L to state.videoDurationMs
+                }
             }
             val processingProgress = processingSep?.progress
             // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive 시각 모두 한 위치에.

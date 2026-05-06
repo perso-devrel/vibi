@@ -76,7 +76,7 @@ class ChatToolDispatcher {
                         vm.onSetPendingRangeEnd(te)
                     }
                     vm.onShowAudioSeparationSheet(segId)
-                    vm.onUpdateSeparationSpeakers(a.optInt("numberOfSpeakers") ?: 2)
+                    // 화자 수 입력은 Perso 가 자동 감지 — chat tool 에서도 무시.
                     vm.onStartSeparation()
                 }
             }
