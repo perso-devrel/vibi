@@ -13,7 +13,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,7 +25,8 @@ import com.dubcast.shared.ui.timeline.ExportVariantPickerState
  * 저장/공유 흐름의 variant 선택 sheet.
  *
  *  - [ExportVariantPickerState.Save]  : 체크박스 multi-select, default 모두 선택. confirm = "저장 (n/total)".
- *  - [ExportVariantPickerState.Share] : 라디오 single-select, default "original". confirm = "공유".
+ *  - [ExportVariantPickerState.Share] : 체크박스 multi-select, default "original" 한 건. confirm = "공유 (n/total)",
+ *      빈 selection 시 disabled.
  *
  * legacy `RangeSelectionSheet` 와 동일하게 AlertDialog 기반 — picker 가 짧고 sheet 동작 통일성을 위해.
  */
@@ -34,7 +34,7 @@ import com.dubcast.shared.ui.timeline.ExportVariantPickerState
 fun ExportVariantPickerSheet(
     picker: ExportVariantPickerState,
     onToggleSave: (String) -> Unit,
-    onSelectShare: (String) -> Unit,
+    onToggleShare: (String) -> Unit,
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -79,17 +79,17 @@ fun ExportVariantPickerSheet(
                     }
                     is ExportVariantPickerState.Share -> {
                         picker.variants.forEach { variant ->
-                            val selected = variant.key == picker.selected
+                            val checked = variant.key in picker.selected
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onSelectShare(variant.key) }
+                                    .clickable { onToggleShare(variant.key) }
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                RadioButton(
-                                    selected = selected,
-                                    onClick = { onSelectShare(variant.key) },
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { onToggleShare(variant.key) },
                                 )
                                 Text(
                                     variant.displayLabel,
@@ -113,7 +113,13 @@ fun ExportVariantPickerSheet(
                     }
                 }
                 is ExportVariantPickerState.Share -> {
-                    Button(onClick = onConfirm) { Text("공유") }
+                    val canConfirm = picker.selected.isNotEmpty()
+                    Button(
+                        enabled = canConfirm,
+                        onClick = onConfirm,
+                    ) {
+                        Text("공유 (${picker.selected.size}/${picker.variants.size})")
+                    }
                 }
             }
         },

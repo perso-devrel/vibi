@@ -584,6 +584,23 @@ fun TimelineScreen(
         //    directive 위 탭 → 편집 sheet, free interval 위 탭 → 그 구간으로 pendingRange 점프.
         if (state.videoDurationMs > 0) {
             val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
+            // 진행 중인 음원분리 range — PROCESSING 단계 + range 정보 있을 때만. 사용자가 "이 구간 분리 중"
+            // 임을 시각적으로 인지하도록 timeline 위에 accent 컬러 progress overlay 로 표시. 분리 결과
+            // 막대(directiveColor) 와 색을 분리해서 in-progress / committed 를 구별 가능.
+            val processingSep = state.audioSeparation?.takeIf {
+                it.step == AudioSeparationStep.PROCESSING
+            }
+            // range 정보가 있으면 그 부분, 없으면 영상 전체 (whole-video 분리). segmentId="" 인 BGM 분리는
+            // 영상 timeline 과 무관하므로 overlay 미노출.
+            val (processingRangeStart, processingRangeEnd) = when {
+                processingSep == null -> null to null
+                processingSep.segmentId.isBlank() -> null to null  // BGM 분리 → timeline overlay 안 함
+                processingSep.rangeStartMs != null && processingSep.rangeEndMs != null &&
+                    processingSep.rangeEndMs > processingSep.rangeStartMs ->
+                    processingSep.rangeStartMs to processingSep.rangeEndMs
+                else -> 0L to state.videoDurationMs
+            }
+            val processingProgress = processingSep?.progress
             // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive 시각 모두 한 위치에.
             UnifiedTimelineBar(
                 segments = state.segments,
@@ -602,6 +619,9 @@ fun TimelineScreen(
                 segmentColor = tokens.timelineBarSegment,
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
                 directiveColor = tokens.timelineBarDirective,
+                processingSeparationStartMs = processingRangeStart,
+                processingSeparationEndMs = processingRangeEnd,
+                processingSeparationProgress = processingProgress,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
                 onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
@@ -889,15 +909,50 @@ fun TimelineScreen(
                 // 다른 lang chip 과 함께 다중 선택 가능 — 원본만 선택 시 STT only, 다른 lang 도 선택 시 번역 + 원본.
                 // 더빙 모드는 원본 더빙 미지원 (Perso 가 source==target 안 받음) 이라 원본 chip 안 보임.
                 Text("자막/더빙 언어 (다중)", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+                // chip enable/disable 정책: 이미 생성된 lang(자막 clip 또는 더빙 mp3/mp4 존재) 또는
+                // 진행 중인 lang 은 chip 자체를 disabled + ✓ 아이콘으로 표시 → 중복 호출 차단.
+                // 자막 모드의 RUNNING 신호는 per-lang 추적이 없어 보수적으로 "어떤 자막 잡이라도 RUNNING"
+                // 이면 모든 자막 lang chip disabled (race 회피). 더빙은 autoDubStatusByLang 로 per-lang 식별.
+                val anySubtitleRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
+                    state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+                    state.sttPreflightStatus == AutoJobStatus.RUNNING
+                // "" sentinel = 원본 자막 — 변환된 lang clip 들도 default languageCode="" 로 만들어질 수
+                // 있어 단순 any { languageCode == "" } 가 false-positive. SSOT 인 hasOriginalSubtitleVariant
+                // (observeProject 가 hasConfirmedOriginalSubtitle 결과로 set) 로 판정.
+                fun isChipBlocked(code: String): Boolean = when (state.localizationMode) {
+                    "subtitle" -> {
+                        val alreadyDone = if (code.isEmpty()) state.hasOriginalSubtitleVariant
+                            else state.subtitleClips.any { it.languageCode == code }
+                        alreadyDone || anySubtitleRunning
+                    }
+                    "dub" -> {
+                        val alreadyDone = state.dubbedAudioPaths.containsKey(code) ||
+                            state.dubbedVideoPaths.containsKey(code)
+                        val running = state.autoDubStatusByLang[code] == AutoJobStatus.RUNNING
+                        alreadyDone || running
+                    }
+                    else -> false
+                }
+                fun isChipDone(code: String): Boolean = when (state.localizationMode) {
+                    "subtitle" -> if (code.isEmpty()) state.hasOriginalSubtitleVariant
+                        else state.subtitleClips.any { it.languageCode == code }
+                    "dub" -> state.dubbedAudioPaths.containsKey(code) ||
+                        state.dubbedVideoPaths.containsKey(code)
+                    else -> false
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (state.localizationMode == "subtitle") {
-                        FilterChip(
-                            selected = "" in state.localizationLangs,
+                        val originalBlocked = isChipBlocked("")
+                        val originalDone = isChipDone("")
+                        LangFilterChip(
+                            label = "원본",
+                            selected = "" in state.localizationLangs || originalDone,
+                            enabled = !originalBlocked,
+                            done = originalDone,
                             onClick = { viewModel.onToggleLocalizationLang("") },
-                            label = { Text("원본") }
                         )
                     }
                     listOf(
@@ -909,10 +964,14 @@ fun TimelineScreen(
                         "fr" to "Français",
                         "de" to "Deutsch"
                     ).forEach { (code, label) ->
-                        FilterChip(
-                            selected = code in state.localizationLangs,
+                        val blocked = isChipBlocked(code)
+                        val done = isChipDone(code)
+                        LangFilterChip(
+                            label = label,
+                            selected = code in state.localizationLangs || done,
+                            enabled = !blocked,
+                            done = done,
                             onClick = { viewModel.onToggleLocalizationLang(code) },
-                            label = { Text(label) }
                         )
                     }
                 }
@@ -1116,7 +1175,6 @@ fun TimelineScreen(
         ?.let { sepState ->
         AudioSeparationSheet(
             state = sepState,
-            onUpdateSpeakers = { viewModel.onUpdateSeparationSpeakers(it) },
             onStart = { viewModel.onStartSeparation() },
             onToggleStem = { viewModel.onToggleStemSelection(it) },
             onUpdateStemVolume = { id, vol -> viewModel.onUpdateStemVolume(id, vol) },
@@ -1134,7 +1192,7 @@ fun TimelineScreen(
         ExportVariantPickerSheet(
             picker = picker,
             onToggleSave = { key -> viewModel.onToggleSavePickerVariant(key) },
-            onSelectShare = { key -> viewModel.onSelectSharePickerVariant(key) },
+            onToggleShare = { key -> viewModel.onToggleSharePickerVariant(key) },
             onConfirm = {
                 when (picker) {
                     is com.dubcast.shared.ui.timeline.ExportVariantPickerState.Save ->
@@ -1166,6 +1224,40 @@ data class ClipBar(
     val endMs: Long,
     val selected: Boolean
 )
+
+/**
+ * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) 또는 진행 중(blocked=!enabled) lang 을
+ * 시각적으로 구별. done=true 면 ✓ 아이콘이 leading 으로 노출 + selected 처럼 색칠. blocked 인 동안
+ * onClick 비활성 (FilterChip enabled=false).
+ *
+ * leadingIcon 을 Composable 람다 파라미터로 분리하면 inline-if 의 람다 타입 추론이 모호해져
+ * 컴파일러가 `@Composable (() -> Unit)?` 와 `() -> Unit` 사이에서 헷갈린다 — wrapper 로 본 이슈 회피.
+ */
+@Composable
+private fun LangFilterChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    done: Boolean,
+    onClick: () -> Unit,
+) {
+    if (done) {
+        FilterChip(
+            selected = selected,
+            enabled = enabled,
+            onClick = onClick,
+            label = { Text(label) },
+            leadingIcon = { Icon(Icons.Filled.Check, contentDescription = "이미 생성됨") },
+        )
+    } else {
+        FilterChip(
+            selected = selected,
+            enabled = enabled,
+            onClick = onClick,
+            label = { Text(label) },
+        )
+    }
+}
 
 /**
  * 라벨 + 가로 트랙 + 클립 막대들 — 시간축에 비례해서 배치.
@@ -1383,6 +1475,11 @@ private fun UnifiedTimelineBar(
     segmentColor: Color,
     segmentEditedColor: Color,
     directiveColor: Color,
+    /** 진행 중인 음원분리 range 시작/끝 ms. null = 진행 중 아님 → overlay 미노출. */
+    processingSeparationStartMs: Long? = null,
+    processingSeparationEndMs: Long? = null,
+    /** 진행률 0..100. null/0 이어도 overlay 자체는 표시 (사용자가 분리 시작했음을 즉시 인지). */
+    processingSeparationProgress: Int? = null,
     onSegmentTap: (String) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
@@ -1521,6 +1618,37 @@ private fun UnifiedTimelineBar(
                 }
                 val tail = (totalMs - prevEnd).coerceAtLeast(0L)
                 if (tail > 0L) Spacer(Modifier.weight(tail.toFloat()))
+            }
+        }
+
+        // 진행 중인 음원분리 overlay — committed directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
+        // showRange / showSegments 와 무관하게 PROCESSING 인 한 노출 — 사용자가 어느 모드에서든 어떤
+        // 구간이 처리 중인지 인지 가능. 클릭 비활성 (정보용). progress 가 있으면 채움 fraction 으로 표시.
+        if (processingSeparationStartMs != null && processingSeparationEndMs != null &&
+            processingSeparationEndMs > processingSeparationStartMs && totalMs > 0L
+        ) {
+            val pStart = (processingSeparationStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+            val pEnd = (processingSeparationEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
+            val pStartDp = totalWidthDp * pStart
+            val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
+            Box(
+                modifier = Modifier
+                    .offset(x = pStartDp)
+                    .width(pWidthDp)
+                    .height(contentHeight)
+                    .align(Alignment.CenterStart)
+                    .background(accent.copy(alpha = 0.25f))
+            ) {
+                // 진행률 채움 — 0..100. null/0 이어도 base overlay 는 보이고 fill 만 0% 폭.
+                val fill = ((processingSeparationProgress ?: 0).coerceIn(0, 100)) / 100f
+                if (fill > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(fill)
+                            .background(accent.copy(alpha = 0.6f))
+                    )
+                }
             }
         }
 

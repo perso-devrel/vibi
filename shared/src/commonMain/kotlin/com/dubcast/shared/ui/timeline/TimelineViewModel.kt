@@ -112,7 +112,8 @@ sealed interface ShareStatus {
  * variant 가 1개 이하면 picker 안 띄움 (즉시 동작) — 이 state 는 null.
  *
  *  - [Save] : multi-select. default 는 모든 variant 선택. confirm 시 갤러리 저장.
- *  - [Share] : single-select. default 는 "original". confirm 시 share sheet.
+ *  - [Share] : multi-select. default 는 "original" 한 건. confirm 시 share sheet 으로 다중 첨부.
+ *      외부 앱이 다중 첨부를 지원 못 하면 chooser 결과는 앱별 동작에 따름.
  */
 sealed class ExportVariantPickerState {
     abstract val variants: List<ExportVariant>
@@ -124,7 +125,7 @@ sealed class ExportVariantPickerState {
 
     data class Share(
         override val variants: List<ExportVariant>,
-        val selected: String,
+        val selected: Set<String>,
     ) : ExportVariantPickerState()
 }
 
@@ -1627,7 +1628,7 @@ class TimelineViewModel constructor(
 
     /**
      * Timeline 헤더 "공유" 버튼 — variant 1개면 즉시 그것을 렌더해서 share sheet.
-     * 2+ 면 picker sheet 노출 (single-select, default "original").
+     * 2+ 면 picker sheet 노출 (multi-select, default "original" 한 건).
      */
     fun onShareExport() {
         if (_uiState.value.shareStatus is ShareStatus.RUNNING) return
@@ -1649,7 +1650,7 @@ class TimelineViewModel constructor(
                 return@launch
             }
             if (variants.size <= 1) {
-                runShareExport(selectedKey = null)
+                runShareExport(selectedKeys = null)
             } else {
                 // computeAllVariantKeys 가 KEY_ORIGINAL 을 항상 첫 항목으로 보장 — fallback (variants.first())
                 // 은 invariant 위반 시 안전망. 실제 호출 경로에서 발동되지 않는 dead path.
@@ -1661,31 +1662,32 @@ class TimelineViewModel constructor(
                     showScriptReviewSheet = false,
                     exportVariantPicker = ExportVariantPickerState.Share(
                         variants = variants,
-                        selected = defaultKey,
+                        selected = setOf(defaultKey),
                     )
                 )
             }
         }
     }
 
-    /** Share picker 의 라디오 선택 변경. */
-    fun onSelectSharePickerVariant(key: String) {
+    /** Share picker 의 체크박스 토글. 빈 selection 도 허용 — confirm 버튼 측에서 가드. */
+    fun onToggleSharePickerVariant(key: String) {
         val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Share ?: return
-        if (current.selected == key) return
+        val next = if (key in current.selected) current.selected - key else current.selected + key
         _uiState.value = _uiState.value.copy(
-            exportVariantPicker = current.copy(selected = key)
+            exportVariantPicker = current.copy(selected = next)
         )
     }
 
-    /** Share picker "공유" 버튼 — 선택된 variant 한 건만 렌더 후 share sheet. */
+    /** Share picker "공유" 버튼 — 선택된 variant 들을 렌더 후 share sheet 으로 다중 첨부. */
     fun onConfirmSharePicker() {
         val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Share ?: return
-        val key = current.selected
+        if (current.selected.isEmpty()) return
+        val keys = current.selected
         _uiState.value = _uiState.value.copy(exportVariantPicker = null)
-        viewModelScope.launch { runShareExport(selectedKey = key) }
+        viewModelScope.launch { runShareExport(selectedKeys = keys) }
     }
 
-    private suspend fun runShareExport(selectedKey: String?) {
+    private suspend fun runShareExport(selectedKeys: Set<String>?) {
         _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(0))
         val result = saveAllVariants(
             projectId = projectId,
@@ -1693,19 +1695,19 @@ class TimelineViewModel constructor(
                 _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(percent))
             },
             saveToGallery = false,
-            selectedVariantKeys = selectedKey?.let { setOf(it) },
+            selectedVariantKeys = selectedKeys,
         )
         result.fold(
             onSuccess = { variants ->
-                val path = variants.firstOrNull()?.outputPath
-                if (path == null) {
+                val paths = variants.map { it.outputPath }
+                if (paths.isEmpty()) {
                     _uiState.value = _uiState.value.copy(
                         shareStatus = ShareStatus.FAILED("공유할 결과가 없음")
                     )
                     return@fold
                 }
-                shareSheetLauncher.shareVideo(
-                    sourcePath = path,
+                shareSheetLauncher.shareVideos(
+                    sourcePaths = paths,
                     mimeType = "video/mp4",
                     title = "DubCast",
                 ).fold(
@@ -3263,7 +3265,28 @@ class TimelineViewModel constructor(
         val mode = s.localizationMode
         // 자막 모드의 "원본" chip = "" sentinel — 다른 lang 과 함께 다중 선택 가능.
         // 더빙 모드는 UI 에서 원본 chip 안 띄우므로 sentinel 도 안 들어옴.
-        val selected = s.localizationLangs.toList()
+        // Defense-in-depth — 이미 결과 있는 lang 은 UI 에서 chip disabled 지만 stale state 로 들어와도
+        // 호출 단계에서 한번 더 거름 (중복 BFF 호출 방지).
+        val rawSelected = s.localizationLangs.toList()
+        val selected = rawSelected.filter { code ->
+            when (mode) {
+                "subtitle" -> {
+                    if (code.isEmpty()) {
+                        // 원본 chip — 이미 원본 자막이 확정돼 있으면 skip.
+                        !s.hasOriginalSubtitleVariant
+                    } else {
+                        s.subtitleClips.none { it.languageCode == code }
+                    }
+                }
+                "dub" -> {
+                    val done = s.dubbedAudioPaths.containsKey(code) ||
+                        s.dubbedVideoPaths.containsKey(code)
+                    val running = s.autoDubStatusByLang[code] == AutoJobStatus.RUNNING
+                    !done && !running
+                }
+                else -> true
+            }
+        }
         val translationLangs = selected.filter { it.isNotBlank() }
         val includesOriginalSubtitle = mode == "subtitle" && "" in selected
         // 자막 모드: 원본만 OR 번역 1개+ → 진행. 둘 다 없으면 abort.
@@ -3369,17 +3392,13 @@ class TimelineViewModel constructor(
                 else -> println("[Localization] unknown mode=$mode")
             }
         }
-        _uiState.value = s.copy(localizationOpen = false)
+        // 호출 직후 panel 닫음 + 선택 chip 비움 — 사용자가 다시 열었을 때 stale selection 으로 이미
+        // 시작된 lang 이 다시 선택돼 보이는 사고 방지. 결과 / 진행 상태는 이미 생성된 클립 (subtitleClips /
+        // dubbedAudioPaths) 또는 autoDubStatusByLang 등으로 chip 표시.
+        _uiState.value = s.copy(localizationOpen = false, localizationLangs = emptySet())
     }
     fun onSelectPreviewLang(code: String?) {
         _uiState.value = _uiState.value.copy(previewLangCode = code)
-    }
-
-    fun onUpdateSeparationSpeakers(count: Int) {
-        val sep = _uiState.value.audioSeparation ?: return
-        _uiState.value = _uiState.value.copy(
-            audioSeparation = sep.copy(numberOfSpeakers = count.coerceIn(1, 10))
-        )
     }
 
     private var separationJob: kotlinx.coroutines.Job? = null

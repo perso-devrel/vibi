@@ -24,7 +24,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,7 +60,6 @@ import com.dubcast.shared.ui.timeline.stemDisplayLabel
 @Composable
 fun AudioSeparationSheet(
     state: AudioSeparationUiState,
-    onUpdateSpeakers: (Int) -> Unit,
     onStart: () -> Unit,
     onToggleStem: (String) -> Unit,
     onUpdateStemVolume: (String, Float) -> Unit,
@@ -145,13 +143,7 @@ fun AudioSeparationSheet(
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 when (state.step) {
-                    AudioSeparationStep.SETUP -> {
-                        OutlinedTextField(
-                            value = state.numberOfSpeakers.toString(),
-                            onValueChange = { onUpdateSpeakers(it.toIntOrNull() ?: 1) },
-                            label = { Text("화자 수 (1~10)") }
-                        )
-                    }
+                    AudioSeparationStep.SETUP -> Unit  // Perso 자동 감지 — 사용자 입력 불필요
 
                     AudioSeparationStep.PROCESSING -> {
                         Text(localizeProgressReason(state.progressReason))
