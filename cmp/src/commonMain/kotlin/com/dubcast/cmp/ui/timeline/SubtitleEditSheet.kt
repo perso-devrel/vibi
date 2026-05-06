@@ -133,6 +133,7 @@ private fun StyleSection(
         ColorPaletteRow(
             selectedHex = initialBg,
             palette = BG_COLOR_PALETTE,
+            showAlpha = true,
             onSelect = onBackground,
         )
     }

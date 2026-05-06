@@ -35,6 +35,7 @@ class GenerateAutoSubtitlesUseCase(
         targetLanguageCodes: List<String>,
         numberOfSpeakers: Int = 1,
         onRenderProgress: (percent: Int) -> Unit = {},
+        includeOriginalLanguage: Boolean = false,
     ): Result<Int> = runCatching {
         println("[GenerateAutoSubtitles] enter projectId=$projectId targets=$targetLanguageCodes")
         var project = editProjectRepository.getProject(projectId)
@@ -113,9 +114,10 @@ class GenerateAutoSubtitlesUseCase(
             ) {
                 put(sourceLanguageCode, ready.originalSrtUrl)
             }
-            // "원본만" 모드 (targetLanguageCodes=[]): sourceLanguageCode="auto" 라도 originalSrt 를
-            // lang="" 로 저장해 사용자에게 표시 가능. 이후 RegenerateSubtitles 가 source 로 사용.
-            if (targetLanguageCodes.isEmpty() && !containsKey("")) {
+            // "원본만" 모드 (targetLanguageCodes=[]) 또는 사용자가 명시적으로 원본 자막 선택
+            // (includeOriginalLanguage=true) 시 originalSrt 를 lang="" 로 저장 — SaveAllVariants
+            // 가 SUB_원본_ variant 노출/burn 대상으로 사용.
+            if ((targetLanguageCodes.isEmpty() || includeOriginalLanguage) && !containsKey("")) {
                 put("", ready.originalSrtUrl)
             }
         }

@@ -3250,6 +3250,7 @@ class TimelineViewModel constructor(
                         onRenderProgress = { p ->
                             setRenderProgress(p)
                         },
+                        includeOriginalLanguage = includesOriginalSubtitle,
                     )
                     // render 진행 표시 reset — STT/번역 단계로 넘어갔거나 실패.
                     setRenderProgress(null)

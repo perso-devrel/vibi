@@ -138,6 +138,7 @@ fun InsertSubtitleSheet(
                 ColorPaletteRow(
                     selectedHex = backgroundColorHex,
                     palette = BG_COLOR_PALETTE,
+                    showAlpha = true,
                     onSelect = { backgroundColorHex = it }
                 )
             }
@@ -185,8 +186,10 @@ internal val BG_COLOR_PALETTE: List<String> = listOf(
 internal fun ColorPaletteRow(
     selectedHex: String,
     palette: List<String>,
+    showAlpha: Boolean = false,
     onSelect: (String) -> Unit,
 ) {
+    var pickerOpen by remember { mutableStateOf(false) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         palette.forEach { hex ->
             val selected = hex.equals(selectedHex, ignoreCase = true)
@@ -207,6 +210,25 @@ internal fun ColorPaletteRow(
                 }
             }
         }
+        // "+" 버튼 — 클릭 시 사용자 정의 색 선택 dialog. palette 에 없는 색이 selected 라도 별도 표시 X
+        // (dialog 의 initialHex 로 현재 색 그대로 노출).
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape)
+                .clickable { pickerOpen = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("+", color = Color.Gray)
+        }
+    }
+    if (pickerOpen) {
+        CustomColorPickerDialog(
+            initialHex = selectedHex.ifBlank { if (showAlpha) "#FF000000" else "#FFFFFFFF" },
+            showAlpha = showAlpha,
+            onSelect = { onSelect(it) },
+            onDismiss = { pickerOpen = false },
+        )
     }
 }
 

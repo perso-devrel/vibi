@@ -64,7 +64,6 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
@@ -320,10 +319,21 @@ fun TimelineScreen(
         // SSOT — TimelineViewModel 이 hasConfirmedOriginalSubtitle 헬퍼로 set. export variant
         // 산출 (SaveAllVariantsUseCase.computeAllVariantKeys) 도 같은 헬퍼를 본다.
         val hasOriginalSubtitleChip = state.hasOriginalSubtitleVariant
+        // chip 라벨 prefix: 더빙 있는 lang → "DUB_", 자막만 있는 lang → "SUB_", 원본 자막 → "SUB_ORIGINAL".
+        // 같은 lang 에 자막+더빙 둘 다 있어도 더빙 우선 (BFF 가 자막 함께 burn).
+        val langsWithDub = state.dubbedAudioPaths.keys + state.dubbedVideoPaths.keys
+        val langsWithSubtitle = state.subtitleClips.map { it.languageCode }.filter { it.isNotBlank() }.toSet()
         val versions = buildList<Pair<String?, String>> {
             add(null to "기본")
-            if (hasOriginalSubtitleChip) add("" to "원본 자막")
-            state.targetLanguageCodes.forEach { add(it to it.uppercase()) }
+            if (hasOriginalSubtitleChip) add("" to "SUB_ORIGINAL")
+            state.targetLanguageCodes.forEach { code ->
+                val label = when {
+                    code in langsWithDub -> "DUB_${code.uppercase()}"
+                    code in langsWithSubtitle -> "SUB_${code.uppercase()}"
+                    else -> code.uppercase()
+                }
+                add(code to label)
+            }
         }
         val isJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
             state.autoDubStatus == AutoJobStatus.RUNNING ||
@@ -916,19 +926,26 @@ fun TimelineScreen(
                 }
                 // "생성 시작" enable 조건: 자막/번역 lang 1개 이상 선택 (자막 모드면 "원본" chip 도 포함).
                 val startEnabled = state.localizationLangs.isNotEmpty()
-                // 3-state 라벨:
-                //  진행 중 → "자막/더빙 생성 중" (disabled)
+                // 진행 단계별 라벨 (단일 버튼 내):
+                //  편집 영상 render 중 → "편집 영상 준비 중 (XX%)"
+                //  STT/번역/더빙 진행 중 → "자막/더빙 생성 중"
                 //  자막 review pending (script ready) → "스크립트 생성 완료" → review sheet 재오픈
-                //  그 외 → "생성 시작"
-                val isGenerating = state.editedVideoRenderProgress != null ||
-                    state.sttPreflightStatus == AutoJobStatus.RUNNING ||
+                //  idle → "생성 시작"
+                val renderProgress = state.editedVideoRenderProgress
+                val isJobRunning = state.sttPreflightStatus == AutoJobStatus.RUNNING ||
                     state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
                     state.autoDubStatus == AutoJobStatus.RUNNING
+                val isGenerating = renderProgress != null || isJobRunning
                 val showReviewReady = state.localizationMode == "subtitle" &&
                     state.subtitleReviewPending &&
                     !isGenerating
                 val (buttonLabel, buttonEnabled, buttonOnClick) = when {
-                    isGenerating -> Triple<String, Boolean, () -> Unit>(
+                    renderProgress != null -> Triple<String, Boolean, () -> Unit>(
+                        "편집 영상 준비 중 ($renderProgress%)",
+                        false,
+                        { /* no-op */ },
+                    )
+                    isJobRunning -> Triple<String, Boolean, () -> Unit>(
                         "자막/더빙 생성 중",
                         false,
                         { /* no-op */ },
@@ -959,28 +976,8 @@ fun TimelineScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        // 편집 영상 render 진행 — 자막/더빙/분리 시작 직전 BFF 가 새 영상을 만드는 중.
-        // null = 진행 중 아님. 0..100 = 폴링 진행률.
-        state.editedVideoRenderProgress?.let { progress ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(tokens.panelBg, RoundedCornerShape(8.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    "편집 영상 준비 중… ($progress%)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = tokens.onBackgroundPrimary,
-                )
-                LinearProgressIndicator(
-                    progress = { (progress / 100f).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-        }
+        // 편집 영상 render 진행률 + 자막/더빙 생성 진행 상태는 위 "생성 시작" 버튼 라벨에 통합.
+        // 별도 progress card 폐기.
 
         // 저장 상태 메시지 (실패 시) — 헤더 저장 버튼이 진행률을 자체 표시하므로
         // running/done 은 별도 표시 안 함. 실패 메시지만 사용자에게 알림.
