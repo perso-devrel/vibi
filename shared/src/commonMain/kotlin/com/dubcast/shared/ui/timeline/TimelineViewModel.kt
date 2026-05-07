@@ -205,7 +205,7 @@ data class TimelineUiState(
     val isAddingBgm: Boolean = false,
     val bgmError: String? = null,
     /**
-     * BGM 영역의 lane 개수. 사용자가 +/- 버튼으로 명시적 확장/축소.
+     * BGM 영역의 lane 개수. 사용자가 하단 drag handle 로 명시적 확장/축소.
      * BGM clip 의 vertical drag 는 0..bgmLaneCount-1 로 clamp — 영역 밖으로 못 옮김.
      * 더 아래 lane 이 필요하면 사용자가 영역을 먼저 늘리고 옮겨야 함. 영속화 X (UI 한정).
      */
@@ -542,7 +542,17 @@ class TimelineViewModel constructor(
     private fun observeBgmClips() {
         viewModelScope.launch {
             bgmClipRepository.observeClips(projectId).collect { clips ->
-                _uiState.value = _uiState.value.copy(bgmClips = applyBgmLaneOverrides(clips))
+                val applied = applyBgmLaneOverrides(clips)
+                // 사용자가 lane N 에 clip 둔 채 종료 → 재진입 시 default 3 으로 lane N 이 영역 밖 시각
+                // 깜빡임 방지. 현재 lane 수가 점유보다 작으면 그만큼 자동 확장.
+                val maxOccupiedLane = applied.maxOfOrNull { it.lane } ?: -1
+                val current = _uiState.value
+                val minLaneCount = (maxOccupiedLane + 1).coerceAtLeast(3).coerceAtMost(8)
+                val nextLaneCount = current.bgmLaneCount.coerceAtLeast(minLaneCount)
+                _uiState.value = current.copy(
+                    bgmClips = applied,
+                    bgmLaneCount = nextLaneCount,
+                )
             }
         }
     }
@@ -574,19 +584,6 @@ class TimelineViewModel constructor(
         _uiState.value = current.copy(bgmLaneCount = safeCount)
     }
 
-    /** BGM 영역 lane 개수 +1 (최대 8). 사용자가 명시적 확장. */
-    fun onIncreaseBgmLaneCount() {
-        val current = _uiState.value
-        _uiState.value = current.copy(bgmLaneCount = (current.bgmLaneCount + 1).coerceAtMost(8))
-    }
-
-    /** BGM 영역 lane 개수 -1 (최소 1). 마지막 lane 에 clip 있으면 축소 보류. */
-    fun onDecreaseBgmLaneCount() {
-        val current = _uiState.value
-        val nextCount = (current.bgmLaneCount - 1).coerceAtLeast(1)
-        if (current.bgmClips.any { it.lane >= nextCount }) return
-        _uiState.value = current.copy(bgmLaneCount = nextCount)
-    }
 
     private fun observeSeparationDirectives() {
         viewModelScope.launch {

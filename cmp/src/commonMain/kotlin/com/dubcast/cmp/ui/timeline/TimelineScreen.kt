@@ -651,10 +651,10 @@ fun TimelineScreen(
                     selectedClipId = state.selectedBgmClipId,
                     tapEnabled = !state.isRangeSelecting,
                     laneCount = state.bgmLaneCount,
-                    onSelectClip = { viewModel.onSelectBgmClip(it) },
-                    onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
-                    onUpdateLane = { id, lane -> viewModel.onUpdateBgmLane(id, lane) },
-                    onSetLaneCount = { viewModel.onSetBgmLaneCount(it) },
+                    onSelectClip = viewModel::onSelectBgmClip,
+                    onUpdateStart = viewModel::onUpdateBgmStartMs,
+                    onUpdateLane = viewModel::onUpdateBgmLane,
+                    onSetLaneCount = viewModel::onSetBgmLaneCount,
                 )
             }
             }  // 재생바 + BGM 묶음 Column 닫음
@@ -1831,7 +1831,11 @@ private fun BgmTimelineLane(
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
     val rowStridePx = with(density) { rowStrideDp.toPx() }
-    val handleHeight = 6.dp
+    val handleVisualHeight = 6.dp
+    val handleHitHeight = 22.dp  // touch target 44pt/48dp 충족하기 위한 transparent 확장 영역.
+    // 축소 차단 — 마지막 lane 에 clip 점유 시 - 방향 drag 가 막힘. 사용자 시각 피드백.
+    val maxOccupiedLane = clips.maxOfOrNull { it.lane } ?: -1
+    val canShrink = laneCount > maxOf(1, maxOccupiedLane + 1)
     Column(modifier = Modifier.fillMaxWidth()) {
     // rowCount 가 drag 도중 변경되어도 inner pointerInput closure 가 stale 한 옛 값을 잡지 않게.
     val currentRowCount by rememberUpdatedState(rowCount)
@@ -1942,38 +1946,40 @@ private fun BgmTimelineLane(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(handleHeight),
+            .height(handleHitHeight)  // 확장된 transparent hit area — Material/HIG touch target 충족.
+            .pointerInput(rowStridePx) {
+                detectDragGestures(
+                    onDragStart = {
+                        dragAccumPy = 0f
+                        laneCountBase = currentLaneCount
+                    },
+                    onDrag = { change: PointerInputChange, drag: Offset ->
+                        change.consume()
+                        dragAccumPy += drag.y
+                        if (rowStridePx > 0f) {
+                            val laneDelta = (dragAccumPy / rowStridePx).toInt()
+                            val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
+                            if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
+                        }
+                    },
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
-        // 동그란 pill 모양 drag handle — 자체 테두리. 영역 외곽선 없음.
+        // 시각 pill 만 6dp — 축소 차단 시 흐리게 표시해 사용자에게 막힘 피드백.
+        val pillAlpha = if (canShrink) 0.6f else 0.3f
+        val pillBgAlpha = if (canShrink) 0.18f else 0.08f
         Box(
             modifier = Modifier
                 .width(48.dp)
-                .height(handleHeight)
-                .clip(RoundedCornerShape(handleHeight / 2))
-                .background(accent.copy(alpha = 0.18f))
+                .height(handleVisualHeight)
+                .clip(RoundedCornerShape(handleVisualHeight / 2))
+                .background(accent.copy(alpha = pillBgAlpha))
                 .border(
                     width = 1.dp,
-                    color = accent.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(handleHeight / 2),
-                )
-                .pointerInput(rowStridePx) {
-                    detectDragGestures(
-                        onDragStart = {
-                            dragAccumPy = 0f
-                            laneCountBase = currentLaneCount
-                        },
-                        onDrag = { change: PointerInputChange, drag: Offset ->
-                            change.consume()
-                            dragAccumPy += drag.y
-                            if (rowStridePx > 0f) {
-                                val laneDelta = (dragAccumPy / rowStridePx).toInt()
-                                val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
-                                if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
-                            }
-                        },
-                    )
-                },
+                    color = accent.copy(alpha = pillAlpha),
+                    shape = RoundedCornerShape(handleVisualHeight / 2),
+                ),
         )
     }
     }  // 외부 Column 닫음
