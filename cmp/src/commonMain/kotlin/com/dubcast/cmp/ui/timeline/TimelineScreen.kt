@@ -606,6 +606,8 @@ fun TimelineScreen(
                 }
             }
             val processingProgress = processingSep?.progress
+            // 재생바와 BGM 영역을 묶어 거리 최소화 — 외부 Column 의 8dp 간격을 회피.
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
             // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive 시각 모두 한 위치에.
             UnifiedTimelineBar(
                 segments = state.segments,
@@ -656,6 +658,7 @@ fun TimelineScreen(
                     onDecreaseLaneCount = { viewModel.onDecreaseBgmLaneCount() },
                 )
             }
+            }  // 재생바 + BGM 묶음 Column 닫음
             if (state.isRangeSelecting) {
                 Text(
                     "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
@@ -1830,18 +1833,15 @@ private fun BgmTimelineLane(
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
     val rowStridePx = with(density) { rowStrideDp.toPx() }
-    val canDecrease = laneCount > 1 && clips.none { it.lane >= laneCount - 1 }
-    Row(
+    val handleHeight = 8.dp
+    Column(
+        modifier = Modifier.fillMaxWidth(),  // 재생바 직속 — 외부 Column 의 spacedBy 제거됨.
+    ) {
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 1.dp),  // 재생바와 BGM 영역 거리 축소 (이전 4dp).
-        verticalAlignment = Alignment.CenterVertically,
+            .height(totalHeight),
     ) {
-        androidx.compose.foundation.layout.BoxWithConstraints(
-            modifier = Modifier
-                .weight(1f)
-                .height(totalHeight),
-        ) {
         val laneWidthDp = maxWidth
         val laneWidthPx = with(density) { laneWidthDp.toPx() }
         // BGM 영역 단일 배경 — lane 칸 칸을 줄줄이 보이지 않게 하나의 영역으로 인식되게.
@@ -1933,31 +1933,51 @@ private fun BgmTimelineLane(
                     },
             )
         }
-        }  // BoxWithConstraints 닫음
-        // 우측 +/- 버튼 — 사용자가 BGM 영역 lane 수 명시적 확장/축소.
-        Column(
-            modifier = Modifier.padding(start = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            androidx.compose.material3.IconButton(
-                onClick = onIncreaseLaneCount,
-                modifier = Modifier.size(20.dp),
-            ) {
-                Text("＋", style = MaterialTheme.typography.labelSmall, color = accent)
-            }
-            androidx.compose.material3.IconButton(
-                onClick = onDecreaseLaneCount,
-                enabled = canDecrease,
-                modifier = Modifier.size(20.dp),
-            ) {
-                Text(
-                    "－",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (canDecrease) accent else accent.copy(alpha = 0.3f),
+    }  // BoxWithConstraints 닫음
+    // BGM 영역 하단 drag handle — 끌어서 lane 수 직접 조절. dy / rowStridePx 만큼 lane 변경.
+    var dragAccumPy by remember { mutableStateOf(0f) }
+    var laneCountBase by remember { mutableStateOf(laneCount) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(handleHeight)
+            .pointerInput(rowStridePx) {
+                detectDragGestures(
+                    onDragStart = {
+                        dragAccumPy = 0f
+                        laneCountBase = laneCount
+                    },
+                    onDrag = { change: PointerInputChange, drag: Offset ->
+                        change.consume()
+                        dragAccumPy += drag.y
+                        if (rowStridePx > 0f) {
+                            val laneDelta = (dragAccumPy / rowStridePx).toInt()
+                            val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
+                            // 현재값과 다르면 +/- 호출 — 한 step 씩 commit.
+                            while (targetCount > laneCount) {
+                                onIncreaseLaneCount()
+                                break  // 다음 onDrag tick 에서 다시 평가
+                            }
+                            while (targetCount < laneCount) {
+                                onDecreaseLaneCount()
+                                break
+                            }
+                        }
+                    },
                 )
-            }
-        }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        // 가로 막대 시각 표시 — 사용자에게 drag 가능 영역 indication.
+        Box(
+            modifier = Modifier
+                .width(40.dp)
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(accent.copy(alpha = 0.5f)),
+        )
     }
+    }  // 외부 Column 닫음
 }
 
 /**
