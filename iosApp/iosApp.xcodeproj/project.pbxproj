@@ -7,19 +7,35 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1C81D6F669B7BB6D2FFCCEB3 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
 		307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668CECA83ACC03A83C85A623 /* iOSApp.swift */; };
+		CE7958F87DD54C55027284C3 /* GoogleSignInBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B948C2AA245A5D5254AD028 /* GoogleSignInBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		31D437C050DEC290DFDC9414 /* Auth.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Auth.xcconfig; sourceTree = "<group>"; };
+		3B948C2AA245A5D5254AD028 /* GoogleSignInBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInBridge.swift; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
-		86038AE1032E284E79B32AD6 /* iosApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		86038AE1032E284E79B32AD6 /* iosApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EF8A6E9BFD470986D9D5C9B5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1C81D6F669B7BB6D2FFCCEB3 /* GoogleSignIn in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		1DB4B685CAEE8BEFEBBAEF94 /* iosApp */ = {
 			isa = PBXGroup;
 			children = (
+				3B948C2AA245A5D5254AD028 /* GoogleSignInBridge.swift */,
 				C117AD187833E2513BD2F553 /* Info.plist */,
 				668CECA83ACC03A83C85A623 /* iOSApp.swift */,
 			);
@@ -29,9 +45,18 @@
 		38B69C3F79CD97858CF7B609 = {
 			isa = PBXGroup;
 			children = (
+				38F57C2AA6CF0EF5E2F51BAF /* Configs */,
 				1DB4B685CAEE8BEFEBBAEF94 /* iosApp */,
 				94C98B8B3A2BFC1966447269 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		38F57C2AA6CF0EF5E2F51BAF /* Configs */ = {
+			isa = PBXGroup;
+			children = (
+				31D437C050DEC290DFDC9414 /* Auth.xcconfig */,
+			);
+			path = Configs;
 			sourceTree = "<group>";
 		};
 		94C98B8B3A2BFC1966447269 /* Products */ = {
@@ -49,8 +74,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 29DCA9F0B3A40325067EB163 /* Build configuration list for PBXNativeTarget "iosApp" */;
 			buildPhases = (
+				464D3F95C5C8D9EB377EC247 /* Verify Auth.xcconfig */,
 				80829C78A007C2795A08CA15 /* Build Kotlin frameworks */,
 				297B59D9CE634556D6007C40 /* Sources */,
+				EF8A6E9BFD470986D9D5C9B5 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -58,6 +85,7 @@
 			);
 			name = iosApp;
 			packageProductDependencies = (
+				B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */,
 			);
 			productName = iosApp;
 			productReference = 86038AE1032E284E79B32AD6 /* iosApp.app */;
@@ -86,6 +114,9 @@
 			);
 			mainGroup = 38B69C3F79CD97858CF7B609;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				DF1BCD5B98717A06C1B5AE17 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 94C98B8B3A2BFC1966447269 /* Products */;
 			projectDirPath = "";
@@ -97,6 +128,25 @@
 /* End PBXProject section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		464D3F95C5C8D9EB377EC247 /* Verify Auth.xcconfig */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Verify Auth.xcconfig";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ ! -f \"$SRCROOT/Configs/Auth.xcconfig\" ]; then\n  echo \"error: Configs/Auth.xcconfig is missing. Copy Configs/Auth.xcconfig.template and fill in your Google OAuth client id + BFF base URL.\" >&2\n  exit 1\nfi\n";
+		};
 		80829C78A007C2795A08CA15 /* Build Kotlin frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -123,6 +173,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CE7958F87DD54C55027284C3 /* GoogleSignInBridge.swift in Sources */,
 				307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -255,16 +306,20 @@
 		};
 		9221A1FDC06803E8A2FC6E61 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 31D437C050DEC290DFDC9414 /* Auth.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = P49F6J5FKS;
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework",
 					"$(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
-				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR = iosSimulatorArm64;
+				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR = "$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_$(EFFECTIVE_PLATFORM_NAME))";
+				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_iphoneos = iosArm64;
+				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_iphonesimulator = iosSimulatorArm64;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -275,7 +330,7 @@
 					"-framework",
 					Shared,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.dubcast.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vibi.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -283,16 +338,20 @@
 		};
 		AF835BFF1220CA5AB5B867E4 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 31D437C050DEC290DFDC9414 /* Auth.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = P49F6J5FKS;
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework",
 					"$(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/debugFramework",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
-				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR = iosSimulatorArm64;
+				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR = "$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_$(EFFECTIVE_PLATFORM_NAME))";
+				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_iphoneos = iosArm64;
+				KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_iphonesimulator = iosSimulatorArm64;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -303,7 +362,7 @@
 					"-framework",
 					Shared,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.dubcast.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vibi.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -331,6 +390,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DF1BCD5B98717A06C1B5AE17 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DF1BCD5B98717A06C1B5AE17 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 242FB5348943441C388468CE /* Project object */;
 }

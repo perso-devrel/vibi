@@ -1,0 +1,12 @@
+package com.dubcast.shared.domain.model
+
+/**
+ * 로그인된 사용자 식별 정보. v1 은 BFF 가 영속화하지 않고 JWT claim 으로만 보존하므로
+ * 클라이언트도 별도 캐시 없이 로그인 응답에서 받아 in-memory 로 들고 다닌다.
+ */
+data class AuthUser(
+    val sub: String,
+    val email: String,
+    val name: String,
+    val picture: String? = null,
+)

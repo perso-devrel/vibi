@@ -15,6 +15,9 @@
 local.properties
 **/local.properties
 
+# iOS auth secrets (Google OAuth client id + BFF base URL). template 만 커밋.
+iosApp/Configs/Auth.xcconfig
+
 # IDE
 /.idea
 .idea/
@@ -27,3 +30,7 @@ local.properties
 xcuserdata/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
+# Xcode device build output (xcodebuild -derivedDataPath build-device)
+iosApp/build-device/
+# Xcode SwiftPM workspace cache (locally generated)
+**/xcshareddata/swiftpm/

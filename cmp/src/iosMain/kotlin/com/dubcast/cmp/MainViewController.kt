@@ -2,6 +2,7 @@ package com.dubcast.cmp
 
 import androidx.compose.ui.window.ComposeUIViewController
 import com.dubcast.shared.di.initKoinIos
+import com.dubcast.shared.platform.GoogleSignInBridge
 import kotlinx.cinterop.ExperimentalForeignApi
 import org.koin.compose.KoinContext
 import platform.UIKit.UIColor
@@ -10,9 +11,12 @@ import platform.UIKit.UIViewController
 private var koinStarted = false
 
 @OptIn(ExperimentalForeignApi::class)
-fun MainViewController(bffBaseUrl: String): UIViewController {
+fun MainViewController(
+    bffBaseUrl: String,
+    googleSignInBridge: GoogleSignInBridge,
+): UIViewController {
     if (!koinStarted) {
-        initKoinIos(bffBaseUrl)
+        initKoinIos(bffBaseUrl, googleSignInBridge)
         koinStarted = true
     }
     val controller = ComposeUIViewController(configure = {

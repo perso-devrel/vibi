@@ -5,8 +5,13 @@ import com.dubcast.shared.data.repository.AndroidGallerySaver
 import com.dubcast.shared.data.repository.AndroidImageMetadataExtractor
 import com.dubcast.shared.data.repository.AndroidShareSheetLauncher
 import com.dubcast.shared.data.repository.AndroidVideoMetadataExtractor
+import android.content.Context
+import com.dubcast.shared.platform.AndroidGoogleSignInClient
 import com.dubcast.shared.platform.AndroidVideoThumbnailExtractor
+import com.dubcast.shared.platform.GoogleSignInClient
 import com.dubcast.shared.platform.VideoThumbnailExtractor
+import com.russhwolf.settings.Settings
+import com.russhwolf.settings.SharedPreferencesSettings
 import com.dubcast.shared.data.repository.AutoDubRepositoryImpl
 import com.dubcast.shared.data.repository.AutoSubtitleRepositoryImpl
 import com.dubcast.shared.data.repository.MediaJobUploader
@@ -39,4 +44,11 @@ val androidPlatformModule = module {
     single { MediaJobUploader(androidContext()) }
     single<AutoDubRepository> { AutoDubRepositoryImpl(api = get(), uploader = get(), context = androidContext()) }
     single<AutoSubtitleRepository> { AutoSubtitleRepositoryImpl(api = get(), uploader = get()) }
+
+    // 인증 — Android Google Sign-In 본 구현은 후속 phase. 현재는 stub.
+    single<Settings> {
+        val prefs = androidContext().getSharedPreferences("vibi_auth", Context.MODE_PRIVATE)
+        SharedPreferencesSettings(prefs)
+    }
+    single<GoogleSignInClient> { AndroidGoogleSignInClient() }
 }

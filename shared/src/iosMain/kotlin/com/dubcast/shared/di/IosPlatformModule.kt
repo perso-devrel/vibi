@@ -8,8 +8,13 @@ import com.dubcast.shared.data.repository.IosImageMetadataExtractor
 import com.dubcast.shared.data.repository.IosMediaJobUploader
 import com.dubcast.shared.data.repository.IosShareSheetLauncher
 import com.dubcast.shared.data.repository.IosVideoMetadataExtractor
+import com.dubcast.shared.platform.GoogleSignInClient
+import com.dubcast.shared.platform.IosGoogleSignInClient
 import com.dubcast.shared.platform.IosVideoThumbnailExtractor
 import com.dubcast.shared.platform.VideoThumbnailExtractor
+import com.russhwolf.settings.NSUserDefaultsSettings
+import com.russhwolf.settings.Settings
+import platform.Foundation.NSUserDefaults
 import com.dubcast.shared.domain.repository.AutoDubRepository
 import com.dubcast.shared.domain.repository.AutoSubtitleRepository
 import com.dubcast.shared.domain.usecase.input.AudioMetadataExtractor
@@ -35,4 +40,8 @@ val iosPlatformModule = module {
     single { IosMediaJobUploader() }
     single<AutoDubRepository> { IosAutoDubRepositoryImpl(api = get(), uploader = get()) }
     single<AutoSubtitleRepository> { IosAutoSubtitleRepositoryImpl(api = get(), uploader = get()) }
+
+    // 인증 — GoogleSignInBridge 는 Swift 가 KoinHelper.initKoinIos 호출 시 별도 module 로 주입.
+    single<Settings> { NSUserDefaultsSettings(NSUserDefaults.standardUserDefaults) }
+    single<GoogleSignInClient> { IosGoogleSignInClient(bridge = get()) }
 }

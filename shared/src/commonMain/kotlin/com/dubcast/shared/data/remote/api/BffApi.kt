@@ -1,7 +1,9 @@
 package com.dubcast.shared.data.remote.api
 
+import com.dubcast.shared.data.remote.dto.AuthResponseDto
 import com.dubcast.shared.data.remote.dto.ChatRequestDto
 import com.dubcast.shared.data.remote.dto.ChatResponseDto
+import com.dubcast.shared.data.remote.dto.GoogleAuthRequestDto
 import com.dubcast.shared.data.remote.dto.AutoDubJobResponse
 import com.dubcast.shared.data.remote.dto.AutoDubSpec
 import com.dubcast.shared.data.remote.dto.AutoDubStatusResponse
@@ -53,6 +55,13 @@ class BffApi(
         encodeDefaults = true
     }
 ) {
+    /** Google ID Token → BFF JWT 교환. native GoogleSignIn SDK 가 받은 ID Token 을 그대로 전달. */
+    suspend fun exchangeGoogleIdToken(idToken: String): AuthResponseDto =
+        client.post("api/v2/auth/google") {
+            contentType(ContentType.Application.Json)
+            setBody(GoogleAuthRequestDto(idToken))
+        }.body()
+
     /** 지원 타깃 언어 목록 — Perso 가 지원하는 언어를 BFF 가 프록시. */
     suspend fun getLanguages(): LanguageListResponse =
         client.get("api/v2/languages").body()

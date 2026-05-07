@@ -1,0 +1,22 @@
+// Copy this file to Auth.xcconfig (committed via .gitignore so secrets stay local)
+// and fill in your real values. xcodegen은 project.yml 의 configFiles 설정을 통해
+// 빌드 시 Info.plist 의 $(KEY) placeholder 를 expand 한다.
+
+// Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs (iOS)
+// 두 값은 같은 base id 를 공유해야 한다 (GoogleSignIn SDK 의 launch 검증).
+//
+// 예시 (Google 발급 형식):
+//   원본:    123456789012-abc1def2.apps.googleusercontent.com
+//   reverse: com.googleusercontent.apps.123456789012-abc1def2
+GOOGLE_OAUTH_IOS_CLIENT_ID = REPLACE_BASE.apps.googleusercontent.com
+GOOGLE_OAUTH_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_BASE
+
+// BFF base URL. 트레일링 슬래시 포함.
+// xcconfig parser 는 `//` 를 모두 주석으로 처리 — `URL_SLASHES = //` 라인 자체가
+// `URL_SLASHES = ` (빈 값) 로 parse 됨. 단일 slash 를 두 번 substitute 해서 우회.
+//
+// - iOS 시뮬레이터: http:$(URL_SLASH)$(URL_SLASH)localhost:8080/
+// - iOS 실기기: http:$(URL_SLASH)$(URL_SLASH)<맥의 LAN IP>:8080/
+// - 운영: https:$(URL_SLASH)$(URL_SLASH)api.example.com/
+URL_SLASH = /
+BFF_BASE_URL = http:$(URL_SLASH)$(URL_SLASH)192.168.40.207:8080/

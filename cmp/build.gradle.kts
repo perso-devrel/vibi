@@ -19,8 +19,13 @@ kotlin {
         }
     }
 
-    // dev 빌드 가속 — Apple Silicon 시뮬레이터만 (shared/build.gradle.kts 와 동일 정책).
+    // 시뮬레이터 + Apple Silicon 실기기.
     iosSimulatorArm64().binaries.framework {
+        baseName = "Cmp"
+        isStatic = true
+        export(project(":shared"))
+    }
+    iosArm64().binaries.framework {
         baseName = "Cmp"
         isStatic = true
         export(project(":shared"))

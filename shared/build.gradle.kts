@@ -13,9 +13,12 @@ kotlin {
         }
     }
 
-    // dev 빌드 가속 — Apple Silicon 시뮬레이터만. release / 실기기 / Intel Mac 시 iosX64, iosArm64
-    // 다시 추가. 3 targets → 1 target 으로 KSP/compile/link/klib cache 비용 1/3.
+    // 시뮬레이터 + Apple Silicon 실기기 (iPhone 16 등). Intel Mac 시뮬레이터는 미지원.
     iosSimulatorArm64().binaries.framework {
+        baseName = "Shared"
+        isStatic = true
+    }
+    iosArm64().binaries.framework {
         baseName = "Shared"
         isStatic = true
     }
@@ -32,6 +35,7 @@ kotlin {
             implementation(libs.koin.core)
             implementation(libs.room.runtime)
             implementation(libs.sqlite.bundled)
+            implementation(libs.multiplatform.settings)
             api(libs.androidx.lifecycle.viewmodel)
         }
         commonTest.dependencies {
@@ -78,5 +82,5 @@ room {
 dependencies {
     add("kspAndroid", libs.room.compiler)
     add("kspIosSimulatorArm64", libs.room.compiler)
-    // iosX64/iosArm64 KSP 는 해당 target 활성 시 다시 추가.
+    add("kspIosArm64", libs.room.compiler)
 }

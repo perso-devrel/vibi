@@ -1,6 +1,8 @@
 package com.dubcast.shared.di
 
+import com.dubcast.shared.data.local.AuthTokenStore
 import com.dubcast.shared.data.repository.AudioSeparationRepositoryImpl
+import com.dubcast.shared.data.repository.AuthRepository
 import com.dubcast.shared.data.repository.BgmClipRepositoryImpl
 import com.dubcast.shared.data.repository.DubClipRepositoryImpl
 import com.dubcast.shared.data.repository.EditProjectRepositoryImpl
@@ -55,4 +57,8 @@ val repositoryModule = module {
     }
     single { com.dubcast.shared.data.repository.ChatRepository(bffApi = get()) }
     single { com.dubcast.shared.domain.chat.ChatToolDispatcher() }
+
+    // 인증 — Settings / GoogleSignInClient 는 platform 모듈에서 주입.
+    single { AuthTokenStore(settings = get()) }
+    single { AuthRepository(signInClient = get(), bffApi = get(), tokenStore = get()) }
 }

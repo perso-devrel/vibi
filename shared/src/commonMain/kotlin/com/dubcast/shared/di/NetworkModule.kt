@@ -1,5 +1,6 @@
 package com.dubcast.shared.di
 
+import com.dubcast.shared.data.local.AuthTokenStore
 import com.dubcast.shared.data.remote.api.BffApi
 import com.dubcast.shared.data.remote.createBffHttpClient
 import io.ktor.client.HttpClient
@@ -11,7 +12,11 @@ val BffBaseUrlKey = named("bffBaseUrl")
 val networkModule = module {
     single<HttpClient> {
         val baseUrl = getProperty<String>("bffBaseUrl")
-        createBffHttpClient(baseUrl = baseUrl)
+        val tokenStore = get<AuthTokenStore>()
+        createBffHttpClient(
+            baseUrl = baseUrl,
+            tokenProvider = { tokenStore.getValidToken() },
+        )
     }
     single { BffApi(client = get()) }
 }

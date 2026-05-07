@@ -1,5 +1,6 @@
 package com.dubcast.shared.di
 
+import com.dubcast.shared.ui.auth.LoginViewModel
 import com.dubcast.shared.ui.chat.ChatViewModel
 import com.dubcast.shared.ui.input.InputViewModel
 import com.dubcast.shared.ui.timeline.TimelineViewModel
@@ -73,4 +74,5 @@ val viewModelModule = module {
         )
     }
     factory { ChatViewModel(chatRepository = get()) }
+    factory { LoginViewModel(authRepository = get()) }
 }
