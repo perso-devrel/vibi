@@ -648,9 +648,12 @@ fun TimelineScreen(
                     accent = tokens.accent,
                     selectedClipId = state.selectedBgmClipId,
                     tapEnabled = !state.isRangeSelecting,
+                    laneCount = state.bgmLaneCount,
                     onSelectClip = { viewModel.onSelectBgmClip(it) },
                     onUpdateStart = { id, ms -> viewModel.onUpdateBgmStartMs(id, ms) },
                     onUpdateLane = { id, lane -> viewModel.onUpdateBgmLane(id, lane) },
+                    onIncreaseLaneCount = { viewModel.onIncreaseBgmLaneCount() },
+                    onDecreaseLaneCount = { viewModel.onDecreaseBgmLaneCount() },
                 )
             }
             if (state.isRangeSelecting) {
@@ -1812,26 +1815,33 @@ private fun BgmTimelineLane(
     accent: Color,
     selectedClipId: String?,
     tapEnabled: Boolean,
+    laneCount: Int,
     onSelectClip: (String) -> Unit,
     onUpdateStart: (String, Long) -> Unit,
     onUpdateLane: (String, Int) -> Unit,
+    onIncreaseLaneCount: () -> Unit,
+    onDecreaseLaneCount: () -> Unit,
 ) {
     if (totalMs <= 0L) return
     val rowHeight = 10.dp
     val rowGap = 2.dp
-    // 항상 최소 3행 + 사용된 최대 lane + 빈 lane 1개 (사용자에게 새 lane drop 가능 영역 노출).
-    val maxLane = clips.maxOfOrNull { it.lane.coerceAtLeast(0) } ?: 0
-    val rowCount = maxOf(3, maxLane + 2)
+    val rowCount = laneCount.coerceAtLeast(1)
     val totalHeight = rowHeight * rowCount + rowGap * (rowCount - 1).coerceAtLeast(0)
     val density = LocalDensity.current
     val rowStrideDp = rowHeight + rowGap
     val rowStridePx = with(density) { rowStrideDp.toPx() }
-    androidx.compose.foundation.layout.BoxWithConstraints(
+    val canDecrease = laneCount > 1 && clips.none { it.lane >= laneCount - 1 }
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 4.dp)
-            .height(totalHeight),
+            .padding(top = 1.dp),  // 재생바와 BGM 영역 거리 축소 (이전 4dp).
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .height(totalHeight),
+        ) {
         val laneWidthDp = maxWidth
         val laneWidthPx = with(density) { laneWidthDp.toPx() }
         // BGM 영역 단일 배경 — lane 칸 칸을 줄줄이 보이지 않게 하나의 영역으로 인식되게.
@@ -1900,11 +1910,11 @@ private fun BgmTimelineLane(
                                         .coerceIn(0L, maxStart)
                                 }
                                 // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
-                                // 아래로 끌면 증가. 0 미만은 0 으로 clamp.
+                                // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
                                 dragAccumPyAbs += drag.y
                                 if (rowStridePx > 0f) {
                                     val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
-                                    laneOverride = (laneBase + laneDelta).coerceAtLeast(0)
+                                    laneOverride = (laneBase + laneDelta).coerceIn(0, rowCount - 1)
                                 }
                             },
                             onDragEnd = {
@@ -1922,6 +1932,30 @@ private fun BgmTimelineLane(
                         )
                     },
             )
+        }
+        }  // BoxWithConstraints 닫음
+        // 우측 +/- 버튼 — 사용자가 BGM 영역 lane 수 명시적 확장/축소.
+        Column(
+            modifier = Modifier.padding(start = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            androidx.compose.material3.IconButton(
+                onClick = onIncreaseLaneCount,
+                modifier = Modifier.size(20.dp),
+            ) {
+                Text("＋", style = MaterialTheme.typography.labelSmall, color = accent)
+            }
+            androidx.compose.material3.IconButton(
+                onClick = onDecreaseLaneCount,
+                enabled = canDecrease,
+                modifier = Modifier.size(20.dp),
+            ) {
+                Text(
+                    "－",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (canDecrease) accent else accent.copy(alpha = 0.3f),
+                )
+            }
         }
     }
 }

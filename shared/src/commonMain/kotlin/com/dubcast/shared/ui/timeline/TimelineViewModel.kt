@@ -204,6 +204,12 @@ data class TimelineUiState(
     val selectedBgmClipId: String? = null,
     val isAddingBgm: Boolean = false,
     val bgmError: String? = null,
+    /**
+     * BGM 영역의 lane 개수. 사용자가 +/- 버튼으로 명시적 확장/축소.
+     * BGM clip 의 vertical drag 는 0..bgmLaneCount-1 로 clamp — 영역 밖으로 못 옮김.
+     * 더 아래 lane 이 필요하면 사용자가 영역을 먼저 늘리고 옮겨야 함. 영속화 X (UI 한정).
+     */
+    val bgmLaneCount: Int = 3,
     val audioSeparation: AudioSeparationUiState? = null,
     /** AudioSeparationSheet 표시 여부 — audioSeparation (데이터) 과 분리해 자동 팝업 회피. */
     val showAudioSeparationSheet: Boolean = false,
@@ -547,13 +553,28 @@ class TimelineViewModel constructor(
      * 단계에서 추가. 화면 재진입 시 lane 은 0 으로 리셋된다.
      */
     fun onUpdateBgmLane(clipId: String, newLane: Int) {
-        val lane = newLane.coerceAtLeast(0)
+        val maxLane = (_uiState.value.bgmLaneCount - 1).coerceAtLeast(0)
+        val lane = newLane.coerceIn(0, maxLane)
         bgmClipLaneOverrides[clipId] = lane
         val current = _uiState.value
         val updated = current.bgmClips.map { c ->
             if (c.id == clipId && c.lane != lane) c.copy(lane = lane) else c
         }
         _uiState.value = current.copy(bgmClips = updated)
+    }
+
+    /** BGM 영역 lane 개수 +1 (최대 8). 사용자가 명시적 확장. */
+    fun onIncreaseBgmLaneCount() {
+        val current = _uiState.value
+        _uiState.value = current.copy(bgmLaneCount = (current.bgmLaneCount + 1).coerceAtMost(8))
+    }
+
+    /** BGM 영역 lane 개수 -1 (최소 1). 마지막 lane 에 clip 있으면 축소 보류. */
+    fun onDecreaseBgmLaneCount() {
+        val current = _uiState.value
+        val nextCount = (current.bgmLaneCount - 1).coerceAtLeast(1)
+        if (current.bgmClips.any { it.lane >= nextCount }) return
+        _uiState.value = current.copy(bgmLaneCount = nextCount)
     }
 
     private fun observeSeparationDirectives() {
