@@ -2488,6 +2488,44 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * 채팅 dispatcher 전용 음원분리. UI sheet 진입 없이 audioSeparation state 만 직접 시드해
+     * [onStartSeparation] 백그라운드 잡 흐름에 합류 — 진행은 timeline directive 막대로 노출.
+     *
+     * BGM 대상이면 [onStartBgmSeparation] 으로 위임 (전체 클립 단위라 range 무관).
+     * Video 대상이면 trim 범위가 있을 때만 [AudioSeparationUiState.rangeStartMs/EndMs] 에 반영.
+     */
+    fun applySeparateRangeFromChat(
+        segmentId: String?,
+        bgmClipId: String?,
+        trimStartMs: Long?,
+        trimEndMs: Long?,
+        numberOfSpeakers: Int,
+    ) {
+        if (bgmClipId != null) {
+            onStartBgmSeparation(bgmClipId)
+            return
+        }
+        val segId = segmentId ?: return
+        val seg = _uiState.value.segments.firstOrNull { it.id == segId } ?: return
+        if (seg.type != SegmentType.VIDEO) return
+        val rs = trimStartMs
+        val re = trimEndMs
+        val (rangeStart, rangeEnd) = if (rs != null && re != null && re > rs) rs to re else null to null
+        _uiState.value = _uiState.value.copy(
+            audioSeparation = AudioSeparationUiState(
+                segmentId = segId,
+                step = AudioSeparationStep.SETUP,
+                numberOfSpeakers = numberOfSpeakers.coerceIn(1, 10),
+                rangeStartMs = rangeStart,
+                rangeEndMs = rangeEnd,
+            ),
+            showAudioSeparationSheet = false,
+            isPlaying = false,
+        )
+        onStartSeparation()
+    }
+
     /** segment edit mode 종료 ("저장" 버튼) — range/segment 상태를 모두 정리하고 기본 timeline 으로. */
     fun onFinishSegmentEdit() {
         _uiState.value = _uiState.value.copy(

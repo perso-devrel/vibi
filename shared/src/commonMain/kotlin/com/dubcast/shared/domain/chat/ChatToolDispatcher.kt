@@ -68,21 +68,17 @@ class ChatToolDispatcher {
             // --- 음성 분리 ---
             "separate_audio_range" -> {
                 val bgmId = a.optString("bgmClipId")
-                if (bgmId != null) {
-                    vm.onStartBgmSeparation(bgmId)
-                } else {
-                    val segId = a.optString("segmentId")
-                        ?: throw IllegalArgumentException("segmentId or bgmClipId required")
-                    val ts = a.optLong("trimStartMs")
-                    val te = a.optLong("trimEndMs")
-                    if (ts != null && te != null) {
-                        vm.onSetPendingRangeStart(ts)
-                        vm.onSetPendingRangeEnd(te)
-                    }
-                    vm.onShowAudioSeparationSheet(segId)
-                    // 화자 수 입력은 Perso 가 자동 감지 — chat tool 에서도 무시.
-                    vm.onStartSeparation()
+                val segId = a.optString("segmentId")
+                if (bgmId == null && segId == null) {
+                    throw IllegalArgumentException("segmentId or bgmClipId required")
                 }
+                vm.applySeparateRangeFromChat(
+                    segmentId = segId,
+                    bgmClipId = bgmId,
+                    trimStartMs = a.optLong("trimStartMs"),
+                    trimEndMs = a.optLong("trimEndMs"),
+                    numberOfSpeakers = a.optInt("numberOfSpeakers") ?: 2,
+                )
             }
             "update_stem_volume" -> {
                 vm.onUpdateStemVolume(a.requireString("stemId"), a.requireFloat("volume"))
