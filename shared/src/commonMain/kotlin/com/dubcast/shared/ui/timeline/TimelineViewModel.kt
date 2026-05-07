@@ -3218,7 +3218,12 @@ class TimelineViewModel constructor(
     fun onDismissAudioSeparationSheet() {
         // 폴링은 백그라운드 viewModelScope 에서 계속 — sheet 만 닫음.
         // 진행 상태(audioSeparation) 도 그대로 보존해 다음 재진입 시 이어 보여줌.
-        _uiState.value = _uiState.value.copy(showAudioSeparationSheet = false)
+        // userDismissed=true 로 표시 → 백그라운드 FAILED 도착해도 sheet 자동 재오픈 안 함.
+        val sep = _uiState.value.audioSeparation
+        _uiState.value = _uiState.value.copy(
+            showAudioSeparationSheet = false,
+            audioSeparation = sep?.copy(userDismissed = true),
+        )
     }
 
     // ── 자막/더빙 생성 패널 ──────────────────────────────────────────────────
@@ -3779,7 +3784,17 @@ class TimelineViewModel constructor(
 
     private fun updateSeparation(transform: (AudioSeparationUiState) -> AudioSeparationUiState) {
         val current = _uiState.value.audioSeparation ?: return
-        _uiState.value = _uiState.value.copy(audioSeparation = transform(current))
+        val next = transform(current)
+        // 분리는 시작 직후 sheet 를 닫지만 FAILED 가 되면 사용자에게 즉시 사유를 보여줄
+        // 채널이 사라짐 — 다시 열어 errorMessage 노출. 단, 사용자가 진행 중 sheet 를
+        // 명시적으로 닫았다면(userDismissed) 의사 존중하고 자동 reopen 안 함.
+        val reopen = next.step == AudioSeparationStep.FAILED &&
+            current.step != AudioSeparationStep.FAILED &&
+            !next.userDismissed
+        _uiState.value = _uiState.value.copy(
+            audioSeparation = next,
+            showAudioSeparationSheet = if (reopen) true else _uiState.value.showAudioSeparationSheet,
+        )
     }
 
     companion object {

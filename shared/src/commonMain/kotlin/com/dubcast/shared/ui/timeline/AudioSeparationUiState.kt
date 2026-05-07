@@ -30,6 +30,12 @@ data class AudioSeparationUiState(
     /** 사용자 지정 부분 구간 (range mode 진입). null = 영상 전체. */
     val rangeStartMs: Long? = null,
     val rangeEndMs: Long? = null,
+    /**
+     * 사용자가 진행 중 sheet 를 명시적으로 닫았는지 — 이후 FAILED 가 도착해도 sheet 자동
+     * 재오픈 안 함. directive 막대만으로 알림. 새 분리 시작(onShowAudioSeparationSheet 통한
+     * 재진입) 시 자연스럽게 false 로 리셋됨.
+     */
+    val userDismissed: Boolean = false,
 ) {
     val canStart: Boolean
         get() = step == AudioSeparationStep.SETUP && numberOfSpeakers in 1..10

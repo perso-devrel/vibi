@@ -136,6 +136,19 @@ if (length > 0) {
 ```
 ByteArray 의 주소를 `usePinned` 로 잡아서 그게 memcpy 의 dest. 새 NSData ↔ ByteArray 변환 site 추가 시 동일 패턴.
 
+### AVMutableComposition track 에 source 의 `preferredTransform` 안 옮기면 영상 회전 깨짐
+
+**증상**: split 한 segment 의 속도 조절 (= multi-segment composition 재빌드) 후 영상이 옆으로 눕거나 위아래 반전.
+
+**원인**: iOS 카메라는 raw 프레임을 항상 landscape 로 기록하고 회전 정보는 `AVAssetTrack.preferredTransform` 에 메타로 저장. AVMutableCompositionTrack 은 default 가 identity transform 이라 source 의 transform 이 자동으로 안 옮겨짐. SingleItem 경로 (AVURLAsset 직결) 는 AVPlayer 가 asset 의 transform 을 자동 적용해서 정상.
+
+**해결**: composition video track 에 첫 source video track 의 `preferredTransform` 을 명시적으로 복사. 같은 sourceUri 의 split segment 들은 transform 동일하므로 1회.
+```kotlin
+videoTrack.preferredTransform = srcVideo.preferredTransform
+```
+
+**적용 사이트** (참고): `cmp/.../VideoPlayer.ios.kt` 의 `buildCompositionPlayer`. 새 AVMutableComposition 사용처 추가 시 동일 패턴.
+
 ### CMP 의 UIKitView 위에 Compose 가 안 그려짐
 
 **증상**: `Box { VideoPlayer(...); Box(Modifier.align(TopCenter)) { ... } }` 의 두번째 Box 가 비디오 위에 안 보임.

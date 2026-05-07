@@ -33,6 +33,7 @@ import platform.AVFoundation.AVMediaTypeAudio
 import platform.AVFoundation.AVMediaTypeVideo
 import platform.AVFoundation.AVMutableComposition
 import platform.AVFoundation.AVMutableCompositionTrack
+import platform.AVFoundation.preferredTransform
 import platform.AVFoundation.AVPlayer
 import platform.AVFoundation.AVPlayerItem
 import platform.AVFoundation.AVPlayerItemDidPlayToEndTimeNotification
@@ -459,6 +460,7 @@ private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlay
         AVMediaTypeAudio, kCMPersistentTrackID_Invalid
     ) as? AVMutableCompositionTrack
 
+    var transformApplied = false
     items.forEach { item ->
         val asset = assetBySourceUri.getValue(item.sourceUri)
         @Suppress("UNCHECKED_CAST")
@@ -467,6 +469,15 @@ private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlay
         @Suppress("UNCHECKED_CAST")
         val srcAudio = (asset.tracksWithMediaType(AVMediaTypeAudio) as? List<AVAssetTrack>)
             ?.firstOrNull()
+
+        // iOS 카메라는 raw frame 을 landscape 로 기록하고 회전을 preferredTransform 메타로
+        // 표현. AVMutableCompositionTrack 은 default 가 identity transform 이라 그대로 두면
+        // 세로 영상이 가로로 누워 보이거나 위아래 반전. 첫 video track 의 transform 을 한 번
+        // composition track 에 복사 — 같은 sourceUri 의 split segment 들은 transform 동일.
+        if (!transformApplied && srcVideo != null && videoTrack != null) {
+            videoTrack.preferredTransform = srcVideo.preferredTransform
+            transformApplied = true
+        }
 
         val trimStart = CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
         val trimEnd = if (item.trimEndMs > 0L) {
