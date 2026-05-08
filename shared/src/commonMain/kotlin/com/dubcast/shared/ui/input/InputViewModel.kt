@@ -9,6 +9,7 @@ import com.dubcast.shared.domain.model.TargetLanguage
 import com.dubcast.shared.domain.model.ValidationError
 import com.dubcast.shared.domain.model.ValidationResult
 import com.dubcast.shared.domain.model.VideoInfo
+import com.dubcast.shared.data.repository.AuthRepository
 import com.dubcast.shared.domain.repository.EditProjectRepository
 import com.dubcast.shared.domain.repository.LanguageRepository
 import com.dubcast.shared.domain.repository.SegmentRepository
@@ -77,6 +78,7 @@ class InputViewModel constructor(
     private val segmentRepository: SegmentRepository,
     private val thumbnailExtractor: VideoThumbnailExtractor,
     private val expireOldDrafts: ExpireOldDraftsUseCase,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InputUiState())
@@ -84,6 +86,9 @@ class InputViewModel constructor(
 
     private val _navigateToTimeline = MutableSharedFlow<String>()
     val navigateToTimeline: SharedFlow<String> = _navigateToTimeline.asSharedFlow()
+
+    private val _navigateToLogin = MutableSharedFlow<Unit>()
+    val navigateToLogin: SharedFlow<Unit> = _navigateToLogin.asSharedFlow()
 
     init {
         loadLanguages()
@@ -249,6 +254,14 @@ class InputViewModel constructor(
     fun onDeleteDraft(projectId: String) {
         viewModelScope.launch {
             runCatching { editProjectRepository.deleteProject(projectId) }
+        }
+    }
+
+    fun onSignOut() {
+        viewModelScope.launch {
+            // signOut 실패해도 로그인 화면으로는 보낸다 — tokenStore.clear() 는 이미 끊어진 상태.
+            runCatching { authRepository.signOut() }
+            _navigateToLogin.emit(Unit)
         }
     }
 

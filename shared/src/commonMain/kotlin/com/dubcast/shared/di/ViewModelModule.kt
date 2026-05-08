@@ -17,6 +17,7 @@ val viewModelModule = module {
             segmentRepository = get(),
             thumbnailExtractor = get(),
             expireOldDrafts = get(),
+            authRepository = get(),
         )
     }
     factory { (projectId: String) ->

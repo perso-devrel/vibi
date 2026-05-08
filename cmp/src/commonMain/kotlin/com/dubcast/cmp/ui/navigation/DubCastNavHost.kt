@@ -47,7 +47,8 @@ fun DubCastNavHost() {
         Screen.Input -> InputScreen(
             onNavigateToTimeline = { projectId ->
                 stack = stack + Screen.Timeline(projectId)
-            }
+            },
+            onSignedOut = { stack = listOf(Screen.Login) },
         )
 
         is Screen.Timeline -> TimelineScreen(

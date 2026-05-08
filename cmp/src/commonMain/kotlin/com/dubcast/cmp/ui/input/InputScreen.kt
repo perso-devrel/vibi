@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +55,7 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun InputScreen(
     onNavigateToTimeline: (projectId: String) -> Unit,
+    onSignedOut: () -> Unit,
     viewModel: InputViewModel = koinViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -68,12 +70,18 @@ fun InputScreen(
         }
     }
 
+    LaunchedEffect(viewModel) {
+        viewModel.navigateToLogin.collect { onSignedOut() }
+    }
+
     val pickLauncher = rememberMediaPickerLauncher { uri -> viewModel.onVideoPicked(uri) }
 
     PageScaffold(title = "영상 선택") {
+      Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
         ) {
             // Hero CTA — 화면에 들어오자마자 가장 큰 element 가 "갤러리에서 영상 선택".
@@ -198,6 +206,15 @@ fun InputScreen(
                     ),
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "최근 작업은 7일간만 보관됩니다.",
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
                 Spacer(Modifier.height(10.dp))
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 4.dp),
@@ -216,6 +233,25 @@ fun InputScreen(
 
             Spacer(Modifier.height(24.dp))
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "로그아웃",
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { viewModel.onSignOut() }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+      }
     }
 }
 
