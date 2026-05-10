@@ -16,8 +16,15 @@ import com.dubcast.shared.platform.saveBytesToCache
 import io.ktor.client.plugins.ClientRequestException
 
 class AudioSeparationRepositoryImpl(
-    private val api: BffApi
+    private val api: BffApi,
+    private val bffBaseUrl: String,
 ) : AudioSeparationRepository {
+
+    /** stem URL 이 path-only (`/api/v2/...`) 면 BFF base 와 join 해 absolute URL 로 — iOS AVPlayer
+     * 가 host 없는 URL 을 silent fail 처리하는 것 회피. */
+    private fun absUrl(pathOrUrl: String): String =
+        if (pathOrUrl.startsWith("http")) pathOrUrl
+        else "${bffBaseUrl.trimEnd('/')}/${pathOrUrl.trimStart('/')}"
 
     override suspend fun startSeparation(
         sourceUri: String,
@@ -68,7 +75,7 @@ class AudioSeparationRepositoryImpl(
                         Stem(
                             stemId = it.stemId,
                             label = it.label,
-                            url = it.url,
+                            url = absUrl(it.url),
                             kind = Stem.kindFromId(it.stemId),
                             speakerIndex = Stem.speakerIndexFromId(it.stemId)
                         )

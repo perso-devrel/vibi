@@ -16,22 +16,30 @@ import androidx.compose.runtime.Composable
 @Composable
 expect fun rememberStemMixer(): StemMixerHandle
 
-data class StemMixerSource(val stemId: String, val audioUrl: String)
+data class StemMixerSource(
+    val stemId: String,
+    val audioUrl: String,
+    /** multi-directive 흐름에서 group 단위로 active 전환. 같은 stemId 라도 directive 다르면 별도 player. */
+    val groupId: String = "default",
+)
 
 interface StemMixerHandle {
-    /** 현재 player 다 정리하고 새 sources 로 prepare. */
+    /** 모든 group 의 stems prepare. 진입 시 [setActiveGroup] 으로 active 전환. */
     fun load(sources: List<StemMixerSource>)
 
-    /** stem 별 볼륨을 0f~2f 로 설정. 불가 stemId 는 무시. */
+    /** active group 만 [play]/[pause]/[seekTo] 영향 받음. null 이면 전부 pause. */
+    fun setActiveGroup(groupId: String?)
+
+    /** stem 볼륨 0f~2f. 같은 stemId 가 여러 group 에 있으면 모두 해당. */
     fun setVolume(stemId: String, volume: Float)
 
-    /** 모든 stem 동시 재생 시작. 이미 재생 중이면 no-op. */
+    /** 현재 active group 의 stems 만 동시 재생. */
     fun play()
 
-    /** 모든 stem 일시정지. */
+    /** active group 일시정지. */
     fun pause()
 
-    /** 모든 stem 의 재생 위치를 동일 timestamp 로 이동. directive range 내부 offset 기준. */
+    /** active group 의 stems 재생 위치를 동일 timestamp 로 이동. directive range 내부 offset. */
     fun seekTo(positionMs: Long)
 
     /** 모든 player 해제. */

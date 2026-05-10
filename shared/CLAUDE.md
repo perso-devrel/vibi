@@ -117,6 +117,28 @@ val url = if (uri.startsWith("file://")) {
 
 cinterop 으로 우회 시도하지 말 것 — 매번 막힘.
 
+### iOS streaming AVPlayer (remote URL) 가 silent — 다운로드 후 AVAudioPlayer 로 우회
+
+**증상**: `AVPlayer(uRL=remoteUrl)` 또는 `replaceCurrentItemWithPlayerItem(item)` 후 `play()` 호출해도 sound 안 남. KVC `setValue(NSNumber, forKey="volume")` 으로 volume 적용해도 동일.
+
+**원인**: K/N AVFoundation cinterop 환경에서 AVPlayer streaming 의 audio output graph 연결이 silent fail. setter 누락의 연장선.
+
+**해결 패턴**:
+1. background coroutine (`Dispatchers.Default`) 에서 `NSData.dataWithContentsOfURL` 로 다운로드 — main thread sync 호출은 iOS 가 silent fail (`Synchronous URL loading should not occur on this application's main thread` 경고).
+2. caches dir 에 임시 파일로 저장 (확장자 보존 — `.flac`/`.wav`/`.mp3`).
+3. main thread 에서 `AVAudioPlayer(contentsOfURL=fileUrl, error=null)` init + play. data init (`AVAudioPlayer(data=)`) 보다 file mode 가 format 추측 안정.
+4. release / new play 시 임시 파일 cleanup.
+
+**적용 사이트** (참고): `cmp/.../platform/AudioPreviewer.ios.kt` (단일 stem ▶), `StemMixer.ios.kt` (multi-stem 동시 재생). 새 remote audio 재생 추가 시 동일 패턴.
+
+### path-only URL → plist BFFBaseURL 직접 prepend 안전망
+
+**증상**: `/api/v2/separate/.../stem/...?token=...` 같은 path-only URL 을 `NSURL.URLWithString` 에 넘기면 invalid URL 객체 (host 없음). AVPlayer streaming 이 `NSURLConnection error -1002` (badURL) 로 실패.
+
+**해결 패턴**: KMP framework 빌드 캐시 / ViewModel state 캐시 등으로 path-only URL 이 새어 들어올 가능성 — iOS 측 player 자체에 fallback. `NSBundle.mainBundle.objectForInfoDictionaryKey("BFFBaseURL")` 직접 읽어 prepend 하는 self-contained 안전망 (`resolveAbsoluteAudioUrl`).
+
+**적용 사이트**: `cmp/.../platform/AudioPreviewer.ios.kt`, `StemMixer.ios.kt`.
+
 ### NSData → ByteArray 복사 — `allocArrayOf(bytes)` dest 에 쓰지 말 것
 
 **증상**: 영상 업로드 후 BFF 콘솔에서 "ffprobe: moov atom not found" / "Invalid data found when processing input" / 71MB zero-filled file. Perso 가 silent 하게 결과 없음 (404, F5001, "no stems available" 등 다양한 후속 에러).

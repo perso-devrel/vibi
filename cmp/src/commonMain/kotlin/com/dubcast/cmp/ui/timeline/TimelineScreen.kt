@@ -125,47 +125,67 @@ fun TimelineScreen(
     // 영상 재생/일시정지/seek 에 동기화. directive range 밖 위치에서는 mute 효과 (volume 0).
     // iOS 는 cinterop 한계로 no-op fallback (Swift bridge 도입 시 활성화).
     val stemMixer = rememberStemMixer()
-    val activeDirective = state.separationDirectives.firstOrNull { d ->
-        d.selections.any { !it.audioUrl.isNullOrBlank() }
-    }
-    LaunchedEffect(activeDirective?.id) {
-        val dir = activeDirective
-        if (dir == null) {
-            stemMixer.load(emptyList())
-            return@LaunchedEffect
+    // 모든 directive 의 stems 를 한 번에 load — directive 별 group 으로 prepare. transition 시
+    // setActiveGroup 만 변경, 다운로드 끊김 없음.
+    val allDirectives = state.separationDirectives
+    val directivesKey = remember(allDirectives) {
+        allDirectives.joinToString("|") { d ->
+            "${d.id}:${d.selections.joinToString(",") { "${it.stemId}=${it.audioUrl}" }}"
         }
-        // load 는 audioUrl 있는 모든 stem (selected 무관) — 사용자가 토글 키면 즉시 반영되도록
-        // 모두 prepare. 선택 안 된 stem 은 아래 volume effect 에서 0 으로 mute.
-        val sources = dir.selections.mapNotNull { sel ->
-            val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            StemMixerSource(stemId = sel.stemId, audioUrl = url)
+    }
+    LaunchedEffect(directivesKey) {
+        val sources = allDirectives.flatMap { dir ->
+            dir.selections.mapNotNull { sel ->
+                val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                StemMixerSource(stemId = sel.stemId, audioUrl = url, groupId = dir.id)
+            }
         }
         stemMixer.load(sources)
-        dir.selections.forEach { sel ->
-            stemMixer.setVolume(sel.stemId, if (sel.selected) sel.volume else 0f)
-        }
     }
-    // 볼륨/선택 변화 실시간 전파 — slider 드래그 또는 체크 토글 → onUpdateStemVolume/onToggleStemSelection
-    // 이 directive 를 upsert → observe Flow 가 새 selections 흘려줌 → 본 effect 가
-    // stemMixer.setVolume 호출. selected=false 면 0f mute, true 면 볼륨 그대로.
-    // load 와 분리한 이유: load(...) 는 player 인스턴스 재생성이라 매 변화마다 호출하면 재생이 끊김.
+    // 어느 directive 의 stem 도 audioUrl 있으면 정렬 우선. playbackPosition 이 들어간 것 우선.
+    val activeDirective = allDirectives.firstOrNull { d ->
+        state.playbackPositionMs in d.rangeStartMs..d.rangeEndMs &&
+            d.selections.any { !it.audioUrl.isNullOrBlank() }
+    }
+    // selection / volume 변경 시 setVolume 만. load 와 분리해 끊김 방지.
     LaunchedEffect(activeDirective?.id, activeDirective?.selections) {
         val dir = activeDirective ?: return@LaunchedEffect
         dir.selections.forEach { sel ->
             stemMixer.setVolume(sel.stemId, if (sel.selected) sel.volume else 0f)
         }
     }
-    // 재생 토글 / 사용자 seek 시 mixer 도 같이 정렬. video 재생 자유진행 시 sample-accurate 동기화는
-    // 못 하지만 사용자 체감 합리적 — 차후 더 정밀하면 정기 drift 보정 추가.
-    LaunchedEffect(state.isPlaying, activeDirective?.id) {
-        val dir = activeDirective ?: return@LaunchedEffect
-        if (state.isPlaying) {
-            val offset = (state.playbackPositionMs - dir.rangeStartMs).coerceAtLeast(0L)
-            stemMixer.seekTo(offset)
-            stemMixer.play()
-        } else {
+    // playback position 진입/이탈 시 active group + video mute 동시 toggle.
+    var stemInRange by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isPlaying, state.playbackPositionMs, activeDirective?.id) {
+        val dir = activeDirective
+        if (dir == null) {
             stemMixer.pause()
+            stemMixer.setActiveGroup(null)
+            // directive range 밖 (또는 directive 없음) → video unmute.
+            viewModel.muteVideoSegmentsForDirective(false)
+            stemInRange = false
+            return@LaunchedEffect
         }
+        val pos = state.playbackPositionMs
+        val inRange = pos in dir.rangeStartMs..dir.rangeEndMs
+        when {
+            !state.isPlaying -> {
+                stemMixer.pause()
+            }
+            inRange && !stemInRange -> {
+                // 진입 — group 전환 + offset seek + play + video mute.
+                stemMixer.setActiveGroup(dir.id)
+                val offset = (pos - dir.rangeStartMs).coerceAtLeast(0L)
+                stemMixer.seekTo(offset)
+                stemMixer.play()
+                viewModel.muteVideoSegmentsForDirective(true)
+            }
+            !inRange && stemInRange -> {
+                stemMixer.pause()
+                viewModel.muteVideoSegmentsForDirective(false)
+            }
+        }
+        stemInRange = inRange && state.isPlaying
     }
 
     // 구간 모드 진입 + 선택 있는 경우만 재생 위치 정렬 (zero-width 선택 = 자유 재생 허용).
@@ -778,14 +798,6 @@ fun TimelineScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     onClick = { viewModel.onToggleDetailEdit() }
                 ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
-                // 임시 — 음성분리 mock 데이터 주입 (영상 전체 분리 가정). release 전 제거.
-                OutlinedButton(
-                    enabled = firstSegId != null,
-                    modifier = Modifier.height(42.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    onClick = { viewModel.onMockSeparationReady() }
-                ) { Text("분리 mock", fontSize = 14.sp) }
-
                 // 음원 삽입 — 단일 진입점. 클릭 시 [업로드 / 즉시 녹음] DropdownMenu.
                 // 녹음 진행 중에는 자체적으로 ⏹ 종료 버튼 라벨로 토글.
                 val audioPicker = rememberAudioPicker { uri -> viewModel.onPickBgmAudio(uri) }

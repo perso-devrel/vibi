@@ -133,11 +133,11 @@ fun AudioSeparationSheet(
                     }) {
                         Icon(
                             imageVector = if (isAllPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (isAllPlaying) "전체 일시정지" else "전체 재생",
+                            contentDescription = if (isAllPlaying) "선택 재생 일시정지" else "선택 재생",
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.size(4.dp))
-                        Text("전체")
+                        Text("선택 재생")
                     }
                 }
             }

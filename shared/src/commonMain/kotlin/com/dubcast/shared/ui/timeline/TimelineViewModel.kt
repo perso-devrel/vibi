@@ -3159,86 +3159,6 @@ class TimelineViewModel constructor(
     private var bgmSeparationTargetId: String? = null
 
     /**
-     * 임시 — testdata 의 mock stem mp3 들로 음성분리 결과를 즉시 hydrate. 실제 BFF /separate 호출 없이
-     * PICK_STEMS 단계로 바로 진입해 stem 선택/볼륨 UI + StemMixer 동작 확인용. release 전 제거.
-     */
-    /**
-     * mock 은 "영상 전체" 분리로 가정 — segmentId 를 빈 문자열로 두어 commit 시 directive range 가
-     * 0 ~ totalDurationMs (모든 segment 의 합) 로 잡힘. 모든 video segment 의 원본 audio 도 mute.
-     */
-    fun onMockSeparationReady() {
-        // BFF testdata/separation/list 호출 → 폴더별 (startSec-endSec) directive 생성.
-        // 실패 (BFF down / IP mismatch / 폴더 빈 list) 시 separationError 에 메시지 노출.
-        viewModelScope.launch {
-            val base = bffBaseUrl.trimEnd('/')
-            val state = _uiState.value
-            state.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
-            val foldersResult = runCatching { bffApi.listSeparationTestdata() }
-            val folders = foldersResult.getOrNull()
-            if (folders == null) {
-                val err = foldersResult.exceptionOrNull()
-                setSeparationFailed("분리 mock 실패 (BFF=$base): ${err?.message ?: "알 수 없는 오류"}")
-                return@launch
-            }
-            if (folders.isEmpty()) {
-                setSeparationFailed("분리 mock testdata 폴더가 비어있습니다 (BFF testdata/0-30/ 등 폴더 확인)")
-                return@launch
-            }
-            folders.forEach { folder ->
-                val rangeStart = folder.startSec * 1000L
-                val rangeEnd = folder.endSec * 1000L
-                if (rangeEnd <= rangeStart) return@forEach
-                val selections = folder.stems.map { stemName ->
-                    StemSelection(
-                        stemId = stemName,
-                        volume = 1.0f,
-                        audioUrl = "$base/api/v2/testdata/separation/${folder.folder}/$stemName",
-                    )
-                }
-                separationDirectiveRepository.add(
-                    com.dubcast.shared.domain.model.SeparationDirective(
-                        id = Uuid.random().toString(),
-                        projectId = projectId,
-                        rangeStartMs = rangeStart,
-                        rangeEndMs = rangeEnd,
-                        numberOfSpeakers = folder.stems.count { it != "background" }.coerceAtLeast(1),
-                        muteOriginalSegmentAudio = true,
-                        selections = selections,
-                        createdAt = currentTimeMillis(),
-                    )
-                )
-            }
-            _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
-                .forEach { updateSegmentVolume(it.id, 0f) }
-            // 성공 시 separation status 도 READY 로 표시 (UI 시그널).
-            editProjectRepository.getProject(projectId)?.let { p ->
-                editProjectRepository.updateProject(
-                    p.copy(
-                        separationStatus = AutoJobStatus.READY,
-                        separationError = null,
-                    )
-                )
-            }
-        }
-    }
-
-    /**
-     * separation mock / 실제 분리 흐름의 공통 실패 처리. EditProject 의 separationStatus/Error 를
-     * FAILED 로 갱신하고 콘솔에 로그.
-     */
-    private suspend fun setSeparationFailed(msg: String) {
-        println("[Separation] $msg")
-        editProjectRepository.getProject(projectId)?.let { p ->
-            editProjectRepository.updateProject(
-                p.copy(
-                    separationStatus = AutoJobStatus.FAILED,
-                    separationError = msg,
-                )
-            )
-        }
-    }
-
-    /**
      * BgmClip 음원분리 — 추가된 음원에 대해 Perso AUDIO 분리 호출. 시트는 동일 [AudioSeparationSheet]
      * 재사용 — onConfirmStemMix 가 [bgmSeparationTargetId] 보고 BGM 교체 path 로 분기.
      *
@@ -3669,15 +3589,24 @@ class TimelineViewModel constructor(
                         it.copy(progress = status.progress, progressReason = status.progressReason)
                     }
                     is SeparationStatus.Ready -> {
+                        // BFF 응답 stem.url 이 path-only (`/api/v2/...`) — iOS AVAudioPlayer 가
+                        // host 없는 URL silent fail. 여기서 base URL prepend 해 absolute 로.
+                        val baseTrim = bffBaseUrl.trimEnd('/')
+                        val absStems = status.stems.map { stem ->
+                            if (stem.url.startsWith("http")) stem
+                            else stem.copy(url = "$baseTrim/${stem.url.trimStart('/')}")
+                        }
                         updateSeparation {
-                            val defaults = status.stems.associate { stem ->
-                                stem.stemId to StemSelectionUi(stem.stemId, selected = false, volume = 1.0f)
+                            // mock 흐름과 일치 — Ready 즉시 directive 자동 생성 위해 default 로 모든 stem 선택.
+                            // 사용자가 sheet 재진입 후 토글 시 새 directive 로 교체됨.
+                            val defaults = absStems.associate { stem ->
+                                stem.stemId to StemSelectionUi(stem.stemId, selected = true, volume = 1.0f)
                             }
                             it.copy(
                                 step = AudioSeparationStep.PICK_STEMS,
                                 progress = 100,
                                 progressReason = null,
-                                stems = status.stems,
+                                stems = absStems,
                                 selections = defaults
                             )
                         }
@@ -3686,6 +3615,10 @@ class TimelineViewModel constructor(
                                 it.copy(separationStatus = AutoJobStatus.READY)
                             )
                         }
+                        // segment 분리는 자동 directive 생성 → timeline 즉시 막대 표시.
+                        // BGM 분리 (bgmSeparationTargetId 설정됨) 는 onConfirmBgmStemMix 로 분기 — 자동 fire 가
+                        // mock 흐름과 동일하게 BGM 클립 교체까지 진행.
+                        onConfirmStemMix()
                     }
                     is SeparationStatus.Failed -> {
                         val reason = status.progressReason ?: "분리에 실패했습니다"
@@ -3760,6 +3693,19 @@ class TimelineViewModel constructor(
         updateSeparation { it.copy(muteOriginalSegmentAudio = !it.muteOriginalSegmentAudio) }
     }
 
+    /**
+     * 모든 video segment 의 원본 audio mute toggle. directive range 진입/이탈 시점에 TimelineScreen 이
+     * 호출 — range 안에서만 video mute, 밖에서는 원본 audio 들리도록.
+     */
+    fun muteVideoSegmentsForDirective(mute: Boolean) {
+        val target = if (mute) 0f else 1f
+        viewModelScope.launch {
+            _uiState.value.segments
+                .filter { it.type == SegmentType.VIDEO && it.volumeScale != target }
+                .forEach { updateSegmentVolume(it.id, target) }
+        }
+    }
+
     fun onConfirmStemMix() {
         // BGM 음원분리 path 분기 — onStartBgmSeparation 으로 진입한 경우.
         val bgmTargetId = bgmSeparationTargetId
@@ -3798,37 +3744,33 @@ class TimelineViewModel constructor(
                 )
             }
             try {
-                // editingDirectiveId 가 있으면 기존 directive 삭제 후 새로 추가 — range 보존하기 위해
-                // 기존 directive 의 range 사용. 그렇지 않으면 segment 기반 새 range 계산.
+                // editingDirectiveId 또는 같은 range 의 기존 directive 가 있으면 그 id 그대로 upsert.
+                // stable id 유지로 TimelineScreen 의 stemMixer 가 같은 group 으로 인식해 reload/다운로드
+                // 방지 (사용자가 selection / volume 여러 번 조정해도 끊김 없음).
                 val existing = editingDirectiveId?.let { id ->
                     _uiState.value.separationDirectives.firstOrNull { it.id == id }
+                } ?: _uiState.value.separationDirectives.firstOrNull {
+                    it.rangeStartMs == directiveStart && it.rangeEndMs == directiveEnd
                 }
                 val effectiveStart = existing?.rangeStartMs ?: directiveStart
                 val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
-                if (existing != null) {
-                    separationDirectiveRepository.delete(existing.id)
-                    editingDirectiveId = null
-                }
+                editingDirectiveId = null
                 separationDirectiveRepository.add(
                     SeparationDirective(
-                        id = Uuid.random().toString(),
+                        id = existing?.id ?: Uuid.random().toString(),
                         projectId = projectId,
                         rangeStartMs = effectiveStart,
                         rangeEndMs = effectiveEnd,
                         numberOfSpeakers = sep.numberOfSpeakers,
                         muteOriginalSegmentAudio = true,  // 항상 음소거 (사용자 정책).
                         selections = selections,
-                        createdAt = currentTimeMillis()
+                        createdAt = existing?.createdAt ?: currentTimeMillis()
                     )
                 )
-                // 음성분리 구간의 원본 음성은 항상 음소거 — stem 들로 대체되므로 중복 재생 방지.
-                if (segment != null) {
-                    updateSegmentVolume(segment.id, 0f)
-                } else {
-                    // 영상 전체 분리 — 모든 video segment 의 원본 audio mute.
-                    state.segments.filter { it.type == SegmentType.VIDEO }
-                        .forEach { updateSegmentVolume(it.id, 0f) }
-                }
+                // 음성분리 구간의 원본 음성은 directive range 안에서만 mute — TimelineScreen 의
+                // stemMixer effect 가 진입/이탈 시점에 [muteVideoSegmentsForDirective] 호출.
+                // 여기서 영구 mute 하면 range 밖에서도 원본 audio 안 들려 사용자 의도 ("음원분리 안
+                // 시킨 부분은 원본 음원") 에 맞지 않음.
                 // 적용 즉시 sheet 닫음 — DONE 단계의 "완료" 팝업 노출 안 함.
                 _uiState.value = _uiState.value.copy(
                     audioSeparation = null,

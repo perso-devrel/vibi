@@ -29,14 +29,20 @@ private class AndroidStemMixerHandle(
     private val playerFactory: () -> ExoPlayer
 ) : StemMixerHandle {
 
+    /** key = "groupId/stemId" — multi-directive 지원. */
     private val players = mutableMapOf<String, ExoPlayer>()
+    private val groupOfPlayer = mutableMapOf<String, String>()
+    private var activeGroupId: String? = null
     private var playing = false
 
+    private fun key(groupId: String, stemId: String) = "$groupId/$stemId"
+
     override fun load(sources: List<StemMixerSource>) {
-        // 기존 instance 정리.
         players.values.forEach { it.release() }
         players.clear()
+        groupOfPlayer.clear()
         playing = false
+        activeGroupId = null
         sources.forEach { src ->
             val p = playerFactory().apply {
                 setMediaItem(MediaItem.fromUri(src.audioUrl))
@@ -44,18 +50,36 @@ private class AndroidStemMixerHandle(
                 playWhenReady = false
                 volume = 1f
             }
-            players[src.stemId] = p
+            val k = key(src.groupId, src.stemId)
+            players[k] = p
+            groupOfPlayer[k] = src.groupId
+        }
+    }
+
+    override fun setActiveGroup(groupId: String?) {
+        if (activeGroupId == groupId) return
+        activeGroupId = groupId
+        applyActiveState()
+    }
+
+    private fun applyActiveState() {
+        players.forEach { (k, p) ->
+            val isActive = groupOfPlayer[k] == activeGroupId
+            p.playWhenReady = isActive && playing
         }
     }
 
     override fun setVolume(stemId: String, volume: Float) {
-        players[stemId]?.volume = volume.coerceIn(0f, 2f)
+        val v = volume.coerceIn(0f, 2f)
+        players.entries
+            .filter { (k, _) -> k.endsWith("/$stemId") }
+            .forEach { (_, p) -> p.volume = v }
     }
 
     override fun play() {
         if (playing) return
         playing = true
-        players.values.forEach { it.playWhenReady = true }
+        applyActiveState()
     }
 
     override fun pause() {
@@ -65,12 +89,18 @@ private class AndroidStemMixerHandle(
     }
 
     override fun seekTo(positionMs: Long) {
-        players.values.forEach { it.seekTo(positionMs.coerceAtLeast(0L)) }
+        val pos = positionMs.coerceAtLeast(0L)
+        val active = activeGroupId ?: return
+        players.forEach { (k, p) ->
+            if (groupOfPlayer[k] == active) p.seekTo(pos)
+        }
     }
 
     override fun release() {
         players.values.forEach { it.release() }
         players.clear()
+        groupOfPlayer.clear()
         playing = false
+        activeGroupId = null
     }
 }

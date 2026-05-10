@@ -58,7 +58,7 @@ val DarkDubCastColors = DubCastColors(
     timelineBarTrack = Color(0xFF0F1011),  // surface-1 — 얇은 트랙
     timelineBarSegment = Color(0xFF23252A),  // hairline — 중성, accent 와 분리
     timelineBarSegmentEdited = Color(0xFF828FFF),  // primary-hover (밝은 라벤더) — Linear 팔레트 내부에서 edited 강조
-    timelineBarDirective = Color(0xFF3E3E44),  // hairline-tertiary — segment 보다 약간 짙은 중성
+    timelineBarDirective = Color(0xFFE5C275),  // warm amber — segment(중성)/edited(라벤더)와 hue 분리
 )
 
 // Light variant — Linear 의 inverse-* 토큰 기반. Linear 자체는 거의 다크 전용이지만
@@ -76,7 +76,7 @@ val LightDubCastColors = DubCastColors(
     timelineBarTrack = Color(0xFFF5F6F6),
     timelineBarSegment = Color(0xFFD0D6E0),  // ink-muted (light bg 위 중성 회색)
     timelineBarSegmentEdited = Color(0xFF5E6AD2),  // primary 그대로 — light bg 에서 라벤더가 충분히 띔
-    timelineBarDirective = Color(0xFF8A8F98),  // ink-subtle
+    timelineBarDirective = Color(0xFFB8861E),  // deep amber — light bg 위 충분한 contrast
 )
 
 val LocalDubCastColors = staticCompositionLocalOf { DarkDubCastColors }

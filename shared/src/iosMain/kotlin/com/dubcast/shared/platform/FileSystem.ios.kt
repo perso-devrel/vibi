@@ -55,8 +55,12 @@ actual fun saveBytesToCache(fileName: String, bytes: ByteArray): String {
 }
 
 actual suspend fun readFileBytes(uriOrPath: String): ByteArray {
-    val data = requireNotNull(NSData.dataWithContentsOfFile(uriOrPath)) {
-        "Cannot read bytes from $uriOrPath"
+    // Picker 가 저장하는 sourceUri 는 `picker_media/foo.mp4` 같은 Documents-relative path —
+    // NSData.dataWithContentsOfFile 는 절대경로만 받아 silent nil 반환. 컨테이너 UUID 변경
+    // 후 옛 절대경로도 resolver 가 remap.
+    val resolved = resolveStoredUriToPath(uriOrPath) ?: uriOrPath
+    val data = requireNotNull(NSData.dataWithContentsOfFile(resolved)) {
+        "Cannot read bytes from $uriOrPath (resolved=$resolved)"
     }
     val size = data.length.toInt()
     val bytes = ByteArray(size)
