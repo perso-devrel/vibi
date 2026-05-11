@@ -293,6 +293,7 @@ fun TimelineScreen(
             Text(
                 text = headerTitle,
                 style = MaterialTheme.typography.headlineSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = tokens.onBackgroundPrimary,
                 modifier = Modifier.weight(1f),
             )
