@@ -1724,14 +1724,11 @@ private fun UnifiedTimelineBar(
                     .height(contentHeight),
                 horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
             ) {
-                val multiSegment = segments.size > 1
                 segments.forEach { seg ->
-                    // 편집됨 = trim / volume / speed / duplicate / split(=다중 segment) 중 하나라도 적용.
-                    // split 결과는 각 조각이 trim 가지므로 hasNonTrivialEdits 로 잡히지만, 다중 source append
-                    // 처럼 trim 없이 multi-segment 인 경우도 사용자가 편집한 것으로 표시.
-                    val edited = seg.hasNonTrivialEdits() ||
-                        (seg.duplicatedFromId != null) ||
-                        multiSegment
+                    // 편집됨 = 본 segment 자체에 trim / volume / speed / duplicate 가 적용됨.
+                    // split / delete-range 결과 조각들은 각각 trim 을 가지므로 hasNonTrivialEdits 로 잡힘 —
+                    // 단순 append (다중 source) 만으로는 색 표시 안 함 (per-segment granularity 유지).
+                    val edited = seg.hasNonTrivialEdits() || (seg.duplicatedFromId != null)
                     // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
                     Box(
                         modifier = Modifier
