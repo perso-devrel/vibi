@@ -60,6 +60,7 @@ import com.vibi.cmp.platform.rememberAudioRecorder
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.cmp.ui.chat.ChatPanel
 import com.vibi.shared.domain.model.AutoJobStatus
+import com.vibi.shared.domain.model.hasNonTrivialEdits
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -654,23 +655,18 @@ fun TimelineScreen(
             )
             // 재생바 밑 BGM 트랙 — 각 클립을 startMs 위치 시간 비율로 시각화.
             // 막대 horizontal drag → startMs 갱신, vertical drag → lane 변경, tap → 액션 시트.
-            // 영상편집 모드에선 segment 편집과 헷갈리므로 BGM lane 을 숨김. 클립 데이터는
-            // 그대로 유지되므로 모드 나가면 즉시 다시 보임. 음원분리 range 선택 모드에서는
-            // 클립 탭 무시 (range 만 선택 가능) — 매개변수 `tapEnabled` 로 차단.
-            // SubtitleDub 단계에서도 사용자 컨텍스트 유지 위해 표시하되 read-only (editable=false).
-            val showBgmLane = !state.isSegmentEditMode && state.bgmClips.isNotEmpty() &&
-                (state.currentStep == TimelineStep.AudioSources ||
-                    state.currentStep == TimelineStep.SubtitleDub)
-            if (showBgmLane) {
-                val bgmEditable = state.currentStep == TimelineStep.AudioSources
+            // AudioSources 단계 전용. SubtitleDub 단계에서는 어차피 BFF render 시 BGM 이 포함되어
+            // 단일 영상으로 합쳐지므로 별도 표시 불필요. 클립 데이터는 보존되므로 AudioSources 로
+            // 돌아오면 즉시 다시 보임. 음원분리 range 선택 모드에서는 클립 탭 무시 (range 만 선택 가능).
+            if (state.currentStep == TimelineStep.AudioSources &&
+                !state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
                 BgmTimelineLane(
                     clips = state.bgmClips,
                     totalMs = state.videoDurationMs,
                     accent = tokens.accent,
                     selectedClipId = state.selectedBgmClipId,
-                    tapEnabled = !state.isRangeSelecting && bgmEditable,
+                    tapEnabled = !state.isRangeSelecting,
                     laneCount = state.bgmLaneCount,
-                    editable = bgmEditable,
                     onSelectClip = viewModel::onSelectBgmClip,
                     onUpdateStart = viewModel::onUpdateBgmStartMs,
                     onUpdateLane = viewModel::onUpdateBgmLane,
@@ -1265,6 +1261,28 @@ fun TimelineScreen(
         )
     }
 
+    // 이전 단계 백 이동 확인 다이얼로그. target 이후 단계 산출물 삭제 + 현재 단계 undo 초기화.
+    // 메시지는 target 별로 무엇이 삭제되는지 명시.
+    state.pendingStepBackTarget?.let { target ->
+        val message = when (target) {
+            TimelineStep.Edit ->
+                "음원(분리·삽입)·자막·더빙 생성했던 내용이 삭제됩니다."
+            TimelineStep.AudioSources ->
+                "자막·더빙 생성했던 내용이 삭제됩니다. (음원은 유지)"
+            TimelineStep.SubtitleDub -> ""  // 마지막 단계로의 백 이동은 발생하지 않음.
+        }
+        AlertDialog(
+            onDismissRequest = { viewModel.onCancelStepBack() },
+            title = { Text("이전 단계로 돌아갈까요?") },
+            text = { Text(message) },
+            confirmButton = {
+                Button(onClick = { viewModel.onConfirmStepBack() }) { Text("뒤로 가기") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onCancelStepBack() }) { Text("취소") }
+            },
+        )
+    }
 }
 
 /**
@@ -1706,13 +1724,14 @@ private fun UnifiedTimelineBar(
                     .height(contentHeight),
                 horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
             ) {
+                val multiSegment = segments.size > 1
                 segments.forEach { seg ->
-                    // 편집됨 = 사용자가 의도적으로 변경한 속성. trim 만으로는 split 결과 (자동 발생)
-                    // 와 구분 안 되므로 색 표시에서 제외 — 100% 볼륨/속도, duplicatedFromId 미사용 도
-                    // 미편집 취급.
-                    val edited = (seg.volumeScale != 1.0f) ||
-                        (seg.speedScale != 1.0f) ||
-                        (seg.duplicatedFromId != null)
+                    // 편집됨 = trim / volume / speed / duplicate / split(=다중 segment) 중 하나라도 적용.
+                    // split 결과는 각 조각이 trim 가지므로 hasNonTrivialEdits 로 잡히지만, 다중 source append
+                    // 처럼 trim 없이 multi-segment 인 경우도 사용자가 편집한 것으로 표시.
+                    val edited = seg.hasNonTrivialEdits() ||
+                        (seg.duplicatedFromId != null) ||
+                        multiSegment
                     // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
                     Box(
                         modifier = Modifier
