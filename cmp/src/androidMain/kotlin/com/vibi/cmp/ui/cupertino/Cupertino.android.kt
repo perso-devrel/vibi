@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
 actual fun PageScaffold(
     title: String,
     modifier: Modifier,
-    step: Int,
     content: @Composable () -> Unit
 ) {
     Column(
@@ -38,7 +37,7 @@ actual fun PageScaffold(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        StepHero(step = step, title = title)
+        Text(text = title, style = MaterialTheme.typography.headlineSmall)
         content()
     }
 }

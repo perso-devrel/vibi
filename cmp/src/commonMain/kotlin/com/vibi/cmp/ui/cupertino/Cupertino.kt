@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 expect fun PageScaffold(
     title: String,
     modifier: Modifier = Modifier,
-    step: Int = 1,
     content: @Composable () -> Unit
 )
 

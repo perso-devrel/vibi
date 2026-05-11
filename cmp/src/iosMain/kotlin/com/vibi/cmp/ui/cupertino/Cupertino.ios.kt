@@ -115,7 +115,6 @@ private fun buttonStyle(p: CupertinoPalette) = TextStyle(
 actual fun PageScaffold(
     title: String,
     modifier: Modifier,
-    step: Int,
     content: @Composable () -> Unit
 ) {
     val p = cupertinoPalette()
@@ -124,9 +123,9 @@ actual fun PageScaffold(
             .fillMaxSize()
             .background(p.bg)
     ) {
-        StepHero(
-            step = step,
-            title = title,
+        Text(
+            text = title,
+            style = largeTitleStyle(p),
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()

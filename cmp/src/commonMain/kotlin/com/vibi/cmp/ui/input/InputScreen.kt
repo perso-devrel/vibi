@@ -76,7 +76,7 @@ fun InputScreen(
 
     val pickLauncher = rememberMediaPickerLauncher { uri -> viewModel.onVideoPicked(uri) }
 
-    PageScaffold(title = "영상 선택") {
+    PageScaffold(title = "VIBI") {
       Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier

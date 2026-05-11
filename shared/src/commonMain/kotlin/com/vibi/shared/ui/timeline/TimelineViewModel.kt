@@ -132,6 +132,13 @@ sealed class ExportVariantPickerState {
     ) : ExportVariantPickerState()
 }
 
+/**
+ * 타임라인 작업 단계 — 사용자에게 보이는 3 step linear stepper 의 모델.
+ * Edit (영상 편집) → AudioSources (음원 분리·추가) → SubtitleDub (자막/더빙 생성).
+ * 이전 단계로 돌아가면 그 이후 단계의 산출물이 [resetFromStep] 으로 정리된다.
+ */
+enum class TimelineStep { Edit, AudioSources, SubtitleDub }
+
 data class TimelineUiState(
     val projectId: String = "",
     val segments: List<Segment> = emptyList(),
@@ -291,6 +298,13 @@ data class TimelineUiState(
      * null = picker 미노출 (variant 1개라 즉시 동작 중이거나 흐름 idle).
      */
     val exportVariantPicker: ExportVariantPickerState? = null,
+    /** 현재 사용자가 보고 있는 타임라인 단계. */
+    val currentStep: TimelineStep = TimelineStep.Edit,
+    /**
+     * 사용자가 이전 단계 노드를 탭해서 백 이동을 요청한 상태.
+     * non-null 이면 UI 가 확인 다이얼로그를 띄움. 확인 시 [resetFromStep] 후 currentStep 변경.
+     */
+    val pendingStepBackTarget: TimelineStep? = null,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -298,6 +312,13 @@ data class TimelineUiState(
             frameWidth.toFloat() / frameHeight.toFloat()
         } else 0f
 }
+
+/** 자막/더빙/검토 흐름 중 어떤 잡이라도 진행 중인지 — 백 이동 가드 + UI 버튼 disabled 공용. */
+fun TimelineUiState.isLocalizationBusy(): Boolean =
+    autoSubtitleStatus == AutoJobStatus.RUNNING ||
+        autoDubStatus == AutoJobStatus.RUNNING ||
+        regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
+        sttPreflightStatus == AutoJobStatus.RUNNING
 
 data class TimelineSnapshot(
     val segments: List<Segment>,
@@ -532,6 +553,80 @@ class TimelineViewModel constructor(
         showScriptReviewSheet = false,
         previewLangCode = null,
     )
+
+    private fun TimelineUiState.isStepDone(step: TimelineStep): Boolean = when (step) {
+        // Edit 는 영상 hydrate 되면 done — isSegmentEditMode/range 게이트는 자동 commit 으로 처리.
+        TimelineStep.Edit -> segments.isNotEmpty()
+        // 마지막 단계인 SubtitleDub 와 사용자가 비워둘 수도 있는 AudioSources 는 항상 advance 가능.
+        TimelineStep.SubtitleDub, TimelineStep.AudioSources -> true
+    }
+
+    private fun TimelineUiState.maxReachableStepOrdinal(): Int = when {
+        isStepDone(TimelineStep.AudioSources) -> TimelineStep.SubtitleDub.ordinal
+        isStepDone(TimelineStep.Edit) -> TimelineStep.AudioSources.ordinal
+        else -> TimelineStep.Edit.ordinal
+    }
+
+    /** 사용자 spam-tap 으로 commit/reset 코루틴이 겹치지 않도록 단일 직렬화. */
+    private var stepTransitionJob: kotlinx.coroutines.Job? = null
+
+    fun onAdvanceStep() {
+        val cur = _uiState.value
+        if (!cur.isStepDone(cur.currentStep)) return
+        if (stepTransitionJob?.isActive == true) return
+        when (cur.currentStep) {
+            TimelineStep.Edit -> {
+                stepTransitionJob = viewModelScope.launch {
+                    try {
+                        if (cur.isSegmentEditMode) commitSegmentEdit()
+                        _uiState.update { it.copy(currentStep = TimelineStep.AudioSources) }
+                    } finally {
+                        stepTransitionJob = null
+                    }
+                }
+            }
+            TimelineStep.AudioSources ->
+                _uiState.update { it.copy(currentStep = TimelineStep.SubtitleDub) }
+            TimelineStep.SubtitleDub -> return
+        }
+    }
+
+    fun onRequestStepBack(target: TimelineStep) {
+        val cur = _uiState.value
+        if (target == cur.currentStep) return
+        if (cur.isLocalizationBusy()) return
+        if (cur.audioSeparation?.step == AudioSeparationStep.PROCESSING) return
+
+        if (target.ordinal > cur.currentStep.ordinal) {
+            if (target.ordinal <= cur.maxReachableStepOrdinal()) {
+                _uiState.update { it.copy(currentStep = target) }
+            }
+            return
+        }
+        _uiState.update { it.copy(pendingStepBackTarget = target) }
+    }
+
+    fun onConfirmStepBack() {
+        val target = _uiState.value.pendingStepBackTarget ?: return
+        if (stepTransitionJob?.isActive == true) return
+        stepTransitionJob = viewModelScope.launch {
+            try {
+                resetFromStep(after = target)
+                _uiState.update { it.copy(currentStep = target, pendingStepBackTarget = null) }
+            } catch (t: Throwable) {
+                // reset 도중 실패해도 다이얼로그가 영구 stuck 되지 않도록 닫는다. 사용자는
+                // 백 이동 자체가 무산됐음을 다이얼로그가 사라지는 것으로 인지.
+                _uiState.update { it.copy(pendingStepBackTarget = null) }
+                throw t
+            } finally {
+                stepTransitionJob = null
+            }
+        }
+    }
+
+    fun onCancelStepBack() {
+        _uiState.update { it.copy(pendingStepBackTarget = null) }
+    }
 
     /**
      * BGM clip 의 visual lane (위/아래 행) override — DB 영속화 없는 in-memory map.
@@ -2039,99 +2134,101 @@ class TimelineViewModel constructor(
      * 영상편집 모드의 X(취소) — 편집 진입 직전 스냅샷으로 즉시 복원하고 모드 종료.
      * 사용자가 영상편집 중 적용한 복제/삭제/볼륨/속도 변경을 모두 무효화.
      */
-    fun onCancelSegmentEditChanges() {
-        val baseline = preEditBaseline
-        viewModelScope.launch {
-            if (baseline != null) {
-                restoreSnapshot(baseline)
-                // restoreSnapshot 은 Room 만 복원 → state.segments 는 collector emit 에 의존하는데
-                // emit 지연 시 사용자가 변경 후 segments 를 그대로 보게 되어 "적용된 것처럼" 보임.
-                // 즉시 fetch 로 강제 동기화.
-                refreshSegmentsStateFromDb()
-            }
-            preEditBaseline = null
-            editModeUndoRedoManager.clear()
-            _uiState.update {
-                it.copy(
-                    isRangeSelecting = false,
-                    isSegmentEditMode = false,
-                    rangeTargetSegmentId = null,
-                    showRangeActionSheet = false,
-                    selectedSegmentId = null,
-                )
-            }
-            updateUndoRedoState()
-        }
-    }
-
     /**
-     * 영상편집 모드의 ✓(체크) — 편집 확정. 영상 segment 자체는 그대로 두고, 음원분리·자막·더빙
+     * 영상편집 모드의 ✓(체크) — 편집 확정. 영상 segment 자체는 그대로 두고, 자막·더빙·음원분리·BGM
      * 결과와 메인 timeline undo 스택을 모두 초기화 (사용자에게 안내문구로 명시).
      * BFF 호출 없음 — 단순 로컬 상태 리셋만.
      */
     fun onCommitSegmentEdit() {
-        viewModelScope.launch {
-            resetTimelineDerivedResults()
-            editModeUndoRedoManager.clear()
-            preEditBaseline = null
-            undoRedoManager.clear()
-            _uiState.value = _uiState.value.copy(
-                isRangeSelecting = false,
-                isSegmentEditMode = false,
-                rangeTargetSegmentId = null,
-                showRangeActionSheet = false,
-                selectedSegmentId = null,
-                previewLangCode = null,
-            )
-            // 메인 스택 baseline 재시드.
-            pushUndoState()
+        viewModelScope.launch { commitSegmentEdit() }
+    }
+
+    /**
+     * commit 본체 — sequential 호출 (onAdvanceStep 의 자동 commit) 가능하도록 suspend 로 분리.
+     */
+    private suspend fun commitSegmentEdit() {
+        resetTimelineDerivedResults()
+        editModeUndoRedoManager.clear()
+        preEditBaseline = null
+        undoRedoManager.clear()
+        _uiState.value = _uiState.value.copy(
+            isRangeSelecting = false,
+            isSegmentEditMode = false,
+            rangeTargetSegmentId = null,
+            showRangeActionSheet = false,
+            selectedSegmentId = null,
+            previewLangCode = null,
+        )
+        // 메인 스택 baseline 재시드.
+        pushUndoState()
+    }
+
+    /**
+     * 단계별 reset — `after` 이후 단계의 산출물을 모두 정리.
+     *
+     * - `after = Edit` : SubtitleDub + AudioSources 모두 wipe (=과거 [resetTimelineDerivedResults] 와 동일).
+     * - `after = SubtitleDub` : AudioSources 만 wipe (separation + BGM). 자막·더빙 보존.
+     * - `after = AudioSources` : no-op.
+     *
+     * 자막/더빙 필드는 [EditProject.clearAutoSubtitleDub] helper 와 공유 (SSOT).
+     */
+    private suspend fun resetFromStep(after: TimelineStep) {
+        val wipeAudioSources = after.ordinal < TimelineStep.AudioSources.ordinal
+        val wipeSubtitleDub = after.ordinal < TimelineStep.SubtitleDub.ordinal
+        if (!wipeAudioSources && !wipeSubtitleDub) return
+
+        if (wipeAudioSources) {
+            _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
+            _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
+                .forEach { updateSegmentVolume(it.id, 1f) }
+            bgmClipRepository.deleteAllByProjectId(projectId)
+            bgmClipLaneOverrides.clear()
+            separationJob?.cancel()
+            separationJob = null
+            separationGate = TriggerGate.ARMED
+        }
+        if (wipeSubtitleDub) {
+            subtitleClipRepository.deleteAllClips(projectId)
+            dubClipRepository.deleteAllClips(projectId)
+            subtitleGate = TriggerGate.ARMED
+            dubGate = TriggerGate.ARMED
+            reviewSheetGate = TriggerGate.ARMED
+            renderStaleMarked = true
+        }
+
+        // EditProject 갱신 — 두 wipe 가 모두 필요한 경우에도 한 번만 fetch/update.
+        editProjectRepository.getProject(projectId)?.let { p ->
+            val withSubDub = if (wipeSubtitleDub) p.clearAutoSubtitleDub() else p
+            val withAll = if (wipeAudioSources) withSubDub.copy(
+                separationJobId = null,
+                separationSegmentId = null,
+                separationStatus = AutoJobStatus.IDLE,
+                separationError = null,
+            ) else withSubDub
+            editProjectRepository.updateProject(withAll)
+        }
+
+        _uiState.update { s ->
+            val withAudio = if (wipeAudioSources) s.copy(
+                audioSeparation = null,
+                showAudioSeparationSheet = false,
+                separationDirectives = emptyList(),
+                separationStatus = AutoJobStatus.IDLE,
+                selectedBgmClipId = null,
+                isAddingBgm = false,
+                bgmError = null,
+            ) else s
+            if (wipeSubtitleDub) withAudio.clearAutoSubtitleDubUiState().copy(
+                showDetailEdit = false,
+                localizationOpen = false,
+            ) else withAudio
         }
     }
 
     /**
-     * onCommitSegmentEdit 시 호출되는 reset — 영상편집 결과로 음원분리/자막/더빙이 timeline 과
-     * 어긋나므로 모두 초기화. 사용자는 다시 음원분리/자막/더빙 생성 단계를 거쳐야 한다.
-     *
-     * 자막/더빙 필드는 [EditProject.clearAutoSubtitleDub] helper 와 공유 (SSOT) — separation 관련
-     * 필드만 본 함수 고유.
+     * onCommitSegmentEdit 호출 — 영상편집 결과로 모든 후속 산출물(자막/더빙/음원분리/BGM) wipe.
      */
-    private suspend fun resetTimelineDerivedResults() {
-        // 1) 음원분리 directive 모두 삭제 + 영상 전체 음소거 해제
-        _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
-        _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
-            .forEach { updateSegmentVolume(it.id, 1f) }
-        // 2) 자막 / 더빙 클립 모두 삭제
-        subtitleClipRepository.deleteAllClips(projectId)
-        dubClipRepository.deleteAllClips(projectId)
-        // 3) 진행 중 잡 폴링 취소
-        separationJob?.cancel()
-        separationJob = null
-        // 4) EditProject 의 자동 잡/더빙 결과 + 음원분리 필드 초기화 + render 캐시 무효화.
-        editProjectRepository.getProject(projectId)?.let { p ->
-            editProjectRepository.updateProject(
-                p.clearAutoSubtitleDub().copy(
-                    separationJobId = null,
-                    separationSegmentId = null,
-                    separationStatus = AutoJobStatus.IDLE,
-                    separationError = null,
-                )
-            )
-        }
-        // 5) auto-trigger 게이트 재무장 (다음 자막/더빙 생성 시 정상 트리거)
-        subtitleGate = TriggerGate.ARMED
-        dubGate = TriggerGate.ARMED
-        separationGate = TriggerGate.ARMED
-        reviewSheetGate = TriggerGate.ARMED
-        // render 캐시도 stale 마킹됐으므로 hot-path 플래그도 동기화 — markRenderStale 가 다음 호출에서
-        // 즉시 skip 가능. observeProject 의 fresh 검사가 false (=stale) 이므로 자동 reset 안 됨 → 명시적.
-        renderStaleMarked = true
-        // 6) UI 상태 — 자막/더빙 공통 reset + audioSeparation hydrate 데이터도 클리어
-        _uiState.value = _uiState.value.clearAutoSubtitleDubUiState().copy(
-            audioSeparation = null,
-            showAudioSeparationSheet = false,
-            showDetailEdit = false,
-        )
-    }
+    private suspend fun resetTimelineDerivedResults() = resetFromStep(after = TimelineStep.Edit)
 
     /**
      * directive 사이의 gap 을 한 번에 pendingRange 로 점프. range 모드 비활성이면 자동 진입.
