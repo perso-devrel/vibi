@@ -657,15 +657,20 @@ fun TimelineScreen(
             // 영상편집 모드에선 segment 편집과 헷갈리므로 BGM lane 을 숨김. 클립 데이터는
             // 그대로 유지되므로 모드 나가면 즉시 다시 보임. 음원분리 range 선택 모드에서는
             // 클립 탭 무시 (range 만 선택 가능) — 매개변수 `tapEnabled` 로 차단.
-            if (state.currentStep == TimelineStep.AudioSources &&
-                !state.isSegmentEditMode && state.bgmClips.isNotEmpty()) {
+            // SubtitleDub 단계에서도 사용자 컨텍스트 유지 위해 표시하되 read-only (editable=false).
+            val showBgmLane = !state.isSegmentEditMode && state.bgmClips.isNotEmpty() &&
+                (state.currentStep == TimelineStep.AudioSources ||
+                    state.currentStep == TimelineStep.SubtitleDub)
+            if (showBgmLane) {
+                val bgmEditable = state.currentStep == TimelineStep.AudioSources
                 BgmTimelineLane(
                     clips = state.bgmClips,
                     totalMs = state.videoDurationMs,
                     accent = tokens.accent,
                     selectedClipId = state.selectedBgmClipId,
-                    tapEnabled = !state.isRangeSelecting,
+                    tapEnabled = !state.isRangeSelecting && bgmEditable,
                     laneCount = state.bgmLaneCount,
+                    editable = bgmEditable,
                     onSelectClip = viewModel::onSelectBgmClip,
                     onUpdateStart = viewModel::onUpdateBgmStartMs,
                     onUpdateLane = viewModel::onUpdateBgmLane,
@@ -1260,30 +1265,6 @@ fun TimelineScreen(
         )
     }
 
-    // 이전 단계 백 이동 확인 다이얼로그 — currentStep 보다 앞 단계 노드 탭 시 표시. 확인 시
-    // 해당 target 이후 단계 산출물이 모두 정리됨.
-    state.pendingStepBackTarget?.let { target ->
-        // 새 단계 순서: Edit → AudioSources → SubtitleDub.
-        // target = 새 currentStep. wipe 대상 = target 이후 단계의 산출물.
-        val message = when (target) {
-            TimelineStep.Edit ->
-                "지금 단계의 음원 분리·BGM·자막·더빙 결과가 모두 삭제됩니다. 영상 편집을 다시 적용하면 모두 다시 생성해야 합니다."
-            TimelineStep.AudioSources ->
-                "자막·더빙 결과가 모두 삭제됩니다."
-            TimelineStep.SubtitleDub -> ""  // 마지막 단계로의 백 이동은 발생하지 않음.
-        }
-        AlertDialog(
-            onDismissRequest = { viewModel.onCancelStepBack() },
-            title = { Text("이전 단계로 돌아갈까요?") },
-            text = { Text(message) },
-            confirmButton = {
-                Button(onClick = { viewModel.onConfirmStepBack() }) { Text("뒤로 가기") }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.onCancelStepBack() }) { Text("취소") }
-            },
-        )
-    }
 }
 
 /**
@@ -1952,6 +1933,7 @@ private fun BgmTimelineLane(
     onUpdateStart: (String, Long) -> Unit,
     onUpdateLane: (String, Int) -> Unit,
     onSetLaneCount: (Int) -> Unit,
+    editable: Boolean = true,
 ) {
     if (totalMs <= 0L) return
     val rowHeight = 10.dp
@@ -2019,52 +2001,54 @@ private fun BgmTimelineLane(
                             if (tapEnabled) onSelectClip(clip.id)
                         })
                     }
-                    .pointerInput(clip.id, totalMs, laneWidthPx, rowStridePx) {
-                        // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
-                        // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
-                        detectDragGestures(
-                            onDragStart = {
-                                dragBaseStartMs = currentClip.startMs
-                                dragAccumPx = 0f
-                                dragOverrideMs = currentClip.startMs
-                                laneBase = currentClip.lane.coerceAtLeast(0)
-                                dragAccumPyAbs = 0f
-                                laneOverride = laneBase
-                            },
-                            onDrag = { change: PointerInputChange, drag: Offset ->
-                                change.consume()
-                                // X axis — startMs.
-                                dragAccumPx += drag.x
-                                if (laneWidthPx > 0f && totalMs > 0L) {
-                                    val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
-                                    val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
-                                    dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
-                                        .coerceIn(0L, maxStart)
-                                }
-                                // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
-                                // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
-                                // currentRowCount (rememberUpdatedState) 로 drag 도중 lane 수 확장
-                                // 시에도 즉시 반영 — 새 lane 으로 곧바로 drop 가능.
-                                dragAccumPyAbs += drag.y
-                                if (rowStridePx > 0f) {
-                                    val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
-                                    laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
-                                }
-                            },
-                            onDragEnd = {
-                                dragOverrideMs?.let { onUpdateStart(currentClip.id, it) }
-                                laneOverride?.let { newLane ->
-                                    if (newLane != currentClip.lane) onUpdateLane(currentClip.id, newLane)
-                                }
-                                dragOverrideMs = null
-                                laneOverride = null
-                            },
-                            onDragCancel = {
-                                dragOverrideMs = null
-                                laneOverride = null
-                            },
-                        )
-                    },
+                    .then(
+                        if (editable) Modifier.pointerInput(clip.id, totalMs, laneWidthPx, rowStridePx) {
+                            // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
+                            // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
+                            detectDragGestures(
+                                onDragStart = {
+                                    dragBaseStartMs = currentClip.startMs
+                                    dragAccumPx = 0f
+                                    dragOverrideMs = currentClip.startMs
+                                    laneBase = currentClip.lane.coerceAtLeast(0)
+                                    dragAccumPyAbs = 0f
+                                    laneOverride = laneBase
+                                },
+                                onDrag = { change: PointerInputChange, drag: Offset ->
+                                    change.consume()
+                                    // X axis — startMs.
+                                    dragAccumPx += drag.x
+                                    if (laneWidthPx > 0f && totalMs > 0L) {
+                                        val deltaMs = (dragAccumPx / laneWidthPx) * totalMs
+                                        val maxStart = (totalMs - globalDurMs).coerceAtLeast(0L)
+                                        dragOverrideMs = (dragBaseStartMs + deltaMs).toLong()
+                                            .coerceIn(0L, maxStart)
+                                    }
+                                    // Y axis — lane. row 높이 단위로 step. 위로 끌면 lane 감소,
+                                    // 아래로 끌면 증가. 영역 밖 (0 미만 / rowCount-1 초과) 으로는 못 끌림.
+                                    // currentRowCount (rememberUpdatedState) 로 drag 도중 lane 수 확장
+                                    // 시에도 즉시 반영 — 새 lane 으로 곧바로 drop 가능.
+                                    dragAccumPyAbs += drag.y
+                                    if (rowStridePx > 0f) {
+                                        val laneDelta = (dragAccumPyAbs / rowStridePx).toInt()
+                                        laneOverride = (laneBase + laneDelta).coerceIn(0, currentRowCount - 1)
+                                    }
+                                },
+                                onDragEnd = {
+                                    dragOverrideMs?.let { onUpdateStart(currentClip.id, it) }
+                                    laneOverride?.let { newLane ->
+                                        if (newLane != currentClip.lane) onUpdateLane(currentClip.id, newLane)
+                                    }
+                                    dragOverrideMs = null
+                                    laneOverride = null
+                                },
+                                onDragCancel = {
+                                    dragOverrideMs = null
+                                    laneOverride = null
+                                },
+                            )
+                        } else Modifier
+                    ),
             )
         }
     }  // BoxWithConstraints 닫음
@@ -2077,23 +2061,25 @@ private fun BgmTimelineLane(
         modifier = Modifier
             .fillMaxWidth()
             .height(handleHitHeight)  // 확장된 transparent hit area — Material/HIG touch target 충족.
-            .pointerInput(rowStridePx) {
-                detectDragGestures(
-                    onDragStart = {
-                        dragAccumPy = 0f
-                        laneCountBase = currentLaneCount
-                    },
-                    onDrag = { change: PointerInputChange, drag: Offset ->
-                        change.consume()
-                        dragAccumPy += drag.y
-                        if (rowStridePx > 0f) {
-                            val laneDelta = (dragAccumPy / rowStridePx).toInt()
-                            val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
-                            if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
-                        }
-                    },
-                )
-            },
+            .then(
+                if (editable) Modifier.pointerInput(rowStridePx) {
+                    detectDragGestures(
+                        onDragStart = {
+                            dragAccumPy = 0f
+                            laneCountBase = currentLaneCount
+                        },
+                        onDrag = { change: PointerInputChange, drag: Offset ->
+                            change.consume()
+                            dragAccumPy += drag.y
+                            if (rowStridePx > 0f) {
+                                val laneDelta = (dragAccumPy / rowStridePx).toInt()
+                                val targetCount = (laneCountBase + laneDelta).coerceIn(1, 8)
+                                if (targetCount != currentLaneCount) onSetLaneCount(targetCount)
+                            }
+                        },
+                    )
+                } else Modifier
+            ),
         contentAlignment = Alignment.Center,
     ) {
         // 시각 pill 만 6dp — 축소 차단 시 흐리게 표시해 사용자에게 막힘 피드백.

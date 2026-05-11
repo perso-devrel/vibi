@@ -300,11 +300,6 @@ data class TimelineUiState(
     val exportVariantPicker: ExportVariantPickerState? = null,
     /** 현재 사용자가 보고 있는 타임라인 단계. */
     val currentStep: TimelineStep = TimelineStep.Edit,
-    /**
-     * 사용자가 이전 단계 노드를 탭해서 백 이동을 요청한 상태.
-     * non-null 이면 UI 가 확인 다이얼로그를 띄움. 확인 시 [resetFromStep] 후 currentStep 변경.
-     */
-    val pendingStepBackTarget: TimelineStep? = null,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
     val frameAspectRatio: Float
@@ -413,7 +408,17 @@ class TimelineViewModel constructor(
     )
     val chatAssistantEvents: SharedFlow<String> = _chatAssistantEvents.asSharedFlow()
 
-    private val undoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
+    /**
+     * 메인 timeline undo 스택 — TimelineStep 별로 분리.
+     *  - 단계 forward 이동 시 출발 단계의 스택 유지 (사용자가 돌아오면 그대로 이어 undo 가능).
+     *  - 단계 backward 이동 시 출발 단계의 스택 초기화 (사용자가 다시 앞으로 가도 새 시작).
+     * 영상편집 모드 (isSegmentEditMode) 는 별도 스택 [editModeUndoRedoManager] 사용.
+     */
+    private val mainUndoManagersByStep: Map<TimelineStep, UndoRedoManager<TimelineSnapshot>> =
+        TimelineStep.entries.associateWith { UndoRedoManager(maxHistory = 50) }
+
+    private fun mainUndoManagerForCurrent(): UndoRedoManager<TimelineSnapshot> =
+        mainUndoManagersByStep.getValue(_uiState.value.currentStep)
     /**
      * 영상편집 모드 전용 undo 스택 — 메인 timeline 스택과 분리. 모드 진입 시 비우고 baseline 푸시,
      * 모드 종료 (commit/cancel) 시 다시 비운다. 사용자는 영상편집 안에서 한 변경만 영상편집 모드의
@@ -425,7 +430,7 @@ class TimelineViewModel constructor(
     private var hasSeededUndoSnapshot = false
 
     private fun activeUndoManager(): UndoRedoManager<TimelineSnapshot> =
-        if (_uiState.value.isSegmentEditMode) editModeUndoRedoManager else undoRedoManager
+        if (_uiState.value.isSegmentEditMode) editModeUndoRedoManager else mainUndoManagerForCurrent()
 
     /**
      * `editedVideoRenderProgress` 단일 필드 mutation helper.
@@ -580,17 +585,29 @@ class TimelineViewModel constructor(
                     try {
                         if (cur.isSegmentEditMode) commitSegmentEdit()
                         _uiState.update { it.copy(currentStep = TimelineStep.AudioSources) }
+                        updateUndoRedoState()
                     } finally {
                         stepTransitionJob = null
                     }
                 }
             }
-            TimelineStep.AudioSources ->
+            TimelineStep.AudioSources -> {
                 _uiState.update { it.copy(currentStep = TimelineStep.SubtitleDub) }
+                updateUndoRedoState()
+            }
             TimelineStep.SubtitleDub -> return
         }
     }
 
+    /**
+     * stepper 노드 탭 — forward / backward 양방향 모두 산출물 보존, 단순 currentStep 변경.
+     * 백 이동 시 wipe 하지 않으므로 BGM/separation/subtitle/dub 결과는 다시 앞 단계로 가도 그대로.
+     * (영상편집 후 commitSegmentEdit 호출 경로는 별도로 stale 마킹 + 산출물 정리를 수행.)
+     *
+     * Undo/redo 는 단계별 분리:
+     *  - forward (출발 < 목적지) — 출발 단계 스택 유지. 사용자가 다시 출발 단계로 오면 그대로 undo 가능.
+     *  - backward (출발 > 목적지) — 출발 단계 스택 초기화. 다시 앞으로 가도 새 시작.
+     */
     fun onRequestStepBack(target: TimelineStep) {
         val cur = _uiState.value
         if (target == cur.currentStep) return
@@ -600,32 +617,14 @@ class TimelineViewModel constructor(
         if (target.ordinal > cur.currentStep.ordinal) {
             if (target.ordinal <= cur.maxReachableStepOrdinal()) {
                 _uiState.update { it.copy(currentStep = target) }
+                updateUndoRedoState()
             }
             return
         }
-        _uiState.update { it.copy(pendingStepBackTarget = target) }
-    }
-
-    fun onConfirmStepBack() {
-        val target = _uiState.value.pendingStepBackTarget ?: return
-        if (stepTransitionJob?.isActive == true) return
-        stepTransitionJob = viewModelScope.launch {
-            try {
-                resetFromStep(after = target)
-                _uiState.update { it.copy(currentStep = target, pendingStepBackTarget = null) }
-            } catch (t: Throwable) {
-                // reset 도중 실패해도 다이얼로그가 영구 stuck 되지 않도록 닫는다. 사용자는
-                // 백 이동 자체가 무산됐음을 다이얼로그가 사라지는 것으로 인지.
-                _uiState.update { it.copy(pendingStepBackTarget = null) }
-                throw t
-            } finally {
-                stepTransitionJob = null
-            }
-        }
-    }
-
-    fun onCancelStepBack() {
-        _uiState.update { it.copy(pendingStepBackTarget = null) }
+        // backward — 출발 단계 (현재) 의 undo 스택 초기화 후 이동.
+        mainUndoManagersByStep.getValue(cur.currentStep).clear()
+        _uiState.update { it.copy(currentStep = target) }
+        updateUndoRedoState()
     }
 
     /**
@@ -2150,7 +2149,7 @@ class TimelineViewModel constructor(
         resetTimelineDerivedResults()
         editModeUndoRedoManager.clear()
         preEditBaseline = null
-        undoRedoManager.clear()
+        mainUndoManagerForCurrent().clear()
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             isSegmentEditMode = false,
@@ -4159,7 +4158,7 @@ class TimelineViewModel constructor(
                     )
                 }
                 separationGate = TriggerGate.ARMED
-                undoRedoManager.clear()
+                mainUndoManagerForCurrent().clear()
                 pushUndoState()
             } catch (e: Exception) {
                 updateSeparation {
