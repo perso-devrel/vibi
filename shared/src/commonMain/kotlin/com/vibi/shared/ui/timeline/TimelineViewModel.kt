@@ -137,8 +137,7 @@ sealed class ExportVariantPickerState {
 /**
  * 타임라인 작업 단계 — 사용자에게 보이는 3 step stepper 의 모델.
  * Edit (영상 편집) ↔ AudioSources (음원, 기본 진입) ↔ SubtitleDub (자막/더빙).
- * 단계 이동은 산출물·undo 모두 보존하는 양방향 자유 이동. wipe 는 영상편집 모드의 ✓ commit
- * ([resetTimelineDerivedResults]) 경로에서만 발동 — segment 자체가 바뀌어 downstream 이 stale.
+ * 단계 이동은 산출물·undo 모두 보존하는 양방향 자유 이동.
  */
 enum class TimelineStep { Edit, AudioSources, SubtitleDub }
 
@@ -566,67 +565,21 @@ class TimelineViewModel constructor(
         previewLangCode = null,
     )
 
-    private fun TimelineUiState.isStepDone(step: TimelineStep): Boolean = when (step) {
-        // Edit 는 영상 hydrate 되면 done — isSegmentEditMode/range 게이트는 자동 commit 으로 처리.
-        TimelineStep.Edit -> segments.isNotEmpty()
-        // 마지막 단계인 SubtitleDub 와 사용자가 비워둘 수도 있는 AudioSources 는 항상 advance 가능.
-        TimelineStep.SubtitleDub, TimelineStep.AudioSources -> true
-    }
-
-    private fun TimelineUiState.maxReachableStepOrdinal(): Int = when {
-        isStepDone(TimelineStep.AudioSources) -> TimelineStep.SubtitleDub.ordinal
-        isStepDone(TimelineStep.Edit) -> TimelineStep.AudioSources.ordinal
-        else -> TimelineStep.Edit.ordinal
-    }
-
-    /** 사용자 spam-tap 으로 commit/reset 코루틴이 겹치지 않도록 단일 직렬화. */
-    private var advanceStepJob: kotlinx.coroutines.Job? = null
-
-    fun onAdvanceStep() {
-        val cur = _uiState.value
-        if (!cur.isStepDone(cur.currentStep)) return
-        if (advanceStepJob?.isActive == true) return
-        when (cur.currentStep) {
-            TimelineStep.Edit -> {
-                advanceStepJob = viewModelScope.launch {
-                    try {
-                        if (cur.isSegmentEditMode) commitSegmentEdit()
-                        _uiState.update { it.copy(currentStep = TimelineStep.AudioSources) }
-                        updateUndoRedoState()
-                    } finally {
-                        advanceStepJob = null
-                    }
-                }
-            }
-            TimelineStep.AudioSources -> {
-                _uiState.update { it.copy(currentStep = TimelineStep.SubtitleDub) }
-                updateUndoRedoState()
-            }
-            TimelineStep.SubtitleDub -> return
-        }
-    }
-
     /**
      * stepper 노드 탭 — 양방향 자유 이동. 산출물·undo 스택 모두 보존.
-     *
-     * forward (출발 < 목적지): `maxReachableStepOrdinal` 가드로 미도달 단계는 차단.
-     * backward (출발 > 목적지): 즉시 이동. 확인 다이얼로그·wipe 없음.
      * 잡 가드: 자막/더빙 진행 중 또는 음원 분리 PROCESSING 중에는 무시.
+     * 빈 timeline 에서는 forward 이동 차단 — 빈 자막 sheet 가 뜨는 무의미한 흐름 방지.
      *
-     * 산출물 wipe 는 오직 영상편집 모드의 ✓ commit (`commitSegmentEdit`) 경로 — segment 자체가
-     * 바뀌어 downstream 산출물이 stale 이 되는 경우에만 발동.
+     * 산출물 wipe 는 오직 영상편집 모드의 ✓ commit 경로 — segment 자체가 바뀌어 downstream
+     * 산출물이 stale 이 되는 경우에만 발동.
      */
     fun onSelectStep(target: TimelineStep) {
         val cur = _uiState.value
         if (target == cur.currentStep) return
         if (cur.isLocalizationBusy()) return
         if (cur.audioSeparation?.step == AudioSeparationStep.PROCESSING) return
-        if (target.ordinal > cur.currentStep.ordinal &&
-            target.ordinal > cur.maxReachableStepOrdinal()) return
+        if (target.ordinal > cur.currentStep.ordinal && cur.segments.isEmpty()) return
 
-        // 출발 단계의 모달/편집 모드 플래그를 비파괴적으로 정리 — 산출물·undo 스택은 보존.
-        // Edit 탭은 LaunchedEffect 가 재진입 시 다시 segment edit mode 를 켠다.
-        // SubtitleDub 탭의 자동 패널 열림도 동일한 LaunchedEffect 로 복원됨.
         _uiState.update {
             it.copy(
                 currentStep = target,

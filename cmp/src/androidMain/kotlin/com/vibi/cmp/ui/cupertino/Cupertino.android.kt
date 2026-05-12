@@ -43,19 +43,6 @@ actual fun PageScaffold(
 }
 
 @Composable
-actual fun StepHero(step: Int, title: String, modifier: Modifier, compact: Boolean) {
-    Column(modifier = modifier) {
-        Text(text = "STEP $step", style = MaterialTheme.typography.labelMedium)
-        Spacer(Modifier.height(if (compact) 2.dp else 4.dp))
-        Text(
-            text = title,
-            style = if (compact) MaterialTheme.typography.titleMedium
-                    else MaterialTheme.typography.headlineSmall
-        )
-    }
-}
-
-@Composable
 actual fun Section(
     header: String?,
     footer: String?,

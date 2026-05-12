@@ -144,26 +144,6 @@ actual fun PageScaffold(
 }
 
 @Composable
-actual fun StepHero(step: Int, title: String, modifier: Modifier, compact: Boolean) {
-    val p = cupertinoPalette()
-    val titleStyle = if (compact) {
-        TextStyle(
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            color = p.labelPrimary,
-            letterSpacing = (-0.2).sp
-        )
-    } else {
-        largeTitleStyle(p)
-    }
-    Column(modifier = modifier) {
-        Text(text = "STEP $step", style = eyebrowStyle(p))
-        Spacer(Modifier.height(if (compact) 2.dp else 6.dp))
-        Text(text = title, style = titleStyle)
-    }
-}
-
-@Composable
 actual fun Section(
     header: String?,
     footer: String?,

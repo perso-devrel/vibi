@@ -19,16 +19,6 @@ expect fun PageScaffold(
     content: @Composable () -> Unit
 )
 
-/** 스텝 라벨 + Large Title hero 블럭 — PageScaffold 안 쓰는 화면에서 헤더만 일관되게 쓸 때.
- *  [compact] true 면 작은 타이틀 변종 (Timeline / Export 처럼 영상 위에 헤더 올릴 때). */
-@Composable
-expect fun StepHero(
-    step: Int,
-    title: String,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-)
-
 @Composable
 expect fun Section(
     header: String? = null,
