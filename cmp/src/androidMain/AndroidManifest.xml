@@ -21,7 +21,6 @@
         android:name=".VibiApplication"
         android:label="vibi"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Vibi">
         <activity
             android:name=".MainActivity"
