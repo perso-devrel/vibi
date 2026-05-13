@@ -136,11 +136,13 @@ sealed class ExportVariantPickerState {
 }
 
 /**
- * 타임라인 작업 단계 — 사용자에게 보이는 3 step stepper 의 모델.
- * Edit (영상 편집) ↔ AudioSources (음원, 기본 진입) ↔ SubtitleDub (자막/더빙).
- * 단계 이동은 산출물·undo 모두 보존하는 양방향 자유 이동.
+ * 타임라인 작업 단계 — 사용자에게 보이는 2 step stepper 의 모델.
+ * EditAudio (편집·음원, 기본 진입 — 영상 segment 편집 + BGM 삽입/조정 + 음원분리) ↔
+ * SubtitleDub (자막/더빙).
+ * 단계 이동은 산출물·undo 모두 보존하는 양방향 자유 이동. EditAudio 안에서 segment 구간 액션은
+ * BGM 에도 ripple/split 로 동시 적용되므로 단계 commit 시 BGM 일괄 wipe 불필요.
  */
-enum class TimelineStep { Edit, AudioSources, SubtitleDub }
+enum class TimelineStep { EditAudio, SubtitleDub }
 
 data class TimelineUiState(
     val projectId: String = "",
@@ -303,10 +305,10 @@ data class TimelineUiState(
     val exportVariantPicker: ExportVariantPickerState? = null,
     /**
      * 현재 사용자가 보고 있는 타임라인 단계.
-     * 영상 선택 후 진입 시 음원 단계가 기본 — 음원이 메인 작업이라는 멘탈 모델.
-     * 좌측 영상편집/우측 자막더빙으로 양방향 자유 이동 (산출물·undo 모두 보존).
+     * 영상 선택 후 진입 시 편집·음원 단계가 기본 — 영상 segment 편집 + BGM 삽입/조정 + 음원분리를
+     * 한 화면에서 처리. 자막/더빙은 별도 단계.
      */
-    val currentStep: TimelineStep = TimelineStep.AudioSources,
+    val currentStep: TimelineStep = TimelineStep.EditAudio,
     /**
      * stepper 이동을 사용자에게 한 번 더 확인받기 위한 보류 경고 상태. null = 경고 없음.
      * UserPreferencesStore 의 don't-ask-again 플래그가 set 되어 있으면 onSelectStep 가 처음부터
@@ -442,25 +444,19 @@ class TimelineViewModel constructor(
      * 메인 timeline undo 스택 — TimelineStep 별로 분리.
      *  - 단계 forward 이동 시 출발 단계의 스택 유지 (사용자가 돌아오면 그대로 이어 undo 가능).
      *  - 단계 backward 이동 시 출발 단계의 스택 초기화 (사용자가 다시 앞으로 가도 새 시작).
-     * 영상편집 모드 (isSegmentEditMode) 는 별도 스택 [editModeUndoRedoManager] 사용.
+     * 음원분리 / 음원삽입 / 영상편집(segment edit) 액션은 모두 같은 EditAudio 스택에 push —
+     * 사용자가 단일 undo 흐름으로 되돌릴 수 있도록 통합.
      */
     private val mainUndoManagersByStep: Map<TimelineStep, UndoRedoManager<TimelineSnapshot>> =
         TimelineStep.entries.associateWith { UndoRedoManager(maxHistory = 50) }
 
     private fun mainUndoManagerForCurrent(): UndoRedoManager<TimelineSnapshot> =
         mainUndoManagersByStep.getValue(_uiState.value.currentStep)
-    /**
-     * 영상편집 모드 전용 undo 스택 — 메인 timeline 스택과 분리. 모드 진입 시 비우고 baseline 푸시,
-     * 모드 종료 (commit/cancel) 시 다시 비운다. 사용자는 영상편집 안에서 한 변경만 영상편집 모드의
-     * undo/redo 로 다룰 수 있음.
-     */
-    private val editModeUndoRedoManager = UndoRedoManager<TimelineSnapshot>(maxHistory = 50)
-    /** 영상편집 진입 시 스냅샷 — cancel 시 즉시 복원용. */
-    private var preEditBaseline: TimelineSnapshot? = null
+
     private var hasSeededUndoSnapshot = false
 
     private fun activeUndoManager(): UndoRedoManager<TimelineSnapshot> =
-        if (_uiState.value.isSegmentEditMode) editModeUndoRedoManager else mainUndoManagerForCurrent()
+        mainUndoManagerForCurrent()
 
     /**
      * `editedVideoRenderProgress` 단일 필드 mutation helper.
@@ -606,19 +602,17 @@ class TimelineViewModel constructor(
 
         // 사용자 경고 단계 — don't-ask-again 안 켜져 있으면 한 번 확인. 본 함수는 경고 state 만 set
         // 하고 실제 이동은 [confirmStepTransition] 가 처리. 종류:
-        //   - 음원(AudioSources) → 자막/더빙(SubtitleDub): 자막/더빙을 생성하면 음원분리 수정 불가 안내
-        //   - 임의 단계 → 영상편집(Edit): 영상편집 commit 시 기존 음원/자막/더빙/분리 산출물 초기화 안내
+        //   - 편집·음원(EditAudio) → 자막/더빙(SubtitleDub): 자막/더빙 생성 후 음원분리 수정 불가 안내
+        //   - 자막/더빙(SubtitleDub) → 편집·음원(EditAudio): 영상편집 commit 시 자막/더빙 산출물 초기화 안내
         val warning = when {
-            cur.currentStep == TimelineStep.AudioSources &&
+            cur.currentStep == TimelineStep.EditAudio &&
                 target == TimelineStep.SubtitleDub &&
                 !userPrefs.localizationLockSuppressed ->
                 StepTransitionWarning.LocalizationLock(target)
 
-            target == TimelineStep.Edit && !userPrefs.editResetSuppressed && (
+            target == TimelineStep.EditAudio && !userPrefs.editResetSuppressed && (
                 cur.subtitleClips.isNotEmpty() ||
-                    cur.dubClips.isNotEmpty() ||
-                    cur.bgmClips.isNotEmpty() ||
-                    cur.separationDirectives.isNotEmpty()
+                    cur.dubClips.isNotEmpty()
                 ) ->
                 StepTransitionWarning.EditReset(target)
 
@@ -675,7 +669,6 @@ class TimelineViewModel constructor(
                 previewLangCode = null,
             )
         }
-        preEditBaseline = null
         updateUndoRedoState()
     }
 
@@ -2068,8 +2061,7 @@ class TimelineViewModel constructor(
      * [onEnterRangeMode] 와 동일한 range slider UI 를 띄우지만 confirm 액션이 음성분리가 아닌
      * segment edit action sheet (복제/삭제/볼륨/속도) 로 갈라진다.
      *
-     * 진입 즉시 현 timeline 스냅샷을 [preEditBaseline] 에 저장 — 취소(X) 시 즉시 복원.
-     * 영상편집 모드의 undo 스택은 새로 시드되어 메인 timeline 스택과 분리된다.
+     * 영상편집 액션은 통합 EditAudio undo 스택에 push — 음원분리/음원삽입과 같이 단일 흐름으로 되돌릴 수 있다.
      */
     fun onEnterSegmentEditMode(segmentId: String) {
         val state = _uiState.value
@@ -2099,10 +2091,6 @@ class TimelineViewModel constructor(
             showDetailEdit = false,
             showAppendSheet = false,
         )
-        // buildSnapshot 는 non-suspend (in-memory) — 즉시 baseline 시드.
-        preEditBaseline = buildSnapshot()
-        editModeUndoRedoManager.clear()
-        editModeUndoRedoManager.pushState(preEditBaseline!!)
         updateUndoRedoState()
     }
 
@@ -2176,8 +2164,6 @@ class TimelineViewModel constructor(
             rangeTargetSegmentId = null,
             showRangeActionSheet = false,
         )
-        editModeUndoRedoManager.clear()
-        preEditBaseline = null
         updateUndoRedoState()
     }
 
@@ -2199,9 +2185,6 @@ class TimelineViewModel constructor(
      */
     private suspend fun commitSegmentEdit() {
         resetTimelineDerivedResults()
-        editModeUndoRedoManager.clear()
-        preEditBaseline = null
-        mainUndoManagerForCurrent().clear()
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             isSegmentEditMode = false,
@@ -2215,71 +2198,48 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 단계별 reset — `after` 이후 단계의 산출물을 모두 정리.
-     *
-     * - `after = Edit` : SubtitleDub + AudioSources 모두 wipe (=과거 [resetTimelineDerivedResults] 와 동일).
-     * - `after = SubtitleDub` : AudioSources 만 wipe (separation + BGM). 자막·더빙 보존.
-     * - `after = AudioSources` : no-op.
-     *
-     * 자막/더빙 필드는 [EditProject.clearAutoSubtitleDub] helper 와 공유 (SSOT).
+     * 영상편집 commit 후 stale 가 된 downstream 산출물 정리. 자막/더빙 결과는 segment 가 바뀌면
+     * 항상 stale 이므로 wipe. 음원분리 directive 도 segment 좌표 기반이라 wipe.
+     * BGM 은 구간 액션 시 ripple/split 로 영상과 동기 갱신되므로 보존.
      */
-    private suspend fun resetFromStep(after: TimelineStep) {
-        val wipeAudioSources = after.ordinal < TimelineStep.AudioSources.ordinal
-        val wipeSubtitleDub = after.ordinal < TimelineStep.SubtitleDub.ordinal
-        if (!wipeAudioSources && !wipeSubtitleDub) return
+    private suspend fun resetTimelineDerivedResults() {
+        _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
+        _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
+            .forEach { updateSegmentVolume(it.id, 1f) }
+        separationJob?.cancel()
+        separationJob = null
+        separationGate = TriggerGate.ARMED
 
-        if (wipeAudioSources) {
-            _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
-            _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
-                .forEach { updateSegmentVolume(it.id, 1f) }
-            bgmClipRepository.deleteAllByProjectId(projectId)
-            bgmClipLaneOverrides.clear()
-            separationJob?.cancel()
-            separationJob = null
-            separationGate = TriggerGate.ARMED
-        }
-        if (wipeSubtitleDub) {
-            subtitleClipRepository.deleteAllClips(projectId)
-            dubClipRepository.deleteAllClips(projectId)
-            subtitleGate = TriggerGate.ARMED
-            dubGate = TriggerGate.ARMED
-            reviewSheetGate = TriggerGate.ARMED
-            renderStaleMarked = true
-        }
+        subtitleClipRepository.deleteAllClips(projectId)
+        dubClipRepository.deleteAllClips(projectId)
+        subtitleGate = TriggerGate.ARMED
+        dubGate = TriggerGate.ARMED
+        reviewSheetGate = TriggerGate.ARMED
+        renderStaleMarked = true
 
-        // EditProject 갱신 — 두 wipe 가 모두 필요한 경우에도 한 번만 fetch/update.
         editProjectRepository.getProject(projectId)?.let { p ->
-            val withSubDub = if (wipeSubtitleDub) p.clearAutoSubtitleDub() else p
-            val withAll = if (wipeAudioSources) withSubDub.copy(
-                separationJobId = null,
-                separationSegmentId = null,
-                separationStatus = AutoJobStatus.IDLE,
-                separationError = null,
-            ) else withSubDub
-            editProjectRepository.updateProject(withAll)
+            editProjectRepository.updateProject(
+                p.clearAutoSubtitleDub().copy(
+                    separationJobId = null,
+                    separationSegmentId = null,
+                    separationStatus = AutoJobStatus.IDLE,
+                    separationError = null,
+                )
+            )
         }
 
         _uiState.update { s ->
-            val withAudio = if (wipeAudioSources) s.copy(
+            s.copy(
                 audioSeparation = null,
                 showAudioSeparationSheet = false,
                 separationDirectives = emptyList(),
                 separationStatus = AutoJobStatus.IDLE,
-                selectedBgmClipId = null,
-                isAddingBgm = false,
-                bgmError = null,
-            ) else s
-            if (wipeSubtitleDub) withAudio.clearAutoSubtitleDubUiState().copy(
+            ).clearAutoSubtitleDubUiState().copy(
                 showDetailEdit = false,
                 localizationOpen = false,
-            ) else withAudio
+            )
         }
     }
-
-    /**
-     * onCommitSegmentEdit 호출 — 영상편집 결과로 모든 후속 산출물(자막/더빙/음원분리/BGM) wipe.
-     */
-    private suspend fun resetTimelineDerivedResults() = resetFromStep(after = TimelineStep.Edit)
 
     /**
      * directive 사이의 gap 을 한 번에 pendingRange 로 점프. range 모드 비활성이면 자동 진입.
@@ -2465,6 +2425,7 @@ class TimelineViewModel constructor(
             slices.forEach { s ->
                 lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
             }
+            applyBgmRangeDuplicate(start, end)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastDuplicated?.id?.let { selectSegmentInEditInternal(it) }
@@ -2483,6 +2444,7 @@ class TimelineViewModel constructor(
         resetRangeMode()
         viewModelScope.launch {
             slices.forEach { s -> removeSegmentRange(s.segmentId, s.localStart, s.localEnd) }
+            applyBgmRippleDelete(start, end)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
@@ -2507,6 +2469,7 @@ class TimelineViewModel constructor(
                 updateSegmentVolume(r.middle.id, value)
                 lastMiddleId = r.middle.id
             }
+            applyBgmRangeVolume(start, end, value)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
@@ -2532,9 +2495,10 @@ class TimelineViewModel constructor(
                 // (이전: source 를 newSpeed/curSpeed 배 확장해 글로벌 길이 보존했지만 사용자
                 // 호소 — 2배 올리면 길이가 늘어나 보임 — 와 반대 방향. 직관 우선.)
                 val r = splitSegment(s.segmentId, s.localStart, s.localEnd)
-                updateSegmentSpeed(r.middle.id, value)
+                updateSegmentSpeed(r.middle.id, newSpeed)
                 lastMiddleId = r.middle.id
             }
+            applyBgmRangeSpeed(start, end, newSpeed)
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
@@ -2553,6 +2517,147 @@ class TimelineViewModel constructor(
             showRangeActionSheet = false,
             selectedSegmentId = null
         )
+    }
+
+    // ── BGM range-action helpers ────────────────────────────────────────────
+    // 영상 구간 액션(삭제·볼륨·속도·복제)을 BGM 에도 동시 적용하기 위한 헬퍼.
+    // BgmClip 의 timeline 상 범위 = [startMs, startMs + effectiveDurationMs] (speedScale 반영).
+    // sourceDurationMs 는 source media ms — `(timelineDelta * speedScale).toLong()` 로 환산.
+    //
+    // 모델 한계: BgmClip 에 sourceOffsetMs 가 없어 부분 split 시 둘째 조각의 source 시작점은
+    // 항상 0 이라 사용자에게는 BGM 의 앞부분이 잘려 들리는 모양새. 정확한 split 은 후속 마이그
+    // 레이션(BgmClip + Room) 으로.
+
+    /**
+     * 영상 구간 [start, end] 삭제 시 BGM ripple delete.
+     *  - be ≤ start: no-op
+     *  - 완전 포함: 삭제
+     *  - 관통(bs < start, be > end): split — 첫 조각 길이 (start-bs), 둘째 새 클립 startMs=start
+     *  - 뒤쪽 잘림(bs < start, start < be ≤ end): sourceDurationMs 축소
+     *  - 앞쪽 잘림(start ≤ bs < end, be > end): startMs=start + sourceDurationMs 축소
+     *  - 구간 뒤(bs ≥ end): startMs -= (end-start)
+     */
+    private suspend fun applyBgmRippleDelete(start: Long, end: Long) {
+        val width = end - start
+        if (width <= 0L) return
+        val snapshot = _uiState.value.bgmClips.toList()
+        for (bgm in snapshot) {
+            val bs = bgm.startMs
+            val be = bs + bgm.effectiveDurationMs
+            val speed = bgm.speedScale.coerceAtLeast(0.01f)
+            when {
+                be <= start -> {}
+                bs >= start && be <= end -> bgmClipRepository.deleteClip(bgm.id)
+                bs >= end -> bgmClipRepository.updateClip(
+                    bgm.copy(startMs = (bs - width).coerceAtLeast(0L))
+                )
+                bs < start && be > end -> {
+                    val firstSourceDur = ((start - bs).toFloat() * speed).toLong().coerceAtLeast(1L)
+                    bgmClipRepository.updateClip(bgm.copy(sourceDurationMs = firstSourceDur))
+                    val secondSourceDur = ((be - end).toFloat() * speed).toLong().coerceAtLeast(1L)
+                    bgmClipRepository.addClip(
+                        BgmClip(
+                            id = generateId(),
+                            projectId = bgm.projectId,
+                            sourceUri = bgm.sourceUri,
+                            sourceDurationMs = secondSourceDur,
+                            startMs = start,
+                            volumeScale = bgm.volumeScale,
+                            speedScale = bgm.speedScale,
+                            lane = bgm.lane,
+                        )
+                    )
+                }
+                bs < start && be > start && be <= end -> {
+                    val newSourceDur = ((start - bs).toFloat() * speed).toLong().coerceAtLeast(1L)
+                    bgmClipRepository.updateClip(bgm.copy(sourceDurationMs = newSourceDur))
+                }
+                bs >= start && bs < end && be > end -> {
+                    val newSourceDur = ((be - end).toFloat() * speed).toLong().coerceAtLeast(1L)
+                    bgmClipRepository.updateClip(
+                        bgm.copy(sourceDurationMs = newSourceDur, startMs = start)
+                    )
+                }
+            }
+        }
+    }
+
+    /** 구간에 **완전히 포함**된 BGM 의 volumeScale 만 갱신. 부분 겹침은 보존. */
+    private suspend fun applyBgmRangeVolume(start: Long, end: Long, value: Float) {
+        val v = value.coerceIn(BgmClip.MIN_VOLUME, BgmClip.MAX_VOLUME)
+        val snapshot = _uiState.value.bgmClips.toList()
+        for (bgm in snapshot) {
+            val bs = bgm.startMs
+            val be = bs + bgm.effectiveDurationMs
+            if (bs >= start && be <= end) {
+                bgmClipRepository.updateClip(bgm.copy(volumeScale = v))
+            }
+        }
+    }
+
+    /**
+     * 구간에 **완전히 포함**된 BGM 의 speedScale 갱신 + 변화한 effectiveDurationMs 차이만큼
+     * 그 뒤 BGM 들 startMs ripple shift. 부분 겹침 BGM 은 보존 (ripple 도 안 적용 — 위치 정합성
+     * 어차피 깨질 case).
+     */
+    private suspend fun applyBgmRangeSpeed(start: Long, end: Long, value: Float) {
+        val newSpeed = value.coerceIn(BgmClip.MIN_SPEED, BgmClip.MAX_SPEED)
+        val snapshot = _uiState.value.bgmClips.toList().sortedBy { it.startMs }
+        var rippleDelta = 0L
+        for (bgm in snapshot) {
+            val bs = bgm.startMs
+            val be = bs + bgm.effectiveDurationMs
+            when {
+                bs >= start && be <= end -> {
+                    val newEffective = if (newSpeed > 0f) (bgm.sourceDurationMs / newSpeed).toLong()
+                        else bgm.sourceDurationMs
+                    val itemDelta = newEffective - bgm.effectiveDurationMs
+                    bgmClipRepository.updateClip(
+                        bgm.copy(
+                            speedScale = newSpeed,
+                            startMs = (bs + rippleDelta).coerceAtLeast(0L),
+                        )
+                    )
+                    rippleDelta += itemDelta
+                }
+                bs >= end -> bgmClipRepository.updateClip(
+                    bgm.copy(startMs = (bs + rippleDelta).coerceAtLeast(0L))
+                )
+                else -> {} // 앞쪽 + 부분 겹침 보존
+            }
+        }
+    }
+
+    /**
+     * 구간에 **완전히 포함**된 BGM 을 복제해 구간 뒤(startMs + width)에 삽입.
+     * 그 외 구간 뒤 BGM 들은 startMs += width (ripple insert).
+     */
+    private suspend fun applyBgmRangeDuplicate(start: Long, end: Long) {
+        val width = end - start
+        if (width <= 0L) return
+        val snapshot = _uiState.value.bgmClips.toList()
+        for (bgm in snapshot) {
+            if (bgm.startMs >= end) {
+                bgmClipRepository.updateClip(bgm.copy(startMs = bgm.startMs + width))
+            }
+        }
+        for (bgm in snapshot) {
+            val be = bgm.startMs + bgm.effectiveDurationMs
+            if (bgm.startMs >= start && be <= end) {
+                bgmClipRepository.addClip(
+                    BgmClip(
+                        id = generateId(),
+                        projectId = bgm.projectId,
+                        sourceUri = bgm.sourceUri,
+                        sourceDurationMs = bgm.sourceDurationMs,
+                        startMs = bgm.startMs + width,
+                        volumeScale = bgm.volumeScale,
+                        speedScale = bgm.speedScale,
+                        lane = bgm.lane,
+                    )
+                )
+            }
+        }
     }
 
     // ── 채팅 dispatcher 전용 code-path ────────────────────────────────────────────

@@ -35,6 +35,10 @@ targets:
         # 매 업로드마다 ASC 에서 답하지 않으려 plist 에 박아둠.
         ITSAppUsesNonExemptEncryption: false
         CADisableMinimumFrameDurationOnPhone: true
+        # vibi 앱의 Documents 폴더를 시스템 Files 앱과 UIDocumentPicker 에 "On My iPhone → vibi"
+        # 항목으로 노출 — 사용자가 mp3 같은 외부 파일을 vibi 컨테이너에 두고 음원 picker 로 선택 가능.
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
         NSPhotoLibraryUsageDescription: 편집할 동영상을 선택하기 위해 사진 라이브러리 접근이 필요합니다.
         NSPhotoLibraryAddUsageDescription: 완성된 동영상을 사진 라이브러리에 저장하기 위해 권한이 필요합니다.
         NSMicrophoneUsageDescription: 음원을 즉시 녹음해 타임라인에 삽입하기 위해 마이크 권한이 필요합니다.

@@ -9,16 +9,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -29,23 +28,31 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.vibi.cmp.platform.StemMixerSource
+import com.vibi.cmp.platform.extractAudioPeaks
 import com.vibi.cmp.platform.rememberAudioPreviewer
 import com.vibi.cmp.platform.rememberStemMixer
+import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import com.vibi.shared.ui.timeline.AudioSeparationUiState
 import com.vibi.shared.ui.timeline.localizeProgressReason
 import com.vibi.shared.ui.timeline.stemDisplayLabel
+
+/**
+ * stem 별 파형 peaks 모듈 레벨 캐시 — sheet 닫고 다시 열 때 즉시 표시. composable scope (`remember`) 만
+ * 쓰면 reopen 마다 빈 list 로 리셋되어 추출 재실행 (실패 시 영영 안 보임). URL 키, 프로세스 lifetime 영속.
+ */
+private val stemPeaksCache = mutableMapOf<String, List<Float>>()
 
 /**
  * 음성분리 sheet — Setup → Processing → PickStems → Mixing → Done.
@@ -75,6 +82,13 @@ fun AudioSeparationSheet(
     val mixer = rememberStemMixer()
     // 현재 재생 중인 stemId. "all" = 전체 미리듣기 (mixer). null = 재생 안 됨. 그 외 = 단일 stem (previewer).
     var playingId by remember { mutableStateOf<String?>(null) }
+    // stem 별 파형 peaks 캐시 — 모듈 레벨 stemPeaksCache 에서 즉시 시드. composable scope 만 쓰면 sheet
+    // 닫고 다시 열 때마다 빈 list 로 리셋되어 같은 stem 의 파형이 안 보임.
+    val peaksByUrl = remember {
+        mutableStateMapOf<String, List<Float>>().apply { putAll(stemPeaksCache) }
+    }
+    // 볼륨 인라인 슬라이더 expand 대상 stemId. null = 닫힘.
+    var volumeExpandStemId by remember { mutableStateOf<String?>(null) }
     val dismissAndCleanup: () -> Unit = {
         previewer.stop()
         mixer.pause()
@@ -155,41 +169,31 @@ fun AudioSeparationSheet(
                     }
 
                     AudioSeparationStep.PICK_STEMS -> {
-                        // 각 stem — 원형 토글 + 라벨 + 볼륨 슬라이더 + 재생 버튼 한 줄.
-                        state.stems.forEach { stem ->
+                        // "모든 화자" (voice_all) 은 화자별 + 배경음 으로 충분히 표현되므로 제외.
+                        val visibleStems = state.stems.filter { it.stemId != Stem.STEM_ID_VOICE_ALL }
+                        visibleStems.forEach { stem ->
                             val sel = state.selections[stem.stemId]
                             val selected = sel?.selected == true
                             val volume = sel?.volume ?: 1.0f
+                            val isThisPlaying = playingId == stem.stemId
+                            val canPreview = stem.url.isNotBlank()
+                            // stem 별 파형 — 모듈 레벨 stemPeaksCache 에 1회 추출 후 영속.
+                            // 같은 URL 의 sheet 재진입 시 즉시 표시 (이전엔 composable scope remember 라
+                            // 매 reopen 마다 리셋 → 추출 재실행, 실패 시 영영 빈 상태).
+                            LaunchedEffect(stem.url) {
+                                if (stem.url.isNotBlank() && peaksByUrl[stem.url].isNullOrEmpty()) {
+                                    val extracted = extractAudioPeaks(stem.url, samples = 80)
+                                    if (extracted.isNotEmpty()) {
+                                        stemPeaksCache[stem.url] = extracted
+                                        peaksByUrl[stem.url] = extracted
+                                    }
+                                }
+                            }
+                            val volumeExpanded = volumeExpandStemId == stem.stemId
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                             ) {
-                                // 원형 토글 — 사각 Checkbox 대신.
-                                CircleToggle(
-                                    selected = selected,
-                                    onClick = { onToggleStem(stem.stemId) },
-                                )
-                                Spacer(Modifier.size(8.dp))
-                                Text(
-                                    text = stemDisplayLabel(stem),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .widthIn(max = 80.dp)
-                                        .clickable { onToggleStem(stem.stemId) }
-                                )
-                                Slider(
-                                    value = volume,
-                                    valueRange = 0f..2f,
-                                    onValueChange = { onUpdateStemVolume(stem.stemId, it) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(horizontal = 4.dp)
-                                        .scale(scaleX = 1f, scaleY = 0.7f),
-                                )
-                                val isThisPlaying = playingId == stem.stemId
-                                val canPreview = stem.url.isNotBlank()
                                 IconButton(
                                     enabled = canPreview,
                                     onClick = {
@@ -202,12 +206,76 @@ fun AudioSeparationSheet(
                                             previewer.play(stem.url)
                                             playingId = stem.stemId
                                         }
-                                    }
+                                    },
+                                    modifier = Modifier.size(36.dp),
                                 ) {
                                     Icon(
                                         imageVector = if (isThisPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                                         contentDescription = if (isThisPlaying) "일시정지" else "재생",
                                         modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                                Text(
+                                    text = stemDisplayLabel(stem),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .widthIn(max = 80.dp)
+                                        .clickable { onToggleStem(stem.stemId) }
+                                )
+                                Spacer(Modifier.size(6.dp))
+                                WaveformPlayBar(
+                                    peaks = peaksByUrl[stem.url] ?: emptyList(),
+                                    progressMs = if (isThisPlaying) previewer.progressMs.value else 0L,
+                                    durationMs = if (isThisPlaying) previewer.durationMs.value else 0L,
+                                    isPlaying = isThisPlaying,
+                                    modifier = Modifier.weight(1f),
+                                    compact = true,
+                                )
+                                Spacer(Modifier.size(6.dp))
+                                // 볼륨 — 회전된 세로 슬라이더 popup 대신 인라인 가로 슬라이더 (아래 row 펼침).
+                                IconButton(
+                                    onClick = {
+                                        volumeExpandStemId = if (volumeExpanded) null else stem.stemId
+                                    },
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "볼륨",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = if (volumeExpanded) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                Spacer(Modifier.size(2.dp))
+                                CircleToggle(
+                                    selected = selected,
+                                    onClick = { onToggleStem(stem.stemId) },
+                                )
+                            }
+                            if (volumeExpanded) {
+                                // 인라인 가로 볼륨 슬라이더 — 회전 popup 보다 직관적. 라벨/% 동일 row.
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(start = 44.dp, end = 8.dp),
+                                ) {
+                                    Text(
+                                        "볼륨",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Slider(
+                                        value = volume,
+                                        valueRange = 0f..2f,
+                                        onValueChange = { onUpdateStemVolume(stem.stemId, it) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        "${(volume * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
                                     )
                                 }
                             }
@@ -288,3 +356,4 @@ private fun CircleToggle(selected: Boolean, onClick: () -> Unit) {
         }
     }
 }
+

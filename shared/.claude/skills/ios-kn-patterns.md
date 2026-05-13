@@ -112,3 +112,32 @@ videoTrack.preferredTransform = srcVideo.preferredTransform
 **원인**: Compose Multiplatform iOS 에서 UIKit interop view 는 native layer 라 항상 최상위. 그 위에 Compose 가 paint 못 함.
 
 **해결**: 비디오 영역 외부 (위/아래) 에 별도 Compose Row/Column 으로 배치. 진짜 overlay 가 필요하면 native UILabel 등을 K/N 에서 controller.view 에 addSubview.
+
+## `@Composable` 안 익명 object 의 nested local function + mutable state 캡처 → K/N LocalDeclarationsLowering 충돌
+
+**증상**: `linkDebugFrameworkIosSimulatorArm64` 단계에서
+`Internal error in body lowering: java.lang.IllegalStateException: No dispatch receiver parameter for FUN LOCAL_FUNCTION name:<localFn>`
+크래시. `compileKotlinIosSimulatorArm64` 는 통과하고 final link 에서만 터짐.
+
+**원인**: `@Composable` 안에 익명 `object : XHandle { ... }` 두고, 그 안 메서드에서 nested local function 정의해 외곽의 mutable state 다수를 캡처하면 K/N 컴파일러 LocalDeclarationsLowering 가 깨짐. 캡처 수가 적으면 통과하지만 임계점 넘으면 실패.
+
+**해결 패턴**: object 대신 별도 `private class` 로 분리. mutable state 는 클래스 필드로 두고 helper 는 일반 private 메서드.
+```kotlin
+@Composable
+actual fun rememberX(): XHandle {
+    val scope = rememberCoroutineScope()
+    val handle = remember(scope) { IosXHandle(scope) }
+    DisposableEffect(handle) { onDispose { handle.dispose() } }
+    return handle
+}
+private class IosXHandle(private val scope: CoroutineScope) : XHandle {
+    private val stateA = mutableLongStateOf(0L)
+    private var pollJob: Job? = null
+    private fun cancelPoll() { pollJob?.cancel(); pollJob = null }
+    private fun startWithFile(fileUrl: NSURL) { ... }
+    override fun play(...) { ... }
+    fun dispose() { ... }
+}
+```
+
+**적용 사이트** (참고): `cmp/.../platform/AudioPreviewer.ios.kt` (변환 후 통과), `StemMixer.ios.kt` (원래부터 이 패턴이라 충돌 없었음). 새 `@Composable` actual 작성 시 캡처 많아질 것 같으면 처음부터 class 로.
