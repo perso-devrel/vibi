@@ -28,6 +28,10 @@ class SeparationDirectiveRepositoryImpl(
         dao.deleteById(id)
     }
 
+    override suspend fun deleteByProject(projectId: String) {
+        dao.deleteByProject(projectId)
+    }
+
     private fun SeparationDirective.toEntity() = SeparationDirectiveEntity(
         id = id,
         projectId = projectId,

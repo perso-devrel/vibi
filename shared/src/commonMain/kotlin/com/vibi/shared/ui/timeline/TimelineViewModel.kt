@@ -23,6 +23,8 @@ import com.vibi.shared.domain.model.SubtitleSource
 import com.vibi.shared.platform.generateId
 import com.vibi.shared.domain.model.TargetLanguage
 import com.vibi.shared.domain.model.TextOverlay
+import com.vibi.shared.domain.model.clearSeparation
+import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.DubClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
@@ -73,6 +75,7 @@ import com.vibi.shared.domain.usecase.timeline.UpdateImageSegmentPositionUseCase
 import com.vibi.shared.domain.usecase.timeline.UpdateSegmentSpeedUseCase
 import com.vibi.shared.domain.usecase.timeline.UpdateSegmentTrimUseCase
 import com.vibi.shared.domain.usecase.timeline.UpdateSegmentVolumeUseCase
+import io.ktor.client.plugins.ClientRequestException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -397,6 +400,7 @@ class TimelineViewModel constructor(
     private val audioMetadataExtractor: AudioMetadataExtractor,
     private val startAudioSeparation: StartAudioSeparationUseCase,
     private val pollSeparation: PollSeparationUseCase,
+    private val audioSeparationRepository: AudioSeparationRepository,
     private val generateAutoSubtitles: GenerateAutoSubtitlesUseCase,
     private val regenerateSubtitles: RegenerateSubtitlesUseCase,
     private val generateOriginalScript: GenerateOriginalScriptUseCase,
@@ -479,6 +483,7 @@ class TimelineViewModel constructor(
     private var subtitleGate = TriggerGate.ARMED
     private var dubGate = TriggerGate.ARMED
     private var separationGate = TriggerGate.ARMED
+    private var separationRefreshGate = TriggerGate.ARMED
     private var reviewSheetGate = TriggerGate.ARMED
 
     /**
@@ -821,6 +826,10 @@ class TimelineViewModel constructor(
             separationGate = TriggerGate.FIRED
             resumeSeparationPolling(project)
         }
+        if (shouldRefreshSeparation(project)) {
+            separationRefreshGate = TriggerGate.FIRED
+            refreshSeparationFreshness(project)
+        }
         if (shouldShowPendingReview(project)) {
             reviewSheetGate = TriggerGate.FIRED
             val targets = project.pendingReviewTargetLangsCsv
@@ -846,6 +855,11 @@ class TimelineViewModel constructor(
             project.separationStatus == AutoJobStatus.RUNNING &&
             !project.separationJobId.isNullOrBlank()
 
+    private fun shouldRefreshSeparation(project: EditProject): Boolean =
+        separationRefreshGate == TriggerGate.ARMED &&
+            project.separationStatus == AutoJobStatus.READY &&
+            !project.separationJobId.isNullOrBlank()
+
     /**
      * 화면 재진입 또는 앱 재실행 시 영속화된 separationJobId 로 폴링 재개. sheet 는 hidden 으로
      * 두고, 사용자가 "음성 분리" 버튼(상태별 라벨 변경) 으로 결과 확인하러 들어올 수 있게 함.
@@ -869,6 +883,48 @@ class TimelineViewModel constructor(
         }
         separationJob?.cancel()
         separationJob = viewModelScope.launch { pollSeparationFlow(jobId) }
+    }
+
+    /**
+     * READY 결과 재진입 시 한 번 검증해서 stale token 갱신 또는 정리. 4xx 이외 실패는 일시적일 수 있어
+     * gate 만 되돌리고 다음 진입에 재시도 — 사용자가 영구 오프라인이거나 BFF 가 잠시 5xx 일 때 멀쩡한
+     * directive 가 사라지는 사고 방지.
+     */
+    private fun refreshSeparationFreshness(project: EditProject) {
+        val jobId = project.separationJobId ?: return
+        viewModelScope.launch {
+            val result = audioSeparationRepository.pollStatus(jobId)
+            when (val status = result.getOrNull()) {
+                is SeparationStatus.Ready -> {
+                    val freshUrlByStemId = status.stems.associate { it.stemId to it.url }
+                    separationDirectiveRepository.getByProject(projectId).forEach { dir ->
+                        val updated = dir.selections.map { sel ->
+                            val fresh = freshUrlByStemId[sel.stemId]
+                            if (fresh != null && fresh != sel.audioUrl) sel.copy(audioUrl = fresh) else sel
+                        }
+                        if (updated != dir.selections) {
+                            separationDirectiveRepository.add(dir.copy(selections = updated))
+                        }
+                    }
+                }
+                is SeparationStatus.Failed,
+                is SeparationStatus.Consumed -> clearStaleSeparation()
+                is SeparationStatus.Processing -> Unit
+                null -> {
+                    val httpStatus = (result.exceptionOrNull() as? ClientRequestException)
+                        ?.response?.status?.value
+                    if (httpStatus == HTTP_NOT_FOUND) clearStaleSeparation()
+                    else separationRefreshGate = TriggerGate.ARMED
+                }
+            }
+        }
+    }
+
+    private suspend fun clearStaleSeparation() {
+        separationDirectiveRepository.deleteByProject(projectId)
+        editProjectRepository.getProject(projectId)?.let {
+            editProjectRepository.updateProject(it.clearSeparation())
+        }
     }
 
     private fun shouldTriggerAutoSubtitle(project: EditProject): Boolean =
@@ -2218,14 +2274,7 @@ class TimelineViewModel constructor(
         renderStaleMarked = true
 
         editProjectRepository.getProject(projectId)?.let { p ->
-            editProjectRepository.updateProject(
-                p.clearAutoSubtitleDub().copy(
-                    separationJobId = null,
-                    separationSegmentId = null,
-                    separationStatus = AutoJobStatus.IDLE,
-                    separationError = null,
-                )
-            )
+            editProjectRepository.updateProject(p.clearAutoSubtitleDub().clearSeparation())
         }
 
         _uiState.update { s ->
@@ -3646,14 +3695,7 @@ class TimelineViewModel constructor(
         separationJob = null
         viewModelScope.launch {
             editProjectRepository.getProject(projectId)?.let { p ->
-                editProjectRepository.updateProject(
-                    p.copy(
-                        separationJobId = null,
-                        separationSegmentId = null,
-                        separationStatus = AutoJobStatus.IDLE,
-                        separationError = null,
-                    )
-                )
+                editProjectRepository.updateProject(p.clearSeparation())
             }
             separationGate = TriggerGate.ARMED
             _uiState.value = _uiState.value.copy(audioSeparation = null, showAudioSeparationSheet = false)
@@ -4340,14 +4382,7 @@ class TimelineViewModel constructor(
                 )
                 // commit 완료 → EditProject 의 separation* 모두 IDLE 로 클리어. 다음 음성분리 새로 가능.
                 editProjectRepository.getProject(projectId)?.let { p ->
-                    editProjectRepository.updateProject(
-                        p.copy(
-                            separationJobId = null,
-                            separationSegmentId = null,
-                            separationStatus = AutoJobStatus.IDLE,
-                            separationError = null,
-                        )
-                    )
+                    editProjectRepository.updateProject(p.clearSeparation())
                 }
                 separationGate = TriggerGate.ARMED
                 mainUndoManagerForCurrent().clear()
@@ -4420,6 +4455,7 @@ class TimelineViewModel constructor(
         const val MIN_FRAME_DIMENSION = 16
         const val MAX_FRAME_DIMENSION = 7680
         const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
+        private const val HTTP_NOT_FOUND = 404
     }
 
     fun onOpenExportOptionsSheet() {

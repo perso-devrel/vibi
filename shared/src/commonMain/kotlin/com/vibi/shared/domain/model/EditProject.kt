@@ -125,6 +125,17 @@ fun EditProject.clearAutoSubtitleDub(): EditProject = copy(
 )
 
 /**
+ * 음원분리 영속화 필드만 IDLE 로 리셋. BFF 가 잡을 잃었거나 결과가 expired/Consumed 됐을 때
+ * 사용자가 새 분리를 시작할 수 있도록 단일 진입점. [clearAutoSubtitleDub] 와 동등한 SSOT 패턴.
+ */
+fun EditProject.clearSeparation(): EditProject = copy(
+    separationJobId = null,
+    separationSegmentId = null,
+    separationStatus = AutoJobStatus.IDLE,
+    separationError = null,
+)
+
+/**
  * 원본 언어 자막 (lang="" SubtitleClip) 이 export variant / preview chip 에 노출 가능한 상태인지.
  *
  * 조건:

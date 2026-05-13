@@ -57,6 +57,7 @@ val viewModelModule = module {
             audioMetadataExtractor = get(),
             startAudioSeparation = get(),
             pollSeparation = get(),
+            audioSeparationRepository = get(),
             generateAutoSubtitles = get(),
             regenerateSubtitles = get(),
             generateOriginalScript = get(),

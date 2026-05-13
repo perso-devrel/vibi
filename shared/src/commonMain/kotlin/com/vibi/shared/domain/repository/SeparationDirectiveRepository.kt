@@ -8,4 +8,5 @@ interface SeparationDirectiveRepository {
     fun observe(projectId: String): Flow<List<SeparationDirective>>
     suspend fun getByProject(projectId: String): List<SeparationDirective>
     suspend fun delete(id: String)
+    suspend fun deleteByProject(projectId: String)
 }
