@@ -3795,14 +3795,26 @@ class TimelineViewModel constructor(
         val state = _uiState.value
         val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
-        // 이미 진행 중인 audioSeparation 이 있으면 그대로 유지 (jobId/progress/stems 등) — 사용자가
-        // sheet 만 다시 펼친 케이스. 없으면 새 SETUP 으로 시작.
         // range mode 에서 진입한 케이스 — pendingRangeStartMs/EndMs 를 audioSeparation 에 반영.
         val rangeStart = state.pendingRangeStartMs.takeIf { state.pendingRangeEndMs > it }
         val rangeEnd = state.pendingRangeEndMs.takeIf { it > state.pendingRangeStartMs }
         val current = state.audioSeparation
-        val next = current?.copy(rangeStartMs = rangeStart, rangeEndMs = rangeEnd)
-            ?: AudioSeparationUiState(segmentId = segmentId, rangeStartMs = rangeStart, rangeEndMs = rangeEnd)
+        // 진행 중(PROCESSING) polling 만 보존 — 사용자가 sheet 만 다시 펼친 케이스.
+        // Why: PICK_STEMS/DONE/FAILED 가 남아 있는 상태(기존 directive 편집 후 dismiss / 빈 selection
+        // early return 등)에서 새 분리 요청이 들어오면 stale stems·jobId·빈 segmentId 가 그대로 sheet 에
+        // 노출돼 "기존 분리 탭이 뜨고" onStartSeparation 은 segmentId mismatch 로 silent return → 실제
+        // 분리가 안 일어남.
+        // How to apply: 새 분리 시작 시 editingDirectiveId / bgmSeparationTargetId 도 함께 클리어.
+        val preserveCurrent = current != null &&
+            current.step == AudioSeparationStep.PROCESSING &&
+            bgmSeparationTargetId == null
+        val next = if (preserveCurrent) {
+            current!!.copy(rangeStartMs = rangeStart, rangeEndMs = rangeEnd)
+        } else {
+            editingDirectiveId = null
+            bgmSeparationTargetId = null
+            AudioSeparationUiState(segmentId = segmentId, rangeStartMs = rangeStart, rangeEndMs = rangeEnd)
+        }
         _uiState.value = state.copy(
             audioSeparation = next,
             showAudioSeparationSheet = true,
