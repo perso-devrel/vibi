@@ -3775,6 +3775,31 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * 채팅 전용 — BGM 클립을 timeline range 에 정렬. BgmClip 에 trim 필드가 없어 `speedScale` 로
+     * stretch. UseCase 가 [BgmClip.MIN_SPEED, BgmClip.MAX_SPEED] 로 silent clamp 하므로
+     * out-of-range 일 때 dispatcher 가 Success 반환 후 BGM 이 어긋나는 사고 방지 위해 사전 throw.
+     */
+    suspend fun applyUpdateBgmRangeFromChat(clipId: String, newStartMs: Long, newEndMs: Long) {
+        require(newEndMs > newStartMs) {
+            "끝 지점(${newEndMs}ms)은 시작 지점(${newStartMs}ms)보다 커야 해요."
+        }
+        val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId }
+            ?: throw IllegalArgumentException("BGM 클립을 찾을 수 없어요 (id=$clipId).")
+        val desiredDuration = newEndMs - newStartMs
+        val newSpeed = clip.sourceDurationMs.toFloat() / desiredDuration.toFloat()
+        require(newSpeed in BgmClip.MIN_SPEED..BgmClip.MAX_SPEED) {
+            "요청한 길이(${desiredDuration}ms)는 BGM 속도 한계(${BgmClip.MIN_SPEED}~${BgmClip.MAX_SPEED}x)를 " +
+                "벗어나요. 원본 길이 ${clip.sourceDurationMs}ms 기준으로 가능한 범위로 다시 알려주세요."
+        }
+        updateBgmClip(
+            clipId = clipId,
+            startMs = newStartMs.coerceAtLeast(0L),
+            speedScale = newSpeed,
+        )
+        pushUndoState()
+    }
+
     fun onDeleteBgmClip(clipId: String) {
         viewModelScope.launch {
             bgmClipRepository.deleteClip(clipId)

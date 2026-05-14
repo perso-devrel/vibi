@@ -30,6 +30,7 @@ data class ProjectContextDto(
     val bgmClips: List<ContextBgmClipDto> = emptyList(),
     val separationStems: List<ContextStemDto> = emptyList(),
     val separationDirectives: List<ContextSeparationDirectiveDto> = emptyList(),
+    val processingSeparations: List<ContextProcessingSeparationDto> = emptyList(),
     val currentPlayheadMs: Long = 0L,
     val selectedSegmentId: String? = null,
     val selectedClipId: String? = null,
@@ -95,6 +96,17 @@ data class ContextSeparationDirectiveDto(
     val rangeEndMs: Long,
     val durationMs: Long,
     val numberOfSpeakers: Int,
+)
+
+/**
+ * 진행 중인 음원분리 잡 — 아직 directive 로 commit 되지 않음. Gemini 가
+ * (1) "지금 분리 중인 거 끝나면" 발화 매칭 (2) WF-4 중복 분리 회피 (3) WF-7 BGM 정렬 candidate.
+ * presence-only — range 외 metadata 미노출.
+ */
+@Serializable
+data class ContextProcessingSeparationDto(
+    val rangeStartMs: Long,
+    val rangeEndMs: Long,
 )
 
 @Serializable

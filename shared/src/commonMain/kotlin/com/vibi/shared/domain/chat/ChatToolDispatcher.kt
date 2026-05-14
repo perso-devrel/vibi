@@ -122,6 +122,13 @@ class ChatToolDispatcher {
             "update_bgm_volume" -> {
                 vm.onUpdateBgmVolume(a.requireString("clipId"), a.requireFloat("volumeScale"))
             }
+            "update_bgm_range" -> {
+                vm.applyUpdateBgmRangeFromChat(
+                    clipId = a.requireString("clipId"),
+                    newStartMs = a.requireLong("newStartMs"),
+                    newEndMs = a.requireLong("newEndMs"),
+                )
+            }
             // --- BGM 자막·더빙 (Stage -1 prereq 의존) ---
             "generate_subtitles_for_bgm" -> {
                 vm.onGenerateAutoSubtitlesForBgmClip(
@@ -172,6 +179,7 @@ class ChatToolDispatcher {
             "generate_dub" -> "더빙 생성: ${a.optString("targetLanguageCode")}"
             "move_bgm_clip" -> "음원 위치 이동"
             "update_bgm_volume" -> "음원 볼륨 ${(a.optFloat("volumeScale") ?: 1f).times(100).toInt()}%"
+            "update_bgm_range" -> "음원 구간 정렬 (${a.optLong("newStartMs") ?: 0}–${a.optLong("newEndMs") ?: 0}ms)"
             "generate_subtitles_for_bgm" -> "음원 자막 생성"
             "generate_dub_for_bgm" -> "음원 더빙 생성"
             else -> step.name
