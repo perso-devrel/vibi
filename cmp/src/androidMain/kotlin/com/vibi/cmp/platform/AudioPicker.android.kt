@@ -52,8 +52,20 @@ actual fun rememberAudioPicker(
 
 private fun copyAudioToCache(context: Context, uri: Uri): String? {
     val resolver: ContentResolver = context.contentResolver
-    val ext = inferExtension(resolver, uri)
-    val name = "audio_${currentTimeMillis()}.$ext"
+    // 원본 DISPLAY_NAME 을 보존 — SoundDeck BGM 카드가 sourceUri 의 마지막 path segment 를
+    // label 로 표시하므로 사용자가 삽입한 파일 이름 그대로 노출된다. 디렉터리 트래버설 방지를
+    // 위해 path separator 는 제거.
+    val displayName = queryDisplayName(resolver, uri)
+    val ext = inferExtension(resolver, uri, displayName)
+    val safeBase = displayName
+        ?.substringBeforeLast('.', missingDelimiterValue = displayName)
+        ?.replace(Regex("[\\\\/]"), "_")
+        ?.trim()
+        ?.ifBlank { null }
+        ?: "audio_${currentTimeMillis()}"
+    // 같은 이름 재선택 시 충돌 방지 — 디스크 파일명은 timestamp 접미사로 unique 보장하되,
+    // base 이름은 그대로 두어 label 에 의미 있는 이름이 그대로 노출되도록 한다.
+    val name = "${safeBase}_${currentTimeMillis()}.$ext"
     val dest = File(context.cacheDir, "picked_audio").apply { mkdirs() }.resolve(name)
     return try {
         resolver.openInputStream(uri)?.use { input ->
@@ -65,20 +77,20 @@ private fun copyAudioToCache(context: Context, uri: Uri): String? {
     }
 }
 
-private fun inferExtension(resolver: ContentResolver, uri: Uri): String {
+private fun queryDisplayName(resolver: ContentResolver, uri: Uri): String? =
+    resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+        if (c.moveToFirst()) c.getString(0) else null
+    }
+
+private fun inferExtension(resolver: ContentResolver, uri: Uri, displayName: String?): String {
     val mime = resolver.getType(uri)
     return when {
-        mime == null -> "m4a"
+        mime == null -> displayName?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() } ?: "m4a"
         mime.endsWith("/mpeg") -> "mp3"
         mime.endsWith("/aac") || mime.endsWith("/mp4") -> "m4a"
         mime.endsWith("/wav") || mime.endsWith("/x-wav") -> "wav"
         mime.endsWith("/ogg") -> "ogg"
         mime.endsWith("/flac") -> "flac"
-        else -> {
-            // fallback: DISPLAY_NAME 의 확장자 사용
-            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(0)?.substringAfterLast('.', "m4a") else null
-            } ?: "m4a"
-        }
+        else -> displayName?.substringAfterLast('.', "m4a") ?: "m4a"
     }
 }

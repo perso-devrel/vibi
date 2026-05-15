@@ -56,6 +56,8 @@ fun SoundDeck(
     onToggleStem: (directiveId: String, stemId: String, selected: Boolean) -> Unit,
     onUpdateStemVolume: (directiveId: String, stemId: String, volume: Float) -> Unit,
     onUpdateBgmVolume: (clipId: String, volume: Float) -> Unit,
+    onApplyBgmSpeed: (clipId: String, value: Float) -> Unit,
+    onRemoveBgmBackground: (clipId: String) -> Unit,
     onDeleteBgm: (clipId: String) -> Unit,
     onAddSeparation: (() -> Unit)?,
     onAddBgm: (() -> Unit)?,
@@ -114,6 +116,14 @@ fun SoundDeck(
                 }
                 onDeleteBgm(src.clipId)
             })
+            is SoundCardSource.SeparationStem -> null
+        },
+        onApplySpeed = when (val src = card.source) {
+            is SoundCardSource.Bgm -> ({ v -> onApplyBgmSpeed(src.clipId, v) })
+            is SoundCardSource.SeparationStem -> null
+        },
+        onSecondaryAction = when (val src = card.source) {
+            is SoundCardSource.Bgm -> ({ onRemoveBgmBackground(src.clipId) })
             is SoundCardSource.SeparationStem -> null
         },
     )
@@ -190,6 +200,8 @@ private data class SoundCardCallbacks(
     val onUpdateVolume: (Float) -> Unit,
     val onTogglePreview: () -> Unit,
     val onDelete: (() -> Unit)?,
+    val onApplySpeed: ((Float) -> Unit)?,
+    val onSecondaryAction: (() -> Unit)?,
 )
 
 @Composable
@@ -208,6 +220,8 @@ private fun SoundCardRow(
         onUpdateVolume = callbacks.onUpdateVolume,
         onTogglePreview = callbacks.onTogglePreview,
         onDelete = callbacks.onDelete,
+        onApplySpeed = callbacks.onApplySpeed,
+        onSecondaryAction = callbacks.onSecondaryAction,
         modifier = if (indent) Modifier.padding(start = VibiSpacing.sm) else Modifier,
     )
 }

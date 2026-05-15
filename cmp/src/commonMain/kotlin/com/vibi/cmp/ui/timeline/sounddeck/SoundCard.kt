@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
@@ -63,6 +64,8 @@ fun SoundCard(
     onUpdateVolume: (Float) -> Unit,
     onTogglePreview: () -> Unit,
     onDelete: (() -> Unit)?,
+    onApplySpeed: ((Float) -> Unit)? = null,
+    onSecondaryAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
@@ -105,6 +108,8 @@ fun SoundCard(
                         style = typo.bodyStrong,
                         color = tokens.onBackgroundPrimary,
                         textDecoration = if (model.selected) TextDecoration.None else TextDecoration.LineThrough,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     val rangeStr = formatRange(model.rangeStartMs, model.rangeEndMs)
                     if (rangeStr != null) {
@@ -115,12 +120,30 @@ fun SoundCard(
                         )
                     }
                 }
-                if (isPreviewing) {
+                // stem 카드는 별도 헤더 액션이 없어 재생 indicator 가 필요하지만, BGM 카드는
+                // 우측 재생/정지 IconButton 의 Pause 아이콘이 같은 상태를 더 명확히 표현하므로 생략.
+                if (isPreviewing && model.kind != SoundCardKind.BGM) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(VibiSpacing.base),
                         strokeWidth = 2.dp,
                         color = tokens.accent,
                     )
+                }
+                // BGM 카드 헤더의 재생/정지 버튼 — IconButton 의 자체 클릭이 카드의 combinedClickable
+                // (onClick=onToggle) 보다 우선 소비. 다듬기 진입은 long-press (onEdit) 로 분리.
+                if (model.kind == SoundCardKind.BGM) {
+                    IconButton(
+                        onClick = onTogglePreview,
+                        enabled = !disabled && !model.audioUrl.isNullOrBlank(),
+                        modifier = Modifier.size(VibiSpacing.xl),
+                    ) {
+                        Icon(
+                            imageVector = if (isPreviewing) Icons.Filled.Pause
+                                          else Icons.Filled.PlayArrow,
+                            contentDescription = if (isPreviewing) "정지" else "재생",
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                    }
                 }
             }
 
@@ -129,58 +152,84 @@ fun SoundCard(
                     modifier = Modifier.alpha(if (disabled) 0.4f else 1f),
                     verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(
-                            onClick = onTogglePreview,
-                            enabled = !disabled && !model.audioUrl.isNullOrBlank(),
-                        ) {
-                            Icon(
-                                imageVector = if (isPreviewing) Icons.Filled.Pause
-                                              else Icons.Filled.PlayArrow,
-                                contentDescription = if (isPreviewing) "정지" else "미리듣기",
-                                tint = tokens.onBackgroundPrimary,
-                            )
-                            Spacer(Modifier.width(VibiSpacing.xxs))
-                            Text(
-                                if (isPreviewing) "정지" else "이 소리만 듣기",
-                                color = tokens.onBackgroundPrimary,
-                                style = typo.bodySm,
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (onDelete != null) {
-                            IconButton(
-                                onClick = onDelete,
-                                enabled = !disabled,
+                    if (model.kind == SoundCardKind.BGM &&
+                        onApplySpeed != null && onSecondaryAction != null && onDelete != null
+                    ) {
+                        // BGM 다듬기 — 영상 다듬기와 동일한 4-액션(볼륨/속도/배경음 제거/삭제) 패널.
+                        // 볼륨은 슬라이더 드래그 = 즉시 적용(onUpdateVolume → bgm.volumeScale).
+                        // 속도는 ripple 효과(뒤 BGM 클립 startMs shift), 배경음 제거는 음원분리 sheet 진입.
+                        // 패널 닫기는 카드 long-press collapse 로 — onCancel 생략.
+                        // model.speed 가 바뀔 때만 pendingSpeed 재초기화 — 사용자가 드래그 중인
+                        // 값이 외부 재합성으로 덮어쓰이는 사고 방지.
+                        var pendingSpeed by remember(model.speed) { mutableStateOf(model.speed) }
+                        EditActionsPanel(
+                            title = "",
+                            volume = model.volume,
+                            speed = pendingSpeed,
+                            onVolumeChange = { if (!disabled) onUpdateVolume(it) },
+                            onSpeedChange = { pendingSpeed = it },
+                            onApplyVolume = { if (!disabled) onUpdateVolume(it) },
+                            onApplySpeed = { if (!disabled) onApplySpeed(it) },
+                            secondaryActionLabel = "배경음 제거",
+                            onSecondaryAction = { if (!disabled) onSecondaryAction() },
+                            onDelete = { if (!disabled) onDelete() },
+                            onCancel = null,
+                        )
+                    } else {
+                        // stem 카드 — 기존 부가 액션 row (미리듣기 + 삭제) + 볼륨 슬라이더.
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = onTogglePreview,
+                                enabled = !disabled && !model.audioUrl.isNullOrBlank(),
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Delete,
-                                    contentDescription = "삭제",
-                                    tint = tokens.mutedText,
+                                    imageVector = if (isPreviewing) Icons.Filled.Pause
+                                                  else Icons.Filled.PlayArrow,
+                                    contentDescription = if (isPreviewing) "정지" else "미리듣기",
+                                    tint = tokens.onBackgroundPrimary,
+                                )
+                                Spacer(Modifier.width(VibiSpacing.xxs))
+                                Text(
+                                    if (isPreviewing) "정지" else "이 소리만 듣기",
+                                    color = tokens.onBackgroundPrimary,
+                                    style = typo.bodySm,
                                 )
                             }
+                            Spacer(Modifier.weight(1f))
+                            if (onDelete != null) {
+                                IconButton(
+                                    onClick = onDelete,
+                                    enabled = !disabled,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = "삭제",
+                                        tint = tokens.mutedText,
+                                    )
+                                }
+                            }
                         }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "볼륨",
-                            modifier = Modifier.width(VibiSpacing.xxl),
-                            style = typo.bodySm,
-                            color = tokens.mutedText,
-                        )
-                        Slider(
-                            modifier = Modifier.weight(1f),
-                            value = model.volume.coerceIn(0f, 2f),
-                            onValueChange = { if (!disabled) onUpdateVolume(it) },
-                            valueRange = 0f..2f,
-                            enabled = !disabled && model.selected,
-                        )
-                        Text(
-                            "${(model.volume * 100).toInt()}%",
-                            modifier = Modifier.width(VibiSpacing.xxl),
-                            style = typo.bodySm,
-                            color = tokens.mutedText,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "볼륨",
+                                modifier = Modifier.width(VibiSpacing.xxl),
+                                style = typo.bodySm,
+                                color = tokens.mutedText,
+                            )
+                            Slider(
+                                modifier = Modifier.weight(1f),
+                                value = model.volume.coerceIn(0f, 2f),
+                                onValueChange = { if (!disabled) onUpdateVolume(it) },
+                                valueRange = 0f..2f,
+                                enabled = !disabled && model.selected,
+                            )
+                            Text(
+                                "${(model.volume * 100).toInt()}%",
+                                modifier = Modifier.width(VibiSpacing.xxl),
+                                style = typo.bodySm,
+                                color = tokens.mutedText,
+                            )
+                        }
                     }
                 }
             }

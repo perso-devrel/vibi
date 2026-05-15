@@ -2701,6 +2701,23 @@ class TimelineViewModel constructor(
         }
     }
 
+    // ── BGM 클립별 다듬기 액션 — SoundCard in-card expansion 패널 전용 ─────────────────
+    // 다듬기 모드(isSegmentEditMode/pendingRange) 를 거치지 않고 한 클립에 직접 적용. 기존 private
+    // [applyBgmRangeSpeed] 헬퍼를 그 클립의 bounds 로 호출해 ripple 정책(뒤따르는 BGM 클립
+    // startMs shift) 도 영상 다듬기와 동일하게 적용. 볼륨은 ripple 없이 그 클립만 갱신하므로
+    // 기존 [onUpdateBgmVolume] 재사용. 배경음 제거는 기존 [onStartBgmSeparation] (분리 sheet 진입).
+
+    fun onApplyBgmClipSpeed(clipId: String, value: Float) {
+        val bgm = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return
+        val start = bgm.startMs
+        val end = bgm.startMs + bgm.effectiveDurationMs
+        val newSpeed = if (value > 0f) value else 1f
+        viewModelScope.launch {
+            applyBgmRangeSpeed(start, end, newSpeed)
+            pushUndoState()
+        }
+    }
+
     private fun resetRangeMode() {
         // segment edit mode 에서는 액션(복제/삭제/볼륨/속도) 후에도 모드 유지 — "저장" 만 종료 트리거.
         if (_uiState.value.isSegmentEditMode) return

@@ -905,14 +905,16 @@ fun TimelineScreen(
                 if (state.isSegmentEditMode &&
                     state.pendingRangeEndMs > state.pendingRangeStartMs
                 ) {
-                    SegmentEditActionPanel(
+                    com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
+                        title = "구간 편집",
                         volume = state.pendingRangeVolume,
                         speed = state.pendingRangeSpeed,
                         onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
                         onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
                         onApplyVolume = { viewModel.onApplyRangeVolume(it) },
                         onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
-                        onDuplicate = { viewModel.onDuplicateRange() },
+                        secondaryActionLabel = "복제",
+                        onSecondaryAction = { viewModel.onDuplicateRange() },
                         onDelete = { viewModel.onDeleteRange() },
                         onCancel = { viewModel.onFinishSegmentEdit() },
                     )
@@ -940,6 +942,8 @@ fun TimelineScreen(
                             viewModel.onSetStemVolumeForDirective(directiveId, stemId, volume)
                         },
                         onUpdateBgmVolume = { clipId, v -> viewModel.onUpdateBgmVolume(clipId, v) },
+                        onApplyBgmSpeed = { clipId, v -> viewModel.onApplyBgmClipSpeed(clipId, v) },
+                        onRemoveBgmBackground = { clipId -> viewModel.onStartBgmSeparation(clipId) },
                         onDeleteBgm = { clipId -> viewModel.onDeleteBgmClip(clipId) },
                         // 분리/BGM 진입은 위 버튼 row 가 담당 — deck add 슬롯은 사용 안 함.
                         onAddSeparation = null,
@@ -1556,120 +1560,6 @@ private fun ClipTrack(
                             }
                     )
                 }
-            }
-        }
-    }
-}
-
-/**
- * Segment 편집(복제/삭제/볼륨/속도) inline 패널 — 영상 우상단 연필 버튼으로 진입했을 때
- * range slider 확정 후 노출. 적용 시 [TimelineViewModel.onDuplicateRange] / [onDeleteRange] /
- * [onApplyRangeVolume] / [onApplyRangeSpeed] 가 내부적으로 resetRangeMode() 를 호출해 자동 닫힘.
- */
-@Composable
-private fun SegmentEditActionPanel(
-    volume: Float,
-    speed: Float,
-    onVolumeChange: (Float) -> Unit,
-    onSpeedChange: (Float) -> Unit,
-    onApplyVolume: (Float) -> Unit,
-    onApplySpeed: (Float) -> Unit,
-    onDuplicate: () -> Unit,
-    onDelete: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val tokens = LocalVibiColors.current
-    val typo = LocalVibiTypography.current
-    // 볼륨/속도 슬라이더는 기본 숨김 — 액션 버튼(볼륨/속도)을 누르면 해당 bar 만 펼침.
-    // 한 번에 하나만 펼쳐지도록 enum 상태: null = 아무도 안 열림.
-    var expanded by remember { mutableStateOf<String?>(null) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(tokens.panelBg, VibiShape.lg)
-            .padding(VibiSpacing.sm),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        // "구간 편집" 헤더 + 네 가지 액션 버튼. 볼륨/속도는 토글, 복제/삭제는 즉시 액션.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-        ) {
-            Text(
-                "구간 편집",
-                style = typo.titleSm,
-                color = tokens.onBackgroundPrimary,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedButton(
-                onClick = { expanded = if (expanded == "volume") null else "volume" },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
-                ),
-            ) { Text("볼륨", fontSize = 12.sp) }
-            OutlinedButton(
-                onClick = { expanded = if (expanded == "speed") null else "speed" },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (expanded == "speed") tokens.accent else tokens.onBackgroundPrimary,
-                ),
-            ) { Text("속도", fontSize = 12.sp) }
-            OutlinedButton(
-                onClick = onDuplicate,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text("복제", fontSize = 12.sp, color = tokens.accent) }
-            OutlinedButton(
-                onClick = onDelete,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(30.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accent),
-            ) { Text("삭제", fontSize = 12.sp, color = tokens.accent) }
-        }
-
-        // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). 변경된 경우에만 "적용" 버튼이 의미 있음.
-        if (expanded == "volume") {
-            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("볼륨 ${(volume * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplyVolume(volume) }) { Text("적용") }
-                }
-                Slider(
-                    value = volume,
-                    valueRange = 0f..2f,
-                    onValueChange = onVolumeChange,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-
-        // 속도 — 0.25..4.
-        if (expanded == "speed") {
-            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    val pct = (speed * 100).toInt()
-                    Text("속도 ${pct}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplySpeed(speed) }) { Text("적용") }
-                }
-                Slider(
-                    value = speed,
-                    valueRange = 0.25f..4f,
-                    onValueChange = onSpeedChange,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
     }

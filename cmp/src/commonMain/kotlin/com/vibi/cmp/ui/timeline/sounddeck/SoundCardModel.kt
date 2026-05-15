@@ -17,6 +17,8 @@ data class SoundCardModel(
     val source: SoundCardSource,
     val selected: Boolean,
     val volume: Float,
+    /** BGM 카드의 다듬기 패널에서 속도 슬라이더 초기값으로 쓰임. stem 카드는 미사용. */
+    val speed: Float = 1f,
     val audioUrl: String?,
     val rangeStartMs: Long?,
     val rangeEndMs: Long?,
@@ -71,6 +73,24 @@ private fun kindOrder(k: SoundCardKind): Int = when (k) {
 }
 
 /**
+ * BGM 카드 label — sourceUri 의 마지막 path segment (확장자 제외) 를 사용해 사용자가 삽입한
+ * 음원의 실제 이름이 카드에 노출되게 한다.
+ *
+ * - 녹음 파일은 `rec_<currentTimeMillis>.m4a` (AudioRecorder.ios.kt) → "녹음"
+ * - Android picker 의 구버전 자동 이름 `audio_<currentTimeMillis>.<ext>` → "음원"
+ * - Android picker 의 신규 이름 `<원본>_<currentTimeMillis>.<ext>` → 접미사 제거 후 원본 노출.
+ *   timestamp 가 13자리 이상이라 일반 파일명과 충돌 가능성 낮음.
+ */
+internal fun bgmDisplayLabel(sourceUri: String): String {
+    val lastSegment = sourceUri.substringAfterLast('/')
+    val withoutExt = lastSegment.substringBeforeLast('.', missingDelimiterValue = lastSegment)
+    if (withoutExt.matches(Regex("rec_\\d+"))) return "녹음"
+    if (withoutExt.matches(Regex("audio_\\d+"))) return "음원"
+    val stripped = withoutExt.replace(Regex("_\\d{13,}$"), "")
+    return stripped.ifBlank { "음원" }
+}
+
+/**
  * 분리 directive 는 timeline 위치([SeparationDirective.rangeStartMs]) 순으로 정렬해 1-based 인덱스를
  * 부여하고, 각 그룹 내부에서는 stem 종류(화자→배경) 순으로 정렬한다.
  *
@@ -115,11 +135,12 @@ fun buildSoundDeckGroups(
         .map { bgm ->
             SoundCardModel(
                 key = "bgm:${bgm.id}",
-                label = "삽입한 음원",
+                label = bgmDisplayLabel(bgm.sourceUri),
                 kind = SoundCardKind.BGM,
                 source = SoundCardSource.Bgm(bgm.id),
                 selected = bgm.volumeScale > 0f,
                 volume = bgm.volumeScale,
+                speed = bgm.speedScale,
                 audioUrl = bgm.sourceUri,
                 rangeStartMs = bgm.startMs,
                 rangeEndMs = bgm.startMs + bgm.effectiveDurationMs,
