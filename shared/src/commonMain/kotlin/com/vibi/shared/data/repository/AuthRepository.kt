@@ -4,6 +4,7 @@ import com.vibi.shared.data.local.AuthTokenStore
 import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.local.extractJwtSubject
 import com.vibi.shared.data.remote.api.BffApi
+import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
@@ -60,7 +61,7 @@ class AuthRepository(
         runCatching { appleSignInClient.signOut() }
     }
 
-    private fun finalizeSession(resp: com.vibi.shared.data.remote.dto.AuthResponseDto) {
+    private fun finalizeSession(resp: AuthResponseDto) {
         tokenStore.saveToken(resp.accessToken, resp.expiresAt)
         val newUserId = extractJwtSubject(resp.accessToken) ?: resp.user.sub
         switchUser(newUserId)

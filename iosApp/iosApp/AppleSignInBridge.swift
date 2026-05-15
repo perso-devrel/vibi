@@ -11,10 +11,15 @@ import UIKit
 final class AppleSignInBridgeImpl: NSObject, AppleSignInBridge,
     ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
 
-    /// 한 번에 하나의 시트만 띄움 — 사용자가 Apple sheet 보는 도중 다시 누를 수 없으므로 OK.
     private var pendingCallback: ((String?, String?, String?) -> Void)?
 
     func signIn(callback: @escaping (String?, String?, String?) -> Void) {
+        // 시트 modal 이라 사용자 경로로는 도달 불가하지만, 프로그래매틱 더블 호출 시
+        // 이전 callback 이 silent overwrite 되면 영원히 완료 안 됨 — 즉시 에러 콜백.
+        if pendingCallback != nil {
+            callback(nil, nil, "apple_sign_in_in_progress")
+            return
+        }
         let request = ASAuthorizationAppleIDProvider().createRequest()
         request.requestedScopes = [.fullName, .email]
         let controller = ASAuthorizationController(authorizationRequests: [request])

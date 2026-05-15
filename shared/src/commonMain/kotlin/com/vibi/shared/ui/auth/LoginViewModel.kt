@@ -34,7 +34,7 @@ class LoginViewModel(
 
     fun signInWithApple() = runProvider { authRepository.signInWithApple() }
 
-    private fun runProvider(block: suspend () -> Result<*>) {
+    private fun <T> runProvider(block: suspend () -> Result<T>) {
         if (_state.value is UiState.Loading) return
         _state.value = UiState.Loading
         viewModelScope.launch {
