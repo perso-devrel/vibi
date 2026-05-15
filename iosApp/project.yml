@@ -27,7 +27,12 @@ targets:
       - package: GoogleSignIn
         product: GoogleSignIn
     entitlements:
+      # properties 미정의 시 xcodegen 이 매 generate 마다 entitlements 파일을 빈 plist 로
+      # 덮어씀. App ID capability 와 일치하도록 여기서 single source 로 관리.
       path: iosApp/iosApp.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
     info:
       path: iosApp/Info.plist
       properties:
