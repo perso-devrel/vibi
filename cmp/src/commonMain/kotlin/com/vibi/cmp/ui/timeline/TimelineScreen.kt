@@ -961,35 +961,7 @@ fun TimelineScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // 자막/더빙 단계 액션 — 자막/더빙 생성 + 자막 편집.
-                if (showSubtitleDubContent) {
-                    val localizationBusy = state.isLocalizationBusy()
-                    val localizationLabel = when {
-                        state.autoSubtitleStatus == AutoJobStatus.RUNNING &&
-                            state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 자막·더빙 생성 중"
-                        state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
-                            state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
-                            state.sttPreflightStatus == AutoJobStatus.RUNNING -> "⏳ 자막 생성 중"
-                        state.autoDubStatus == AutoJobStatus.RUNNING -> "⏳ 더빙 생성 중"
-                        else -> "자막/더빙 생성"
-                    }
-                    OutlinedButton(
-                        enabled = !localizationBusy,
-                        modifier = Modifier.height(42.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        onClick = { viewModel.onShowLocalization() }
-                    ) { Text(localizationLabel, fontSize = 14.sp) }
-                    // 상세 편집 — 자막 cue 별 텍스트/스타일 inline 조정. 자막 1개 이상 + idle 시.
-                    val anySubtitle = remember(state.subtitleClips) {
-                        state.subtitleClips.any { it.languageCode.isNotBlank() }
-                    }
-                    OutlinedButton(
-                        enabled = anySubtitle && !anyJobRunning,
-                        modifier = Modifier.height(42.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                        onClick = { viewModel.onToggleDetailEdit() }
-                    ) { Text(if (state.showDetailEdit) "자막 편집 닫기" else "자막 편집", fontSize = 14.sp) }
-                }
+                // 자막/더빙 진입 버튼 제거 — 기능 비활성화.
                 // 음원 단계 (음원분리 + 음원삽입) 는 위 Row 에서 이미 처리.
             }
         }
@@ -1436,7 +1408,8 @@ private fun TimelineStepperRow(
     onStepClick: (TimelineStep) -> Unit,
 ) {
     val tokens = LocalVibiColors.current
-    val steps = TimelineStep.entries
+    // 자막/더빙 탭 숨김 — 기능 비활성화.
+    val steps = TimelineStep.entries.filterNot { it == TimelineStep.SubtitleDub }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
