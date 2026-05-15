@@ -29,7 +29,6 @@ fun IconLabelCard(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    trailing: (@Composable () -> Unit)? = null,
     leading: @Composable () -> Unit,
 ) {
     val tokens = LocalVibiColors.current
@@ -58,10 +57,6 @@ fun IconLabelCard(
                         color = tokens.mutedText,
                     )
                 }
-            }
-            if (trailing != null) {
-                Spacer(modifier = Modifier.width(VibiSpacing.sm))
-                trailing()
             }
         }
     }

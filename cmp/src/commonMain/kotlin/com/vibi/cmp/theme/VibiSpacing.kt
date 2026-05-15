@@ -17,8 +17,4 @@ object VibiSpacing {
     val lg = 24.dp
     val xl = 32.dp
     val xxl = 40.dp
-    /** Phone 기본 — 섹션 vertical padding. */
-    val sectionMobile = 48.dp
-    /** Tablet — section-padding 48 → 64. */
-    val sectionTablet = 64.dp
 }

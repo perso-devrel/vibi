@@ -28,10 +28,6 @@ data class VibiColors(
     val panelBgSoft: Color,
     val subtitleOverlayBg: Color,
     val mutedText: Color,
-    /** DESIGN.md `body` — 기본 본문. mutedText(muted, #777) 와 ink(#0c0a09) 사이. */
-    val bodyText: Color,
-    /** DESIGN.md `body-strong` — 강조 본문. accent (ink primary) 와 동일 톤. */
-    val bodyTextStrong: Color,
     val accent: Color,
     /** 통합 타임라인 바 — 가운데 얇은 배경 strip. */
     val timelineBarTrack: Color,
@@ -50,10 +46,6 @@ data class VibiColors(
     val timelineBarDirective: Color,
     /** 1px hairline 디바이더. ElevenLabs 의 카드 outline 패턴. */
     val hairline: Color,
-    /** DESIGN.md `hairline-soft` — 더 흐린 디바이더 (list row). */
-    val hairlineSoft: Color,
-    /** DESIGN.md `hairline-strong` — outline 버튼 / input 보더. */
-    val hairlineStrong: Color,
     /** Atmospheric gradient orb — mint. hero 배경 / gradient-orb-card 한정. */
     val gradientMint: Color,
     /** Atmospheric gradient orb — peach. */
@@ -78,16 +70,12 @@ val LightVibiColors = VibiColors(
     panelBgSoft = Color(0xFFFAFAFA),  // canvas-soft — panel-card 바탕
     subtitleOverlayBg = Color(0xCC0C0A09),  // ink with 80% alpha — overlay on video
     mutedText = Color(0xFF777169),  // muted
-    bodyText = Color(0xFF4E4E4E),  // body
-    bodyTextStrong = Color(0xFF292524),  // body-strong
     accent = Color(0xFF292524),  // primary — ink pill (유일한 CTA 색)
     timelineBarTrack = Color(0xFFE7E5E4),  // hairline
     timelineBarSegment = Color(0xFFA8A29E),  // muted-soft — 중성, accent (ink) 와 분리
     timelineBarSegmentEdited = Color(0xFFC8B8E0),  // gradient-lavender — 편집 강조
     timelineBarDirective = Color(0xFFF4C5A8),  // gradient-peach — directive 와 hue 분리
     hairline = Color(0xFFE7E5E4),  // 1px 디바이더
-    hairlineSoft = Color(0xFFF0EFED),  // 더 흐린 디바이더 (list row)
-    hairlineStrong = Color(0xFFD6D3D1),  // outline button / input border
     gradientMint = Color(0xFFA7E5D3),
     gradientPeach = Color(0xFFF4C5A8),
     gradientLavender = Color(0xFFC8B8E0),
@@ -108,16 +96,12 @@ val DarkVibiColors = VibiColors(
     panelBgSoft = Color(0xFF1C1917),  // dark 모드는 canvas-soft 분리 안함 — surface-card 와 동일 plate
     subtitleOverlayBg = Color(0xCCFAFAFA),  // light overlay on dark video
     mutedText = Color(0xFFA8A29E),  // dark-body
-    bodyText = Color(0xFFA8A29E),  // dark-body — light 의 body 와 같은 의미 슬롯
-    bodyTextStrong = Color(0xFFFAFAFA),  // dark-ink — 강조 본문
     accent = Color(0xFFFAFAFA),  // primary inverted — white pill on dark canvas
     timelineBarTrack = Color(0xFF292524),  // dark-hairline
     timelineBarSegment = Color(0xFF777169),  // muted — dark bg 위 중성
     timelineBarSegmentEdited = Color(0xFFC8B8E0),  // gradient-lavender — atmosphere 그대로
     timelineBarDirective = Color(0xFFF4C5A8),  // gradient-peach
     hairline = Color(0xFF292524),  // dark-hairline
-    hairlineSoft = Color(0xFF1C1917),  // dark-surface-card — 다크에선 더 약한 디바이더
-    hairlineStrong = Color(0xFF292524),  // dark-surface-strong — outline border
     gradientMint = Color(0xFFA7E5D3),
     gradientPeach = Color(0xFFF4C5A8),
     gradientLavender = Color(0xFFC8B8E0),

@@ -40,9 +40,21 @@ fun ExportVariantPickerSheet(
     onCancel: () -> Unit,
 ) {
     val typo = LocalVibiTypography.current
-    val title = when (picker) {
-        is ExportVariantPickerState.Save -> "저장할 변종 선택"
-        is ExportVariantPickerState.Share -> "공유할 변종 선택"
+    // sealed Save / Share 양쪽이 abstract `variants` + 자체 `selected` set + 자체 toggle 콜백을
+    // 가져 외형/동작이 동일. 이 4개를 한 번 캐시해 본문은 단일 분기.
+    val title: String
+    val confirmVerb: String
+    val selected: Set<String>
+    val onToggle: (String) -> Unit
+    when (picker) {
+        is ExportVariantPickerState.Save -> {
+            title = "저장할 변종 선택"; confirmVerb = "저장"
+            selected = picker.selected; onToggle = onToggleSave
+        }
+        is ExportVariantPickerState.Share -> {
+            title = "공유할 변종 선택"; confirmVerb = "공유"
+            selected = picker.selected; onToggle = onToggleShare
+        }
     }
     AlertDialog(
         onDismissRequest = onCancel,
@@ -57,72 +69,30 @@ fun ExportVariantPickerSheet(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
             ) {
-                when (picker) {
-                    is ExportVariantPickerState.Save -> {
-                        picker.variants.forEach { variant ->
-                            val checked = variant.key in picker.selected
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onToggleSave(variant.key) }
-                                    .padding(vertical = VibiSpacing.xxs),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(
-                                    checked = checked,
-                                    onCheckedChange = { onToggleSave(variant.key) },
-                                )
-                                Text(
-                                    variant.displayLabel,
-                                    style = typo.bodyMd,
-                                )
-                            }
-                        }
-                    }
-                    is ExportVariantPickerState.Share -> {
-                        picker.variants.forEach { variant ->
-                            val checked = variant.key in picker.selected
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onToggleShare(variant.key) }
-                                    .padding(vertical = VibiSpacing.xxs),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(
-                                    checked = checked,
-                                    onCheckedChange = { onToggleShare(variant.key) },
-                                )
-                                Text(
-                                    variant.displayLabel,
-                                    style = typo.bodyMd,
-                                )
-                            }
-                        }
+                picker.variants.forEach { variant ->
+                    val checked = variant.key in selected
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggle(variant.key) }
+                            .padding(vertical = VibiSpacing.xxs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = { onToggle(variant.key) },
+                        )
+                        Text(variant.displayLabel, style = typo.bodyMd)
                     }
                 }
             }
         },
         confirmButton = {
-            when (picker) {
-                is ExportVariantPickerState.Save -> {
-                    val canConfirm = picker.selected.isNotEmpty()
-                    Button(
-                        enabled = canConfirm,
-                        onClick = onConfirm,
-                    ) {
-                        Text("저장 (${picker.selected.size}/${picker.variants.size})")
-                    }
-                }
-                is ExportVariantPickerState.Share -> {
-                    val canConfirm = picker.selected.isNotEmpty()
-                    Button(
-                        enabled = canConfirm,
-                        onClick = onConfirm,
-                    ) {
-                        Text("공유 (${picker.selected.size}/${picker.variants.size})")
-                    }
-                }
+            Button(
+                enabled = selected.isNotEmpty(),
+                onClick = onConfirm,
+            ) {
+                Text("$confirmVerb (${selected.size}/${picker.variants.size})")
             }
         },
         dismissButton = {

@@ -13,7 +13,6 @@ fun AddSourceCard(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    trailing: (@Composable () -> Unit)? = null,
 ) {
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
@@ -23,7 +22,6 @@ fun AddSourceCard(
         enabled = enabled,
         onClick = onClick,
         modifier = modifier,
-        trailing = trailing,
     ) {
         Text("+", color = tokens.accent, style = typo.displaySm)
     }

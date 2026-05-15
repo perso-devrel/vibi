@@ -179,8 +179,8 @@ private fun buildVibiTypography(
     ),
 )
 
-/** system fallback (Serif/SansSerif/Monospace) — 폰트 번들 도착 전 또는 비-CMP 컨텍스트용. */
-val DefaultVibiTypography: VibiTypography = buildVibiTypography(
+/** system fallback — VibiTheme 밖 (test / preview) 에서만 의미. 정상 경로는 [rememberVibiTypography]. */
+private val DefaultVibiTypography: VibiTypography = buildVibiTypography(
     displayFamily = FontFamily.Serif,
     bodyFamily = FontFamily.SansSerif,
     monoFamily = FontFamily.Monospace,
@@ -191,22 +191,25 @@ val DefaultVibiTypography: VibiTypography = buildVibiTypography(
  *  - Display: EB Garamond variable font (weight axis) — Light(300) 추출.
  *  - Body:    Inter Regular(400) / Medium(500) / SemiBold(600) static 3 weight.
  *  - Mono:    JetBrains Mono Medium(500).
+ *
+ * Why no-key `remember`: Font(...) 는 매 호출마다 새 instance 라 FontFamily(...) 도 매번 새 reference.
+ * `remember(font, ...)` key 로는 cache miss 가 누적돼 매 recomposition 마다 16개 TextStyle 재할당 +
+ * static CompositionLocal 의 모든 consumer (5개 화면 + 자식들) 를 강제 recompose. no-key remember
+ * 로 첫 호출 시만 빌드해 동일 인스턴스를 흘려보냄.
  */
 @Composable
 fun rememberVibiTypography(): VibiTypography {
-    val display = FontFamily(
-        Font(Res.font.EBGaramond_VariableFont_wght, weight = FontWeight.Light),
-    )
-    val body = FontFamily(
-        Font(Res.font.Inter_Regular, weight = FontWeight.Normal),
-        Font(Res.font.Inter_Medium, weight = FontWeight.Medium),
-        Font(Res.font.Inter_SemiBold, weight = FontWeight.SemiBold),
-    )
-    val mono = FontFamily(
-        Font(Res.font.JetBrainsMono_Medium, weight = FontWeight.Medium),
-    )
-    return remember(display, body, mono) {
-        buildVibiTypography(displayFamily = display, bodyFamily = body, monoFamily = mono)
+    val ebGaramond = Font(Res.font.EBGaramond_VariableFont_wght, weight = FontWeight.Light)
+    val interRegular = Font(Res.font.Inter_Regular, weight = FontWeight.Normal)
+    val interMedium = Font(Res.font.Inter_Medium, weight = FontWeight.Medium)
+    val interSemiBold = Font(Res.font.Inter_SemiBold, weight = FontWeight.SemiBold)
+    val jetBrainsMonoMedium = Font(Res.font.JetBrainsMono_Medium, weight = FontWeight.Medium)
+    return remember {
+        buildVibiTypography(
+            displayFamily = FontFamily(ebGaramond),
+            bodyFamily = FontFamily(interRegular, interMedium, interSemiBold),
+            monoFamily = FontFamily(jetBrainsMonoMedium),
+        )
     }
 }
 

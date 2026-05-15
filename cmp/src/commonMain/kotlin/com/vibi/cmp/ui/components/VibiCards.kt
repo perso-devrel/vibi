@@ -38,29 +38,3 @@ fun VibiPanelCard(
         content()
     }
 }
-
-/**
- * DESIGN.md `feature-card` — `surface-card` bg(순백), `hairline` 1dp border, `rounded.xl` (18),
- * `padding 20`.
- *
- * 1-up / 2-up 메인 콘텐츠 카드 — panel-card 보다 더 강한 계층.
- */
-@Composable
-fun VibiFeatureCard(
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-    enabled: Boolean = true,
-    content: @Composable () -> Unit,
-) {
-    val tokens = LocalVibiColors.current
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(tokens.panelBg, VibiShape.xl)
-            .border(width = 1.dp, color = tokens.hairline, shape = VibiShape.xl)
-            .then(if (onClick != null) Modifier.clickable(enabled = enabled) { onClick() } else Modifier)
-            .padding(VibiSpacing.md),
-    ) {
-        content()
-    }
-}
