@@ -7,17 +7,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -30,8 +26,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiShape
+import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.shared.domain.model.SubtitleClip
 import com.vibi.shared.ui.timeline.TimelineUiState
 
@@ -52,6 +50,7 @@ fun DetailEditPanel(
     onSeekToClip: (positionMs: Long) -> Unit,
 ) {
     val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
     // 원본 자막 (lang="") 도 포함 — chip 라벨 "ORIGINAL". 빈 문자열을 항상 첫 항목으로 두고 나머지는
     // 알파벳 순. compareBy 의 첫 키 (isNotBlank) 가 false<true 정렬을 이용해 빈 문자열 우선.
     val langs = remember(state.subtitleClips) {
@@ -60,7 +59,7 @@ fun DetailEditPanel(
             .sortedWith(compareBy({ it.isNotBlank() }, { it }))
     }
     if (langs.isEmpty()) {
-        Text("자막이 없어 상세 편집 불가.", style = MaterialTheme.typography.bodySmall)
+        Text("자막이 없어 상세 편집 불가.", style = typo.bodySm)
         return
     }
     // detailEditLang 이 stale (자막이 삭제돼 langs 에 더 이상 없음) 이면 fallback — 잘못된 lang 으로
@@ -73,19 +72,19 @@ fun DetailEditPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(tokens.panelBg, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .background(tokens.panelBg, VibiShape.lg)
+            .padding(VibiSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
     ) {
         // 헤더 — 타이틀만. "적용" 버튼은 inline edit area 의 텍스트 라벨 우측으로 이동.
         Text(
             "자막 상세 편집",
-            style = MaterialTheme.typography.titleSmall,
+            style = typo.titleSm,
             color = tokens.onBackgroundPrimary,
         )
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
         ) {
             langs.forEach { lang ->
                 FilterChip(
@@ -100,7 +99,7 @@ fun DetailEditPanel(
         // 다른 cue 클릭 시 selectedSubtitleClipId 가 바뀌므로 이전 펼침은 자동으로 닫힘 (단일 selection).
         LazyColumn(
             modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)
         ) {
             items(items = cues, key = { it.id }) { clip ->
                 val selected = state.selectedSubtitleClipId == clip.id
@@ -110,24 +109,24 @@ fun DetailEditPanel(
                             .fillMaxWidth()
                             .background(
                                 if (selected) tokens.chipBg else Color.Transparent,
-                                RoundedCornerShape(6.dp)
+                                VibiShape.sm
                             )
                             .clickable {
                                 onSelectClip(if (selected) null else clip.id)
                                 if (!selected) onSeekToClip(clip.startMs)
                             }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .padding(horizontal = VibiSpacing.xs, vertical = VibiSpacing.xxs),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                     ) {
                         Text(
                             text = "${clip.startMs / 1000}s",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = typo.caption,
                             color = tokens.mutedText,
                         )
                         Text(
                             text = clip.text,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = typo.bodyMd,
                             color = tokens.onBackgroundPrimary,
                             modifier = Modifier.fillMaxWidth(),
                             maxLines = 1,
@@ -159,6 +158,7 @@ private fun InlineCueEditArea(
     onUpdateStyle: (clipId: String, fontSizeSp: Float?, colorHex: String?, backgroundColorHex: String?) -> Unit,
 ) {
     val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
     var draftText by remember(clip.id, clip.text) { mutableStateOf(clip.text) }
     var draftFontSize by remember(clip.id, clip.fontSizeSp) { mutableStateOf(clip.fontSizeSp) }
     var draftColorHex by remember(clip.id, clip.colorHex) { mutableStateOf(clip.colorHex) }
@@ -171,8 +171,8 @@ private fun InlineCueEditArea(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = VibiSpacing.xs, vertical = VibiSpacing.xxs),
+        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -180,7 +180,7 @@ private fun InlineCueEditArea(
         ) {
             Text(
                 "텍스트",
-                style = MaterialTheme.typography.labelMedium,
+                style = typo.bodySm,
                 color = tokens.mutedText,
                 modifier = Modifier.weight(1f),
             )
@@ -200,9 +200,8 @@ private fun InlineCueEditArea(
                         )
                     }
                 },
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                modifier = Modifier.height(34.dp),
-            ) { Text("적용", fontSize = 13.sp) }
+                contentPadding = PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
+            ) { Text("적용", style = typo.bodySm) }
         }
         OutlinedTextField(
             value = draftText,
@@ -212,7 +211,7 @@ private fun InlineCueEditArea(
 
         Text(
             "글자 크기: ${draftFontSize.toInt()}sp",
-            style = MaterialTheme.typography.bodySmall,
+            style = typo.bodySm,
             color = tokens.mutedText,
         )
         Slider(
@@ -220,19 +219,18 @@ private fun InlineCueEditArea(
             valueRange = 12f..32f,
             onValueChange = { draftFontSize = it },
         )
-        Text("글자 색", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+        Text("글자 색", style = typo.bodySm, color = tokens.mutedText)
         ColorPaletteRow(
             selectedHex = draftColorHex,
             palette = TEXT_COLOR_PALETTE,
             onSelect = { draftColorHex = it },
         )
-        Text("배경", style = MaterialTheme.typography.labelMedium, color = tokens.mutedText)
+        Text("배경", style = typo.bodySm, color = tokens.mutedText)
         ColorPaletteRow(
             selectedHex = draftBgHex,
             palette = BG_COLOR_PALETTE,
             showAlpha = true,
             onSelect = { draftBgHex = it },
         )
-        Spacer(Modifier.height(2.dp))
     }
 }

@@ -12,13 +12,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.shared.ui.timeline.ExportVariantPickerState
 
 /**
@@ -38,13 +39,14 @@ fun ExportVariantPickerSheet(
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val typo = LocalVibiTypography.current
     val title = when (picker) {
         is ExportVariantPickerState.Save -> "저장할 변종 선택"
         is ExportVariantPickerState.Share -> "공유할 변종 선택"
     }
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text(title) },
+        title = { Text(title, style = typo.titleLg) },
         text = {
             // variant 가 5+ 일 때 dialog 가 화면 하단을 넘어 confirm/cancel 버튼이 가려지는 사고 방지.
             // heightIn(max = 320.dp) + verticalScroll 로 dialog 내부에서 스크롤 가능하게.
@@ -53,7 +55,7 @@ fun ExportVariantPickerSheet(
                     .fillMaxWidth()
                     .heightIn(max = 320.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
             ) {
                 when (picker) {
                     is ExportVariantPickerState.Save -> {
@@ -63,7 +65,7 @@ fun ExportVariantPickerSheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { onToggleSave(variant.key) }
-                                    .padding(vertical = 4.dp),
+                                    .padding(vertical = VibiSpacing.xxs),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Checkbox(
@@ -72,7 +74,7 @@ fun ExportVariantPickerSheet(
                                 )
                                 Text(
                                     variant.displayLabel,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = typo.bodyMd,
                                 )
                             }
                         }
@@ -84,7 +86,7 @@ fun ExportVariantPickerSheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { onToggleShare(variant.key) }
-                                    .padding(vertical = 4.dp),
+                                    .padding(vertical = VibiSpacing.xxs),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Checkbox(
@@ -93,7 +95,7 @@ fun ExportVariantPickerSheet(
                                 )
                                 Text(
                                     variant.displayLabel,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = typo.bodyMd,
                                 )
                             }
                         }

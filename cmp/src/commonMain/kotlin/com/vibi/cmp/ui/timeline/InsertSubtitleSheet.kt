@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -29,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.shared.domain.model.Anchor
 import com.vibi.shared.domain.model.SubtitleClip
 import com.vibi.shared.domain.model.SubtitlePosition
@@ -69,11 +70,12 @@ fun InsertSubtitleSheet(
     var colorHex by remember { mutableStateOf(SubtitleClip.DEFAULT_COLOR_HEX) }
     var backgroundColorHex by remember { mutableStateOf(SubtitleClip.DEFAULT_BACKGROUND_COLOR_HEX) }
 
+    val typo = LocalVibiTypography.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("자막 추가") },
+        title = { Text("자막 추가", style = typo.titleLg) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm)) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -91,8 +93,8 @@ fun InsertSubtitleSheet(
                     label = { Text("길이 (초)") }
                 )
 
-                Text("위치", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("위치", style = typo.titleSm)
+                Row(horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                     Anchor.entries.forEach { a ->
                         OutlinedButton(
                             onClick = {
@@ -114,27 +116,27 @@ fun InsertSubtitleSheet(
                         }
                     }
                 }
-                Text("Y 오프셋: ${yOffsetPct.toInt()}%", style = MaterialTheme.typography.bodySmall)
+                Text("Y 오프셋: ${yOffsetPct.toInt()}%", style = typo.bodySm)
                 Slider(value = yOffsetPct, valueRange = 0f..100f, onValueChange = { yOffsetPct = it })
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(VibiSpacing.xxs))
 
-                Text("스타일", style = MaterialTheme.typography.titleSmall)
-                Text("글자 크기: ${fontSizeSp.toInt()}sp", style = MaterialTheme.typography.bodySmall)
+                Text("스타일", style = typo.titleSm)
+                Text("글자 크기: ${fontSizeSp.toInt()}sp", style = typo.bodySm)
                 Slider(
                     value = fontSizeSp,
                     valueRange = 12f..32f,
                     onValueChange = { fontSizeSp = it }
                 )
 
-                Text("글자 색", style = MaterialTheme.typography.bodySmall)
+                Text("글자 색", style = typo.bodySm)
                 ColorPaletteRow(
                     selectedHex = colorHex,
                     palette = TEXT_COLOR_PALETTE,
                     onSelect = { colorHex = it }
                 )
 
-                Text("배경", style = MaterialTheme.typography.bodySmall)
+                Text("배경", style = typo.bodySm)
                 ColorPaletteRow(
                     selectedHex = backgroundColorHex,
                     palette = BG_COLOR_PALETTE,
@@ -190,12 +192,12 @@ internal fun ColorPaletteRow(
     onSelect: (String) -> Unit,
 ) {
     var pickerOpen by remember { mutableStateOf(false) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
         palette.forEach { hex ->
             val selected = hex.equals(selectedHex, ignoreCase = true)
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(VibiSpacing.xl)
                     .background(parseArgbHex(hex), CircleShape)
                     .border(
                         width = if (selected) 3.dp else 1.dp,
@@ -214,7 +216,7 @@ internal fun ColorPaletteRow(
         // (dialog 의 initialHex 로 현재 색 그대로 노출).
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(VibiSpacing.xl)
                 .border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape)
                 .clickable { pickerOpen = true },
             contentAlignment = Alignment.Center,

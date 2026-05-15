@@ -6,15 +6,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,6 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiShape
+import com.vibi.cmp.theme.VibiSpacing
 
 /**
  * 사용자 정의 색 선택 dialog — RGB(A) slider 기반.
@@ -60,31 +60,32 @@ fun CustomColorPickerDialog(
     )
     val hexString = formatArgbHex(effectiveAlpha, red.toInt(), green.toInt(), blue.toInt())
 
+    val typo = LocalVibiTypography.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("색 선택") },
+        title = { Text("색 선택", style = typo.titleLg) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                 // 큰 preview Box — 체커보드 배경 위에 색을 올려 alpha 가시화.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(64.dp)
-                        .background(Color.White, RoundedCornerShape(8.dp))
-                        .border(1.dp, Color.Black.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
+                        .background(Color.White, VibiShape.sm)
+                        .border(1.dp, Color.Black.copy(alpha = 0.2f), VibiShape.sm),
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(64.dp)
-                            .background(previewColor, RoundedCornerShape(8.dp)),
+                            .background(previewColor, VibiShape.sm),
                     )
                 }
                 Text(
                     text = hexString,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    style = typo.bodyMd,
+                    modifier = Modifier.fillMaxWidth().padding(top = VibiSpacing.xxs),
                 )
 
                 ChannelSlider(label = "R", value = red, color = Color.Red) { red = it }
@@ -93,7 +94,6 @@ fun CustomColorPickerDialog(
                 if (showAlpha) {
                     ChannelSlider(label = "A", value = alpha, color = Color.Gray) { alpha = it }
                 }
-                Spacer(Modifier.height(4.dp))
             }
         },
         confirmButton = {
@@ -115,18 +115,19 @@ private fun ChannelSlider(
     color: Color,
     onValueChange: (Float) -> Unit,
 ) {
+    val typo = LocalVibiTypography.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
     ) {
         Box(
-            modifier = Modifier.size(20.dp).background(color, RoundedCornerShape(4.dp)),
+            modifier = Modifier.size(VibiSpacing.md).background(color, VibiShape.xs),
         )
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.size(width = 18.dp, height = 20.dp),
+            style = typo.bodySm,
+            modifier = Modifier.size(width = VibiSpacing.md, height = VibiSpacing.md),
         )
         Slider(
             value = value,
@@ -136,8 +137,8 @@ private fun ChannelSlider(
         )
         Text(
             text = value.toInt().toString().padStart(3, ' '),
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.size(width = 32.dp, height = 20.dp),
+            style = typo.bodySm,
+            modifier = Modifier.size(width = VibiSpacing.xl, height = VibiSpacing.md),
         )
     }
 }
