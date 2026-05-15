@@ -13,12 +13,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -38,10 +36,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.rememberAudioPreviewer
 import com.vibi.cmp.platform.rememberStemMixer
+import com.vibi.cmp.theme.LocalVibiColors
+import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import com.vibi.shared.ui.timeline.AudioSeparationUiState
 import com.vibi.shared.ui.timeline.localizeProgressReason
@@ -68,7 +68,8 @@ fun AudioSeparationSheet(
     onDismiss: () -> Unit,
     onDelete: (() -> Unit)? = null,
 ) {
-    val tokens = com.vibi.cmp.theme.LocalVibiColors.current
+    val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val previewer = rememberAudioPreviewer()
     // 전체 재생 — 선택된 stem 다수를 동시에 재생하기 위한 mixer. 개별 ▶ 는 previewer 단일 player.
@@ -89,8 +90,8 @@ fun AudioSeparationSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = VibiSpacing.md, vertical = VibiSpacing.sm),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
         ) {
             // PICK_STEMS 단계엔 title 우측에 "▶ 전체" / "⏸ 전체" 토글.
             Row(
@@ -99,7 +100,8 @@ fun AudioSeparationSheet(
             ) {
                 Text(
                     "음원 분리",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = typo.displaySm,
+                    color = tokens.onBackgroundPrimary,
                     modifier = Modifier.weight(1f),
                 )
                 if (state.step == AudioSeparationStep.PICK_STEMS) {
@@ -134,24 +136,24 @@ fun AudioSeparationSheet(
                         Icon(
                             imageVector = if (isAllPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             contentDescription = if (isAllPlaying) "선택 재생 일시정지" else "선택 재생",
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(VibiSpacing.md),
                         )
-                        Spacer(Modifier.size(4.dp))
-                        Text("선택 재생")
+                        Spacer(Modifier.size(VibiSpacing.xxs))
+                        Text("선택 재생", style = typo.bodySm)
                     }
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm)) {
                 when (state.step) {
                     AudioSeparationStep.SETUP -> Unit  // Perso 자동 감지 — 사용자 입력 불필요
 
                     AudioSeparationStep.PROCESSING -> {
-                        Text(localizeProgressReason(state.progressReason))
+                        Text(localizeProgressReason(state.progressReason), style = typo.bodyMd)
                         LinearProgressIndicator(
                             progress = { state.progress / 100f },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("${state.progress}%", style = MaterialTheme.typography.bodySmall)
+                        Text("${state.progress}%", style = typo.caption)
                     }
 
                     AudioSeparationStep.PICK_STEMS -> {
@@ -162,17 +164,18 @@ fun AudioSeparationSheet(
                             val volume = sel?.volume ?: 1.0f
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                modifier = Modifier.fillMaxWidth().padding(vertical = VibiSpacing.xxs)
                             ) {
                                 // 원형 토글 — 사각 Checkbox 대신.
                                 CircleToggle(
                                     selected = selected,
                                     onClick = { onToggleStem(stem.stemId) },
                                 )
-                                Spacer(Modifier.size(8.dp))
+                                Spacer(Modifier.size(VibiSpacing.xs))
                                 Text(
                                     text = stemDisplayLabel(stem),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = typo.bodySm,
+                                    color = tokens.onBackgroundPrimary,
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     modifier = Modifier
@@ -185,7 +188,7 @@ fun AudioSeparationSheet(
                                     onValueChange = { onUpdateStemVolume(stem.stemId, it) },
                                     modifier = Modifier
                                         .weight(1f)
-                                        .padding(horizontal = 4.dp)
+                                        .padding(horizontal = VibiSpacing.xxs)
                                         .scale(scaleX = 1f, scaleY = 0.7f),
                                 )
                                 val isThisPlaying = playingId == stem.stemId
@@ -207,7 +210,7 @@ fun AudioSeparationSheet(
                                     Icon(
                                         imageVector = if (isThisPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                                         contentDescription = if (isThisPlaying) "일시정지" else "재생",
-                                        modifier = Modifier.size(20.dp),
+                                        modifier = Modifier.size(VibiSpacing.md),
                                     )
                                 }
                             }
@@ -215,12 +218,12 @@ fun AudioSeparationSheet(
                     }
 
                     AudioSeparationStep.DONE -> {
-                        Text("완료 — 선택한 stem 이 명세로 저장됨", style = MaterialTheme.typography.bodyMedium)
+                        Text("완료 — 선택한 stem 이 명세로 저장됨", style = typo.bodyMd)
                     }
 
                     AudioSeparationStep.FAILED -> {
-                        Text("실패", color = MaterialTheme.colorScheme.error)
-                        state.errorMessage?.let { Text(it) }
+                        Text("실패", color = MaterialTheme.colorScheme.error, style = typo.bodyMd)
+                        state.errorMessage?.let { Text(it, style = typo.bodySm) }
                     }
                 }
             }
@@ -229,7 +232,7 @@ fun AudioSeparationSheet(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
             ) {
                 if (onDelete != null && state.step == AudioSeparationStep.PICK_STEMS) {
                     TextButton(onClick = {
@@ -264,10 +267,10 @@ fun AudioSeparationSheet(
 
 @Composable
 private fun CircleToggle(selected: Boolean, onClick: () -> Unit) {
-    val tokens = com.vibi.cmp.theme.LocalVibiColors.current
+    val tokens = LocalVibiColors.current
     Box(
         modifier = Modifier
-            .size(20.dp)
+            .size(VibiSpacing.md)
             .clip(CircleShape)
             .border(
                 width = 1.dp,
@@ -281,7 +284,7 @@ private fun CircleToggle(selected: Boolean, onClick: () -> Unit) {
             // 라디오 버튼 스타일: 외곽 + 안 채운 동그라미.
             Box(
                 modifier = Modifier
-                    .size(10.dp)
+                    .size(VibiSpacing.sm)
                     .clip(CircleShape)
                     .background(tokens.onBackgroundPrimary)
             )
