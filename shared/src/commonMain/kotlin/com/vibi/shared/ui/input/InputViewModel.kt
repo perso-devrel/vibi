@@ -267,7 +267,13 @@ class InputViewModel constructor(
 
     private fun EditProject.toDraftSummary(thumbnailPath: String?): DraftSummary {
         var running = 0
-        if (separationStatus == AutoJobStatus.RUNNING) running++
+        // 동시 음원분리 list 항목 수 = 진행 중 잡 수. legacy 단일 슬롯은 list 가 비어 있을 때만 fallback
+        // 카운트 (구 데이터 호환).
+        if (processingSeparations.isNotEmpty()) {
+            running += processingSeparations.size
+        } else if (separationStatus == AutoJobStatus.RUNNING) {
+            running++
+        }
         if (autoSubtitleStatus == AutoJobStatus.RUNNING) running++
         if (autoDubStatus == AutoJobStatus.RUNNING) running++
         // language-별 자동 더빙 잡도 카운트 (autoDubStatus 가 IDLE 라도 일부 언어가 RUNNING 일 수 있음)

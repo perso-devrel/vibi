@@ -1,8 +1,14 @@
 package com.vibi.cmp.ui.timeline
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -40,8 +46,9 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
@@ -141,7 +148,7 @@ fun TimelineScreen(
     // unified mode 게이트 — stepper UI 가 숨겨지면 5~8단계가 한 스크롤에 모두 노출. AudioSources /
     // SubtitleDub 전용 분기는 본 두 boolean 으로 묶어 stepper-on 경로도 동시에 유지.
     val unifiedScroll = com.vibi.cmp.platform.RuntimeFlags.stepperHidden
-    val showAudioSourcesContent = unifiedScroll || state.currentStep == TimelineStep.AudioSources
+    val showAudioSourcesContent = unifiedScroll || state.currentStep == TimelineStep.EditAudio
     val showSubtitleDubContent = unifiedScroll || state.currentStep == TimelineStep.SubtitleDub
 
     // ChatVM — FAB unread badge 와 panel 양쪽이 같은 인스턴스 공유. bindProject / bindTimelineEvents
@@ -264,24 +271,9 @@ fun TimelineScreen(
         }
     }
 
-    // Edit 탭 = 자동 segment edit mode. segments hydrate 직후 1회 onEnterSegmentEditMode 호출.
-    // - currentStep == Edit 일 때만
-    // - 아직 mode 진입 안 했을 때만 (LaunchedEffect 가드)
-    // - firstVideoSegId 확보된 직후
-    // unified 모드(stepper 숨김) 에선 stepper UI 가 없어 currentStep 이 Edit 으로 갈 일이 없고,
-    // 영상편집은 EditEntryCard 의 명시 클릭으로만 진입.
-    val firstVideoSegIdForAutoEnter = state.segments.firstOrNull {
-        it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
-    }?.id
-    LaunchedEffect(state.currentStep, firstVideoSegIdForAutoEnter) {
-        if (com.vibi.cmp.platform.RuntimeFlags.stepperHidden) return@LaunchedEffect
-        if (state.currentStep == TimelineStep.Edit &&
-            !state.isSegmentEditMode &&
-            firstVideoSegIdForAutoEnter != null
-        ) {
-            viewModel.onEnterSegmentEditMode(firstVideoSegIdForAutoEnter)
-        }
-    }
+    // EditAudio (편집·음원) 단계는 자동 segment edit 모드 진입을 하지 않는다 —
+    // 사용자가 BGM 작업 + 영상 segment 작업을 자유롭게 섞을 수 있도록. segment 편집은
+    // 영상 위 우상단 연필 버튼(onEnterSegmentEditMode) 명시 진입.
 
     // 자막/더빙 단계 진입 시 생성 패널 자동 열기. 사용자가 닫으면 같은 단계 안에서 다시 열리지 않고,
     // 다른 단계 갔다 돌아오면 다시 열림 (currentStep 키 변경으로 재발화).
@@ -340,7 +332,7 @@ fun TimelineScreen(
         val saveAnyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
             state.autoDubStatus == AutoJobStatus.RUNNING ||
             state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.separationStatus == AutoJobStatus.RUNNING ||
+            state.processingSeparations.isNotEmpty() ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
             state.sttPreflightStatus == AutoJobStatus.RUNNING
         Row(
@@ -605,7 +597,7 @@ fun TimelineScreen(
                 }
             }
 
-            // Edit 탭 자동 진입으로 별도 pencil 버튼 불필요 (LaunchedEffect 가 진입 처리).
+            // 영상편집 진입은 우상단 연필이 아닌 음원분리/음원삽입 행의 "편집" 버튼으로 이동.
         }
 
         // Transport row: play/pause + 시간 표시
@@ -678,27 +670,28 @@ fun TimelineScreen(
         //    directive 위 탭 → 편집 sheet, free interval 위 탭 → 그 구간으로 pendingRange 점프.
         if (state.videoDurationMs > 0) {
             val sortedDirectives = state.separationDirectives.sortedBy { it.rangeStartMs }
-            // 진행 중인 음원분리 range — PROCESSING 단계 + range 정보 있을 때만. 사용자가 "이 구간 분리 중"
-            // 임을 시각적으로 인지하도록 timeline 위에 accent 컬러 progress overlay 로 표시. 분리 결과
-            // 막대(directiveColor) 와 색을 분리해서 in-progress / committed 를 구별 가능.
-            val processingSep = state.audioSeparation?.takeIf {
-                it.step == AudioSeparationStep.PROCESSING
+            // range 정보 없는 entry (BGM/whole-video) 는 영상 전체로 fallback.
+            val processingOverlays = remember(state.processingSeparations, state.videoDurationMs) {
+                state.processingSeparations
+                    .filter { it.segmentId.isNotBlank() }
+                    .map { p ->
+                        val s = p.rangeStartMs
+                        val e = p.rangeEndMs
+                        val (start, end) = if (s != null && e != null && e > s) s to e
+                        else 0L to state.videoDurationMs
+                        ProcessingSeparationOverlay(start, end, p.progress)
+                    }
             }
-            // range 정보가 있으면 그 부분, 없으면 영상 전체 (whole-video 분리). segmentId="" 인 BGM 분리는
-            // 영상 timeline 과 무관하므로 overlay 미노출.
-            val (processingRangeStart, processingRangeEnd) = when {
-                processingSep == null -> null to null
-                processingSep.segmentId.isBlank() -> null to null  // BGM 분리 → timeline overlay 안 함
-                else -> {
-                    val s = processingSep.rangeStartMs
-                    val e = processingSep.rangeEndMs
-                    if (s != null && e != null && e > s) s to e
-                    else 0L to state.videoDurationMs
-                }
-            }
-            val processingProgress = processingSep?.progress
-            // 재생바와 BGM 영역을 묶어 거리 최소화 — 외부 Column 의 8dp 간격을 회피.
-            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            // 영상 timeline + BGM lane 을 단일 시각 컨테이너로 묶어 두 영역이 별개 "재생바"로 인식되지 않게.
+            // 외부 background + clip(RoundedCornerShape) 이 두 트랙을 하나의 줄로 통합하고,
+            // BgmTimelineLane 내부의 자체 배경은 alpha 낮춰 외곽과 합쳐지게.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(tokens.timelineBarTrack.copy(alpha = 0.45f)),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
             // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive 시각 모두 한 위치에.
             UnifiedTimelineBar(
                 segments = state.segments,
@@ -717,9 +710,7 @@ fun TimelineScreen(
                 segmentColor = tokens.timelineBarSegment,
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
                 directiveColor = tokens.timelineBarDirective,
-                processingSeparationStartMs = processingRangeStart,
-                processingSeparationEndMs = processingRangeEnd,
-                processingSeparationProgress = processingProgress,
+                processingSeparations = processingOverlays,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
                 onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
@@ -740,6 +731,8 @@ fun TimelineScreen(
                     clips = state.bgmClips,
                     totalMs = state.videoDurationMs,
                     accent = tokens.accent,
+                    markerColor = tokens.onBackgroundPrimary,
+                    playbackPositionMs = state.playbackPositionMs,
                     selectedClipId = state.selectedBgmClipId,
                     tapEnabled = !state.isRangeSelecting,
                     laneCount = state.bgmLaneCount,
@@ -774,23 +767,7 @@ fun TimelineScreen(
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
                     }
                 }
-                // 구간이 실제로 선택됐을 때만 (range slider 가 zero-width 가 아닐 때) 편집 옵션
-                // 노출 — 진입 직후 빈 선택 상태에선 슬라이더만 보이고 패널은 숨김.
-                if (state.isSegmentEditMode &&
-                    state.pendingRangeEndMs > state.pendingRangeStartMs
-                ) {
-                    SegmentEditActionPanel(
-                        volume = state.pendingRangeVolume,
-                        speed = state.pendingRangeSpeed,
-                        onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
-                        onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
-                        onApplyVolume = { viewModel.onApplyRangeVolume(it) },
-                        onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
-                        onDuplicate = { viewModel.onDuplicateRange() },
-                        onDelete = { viewModel.onDeleteRange() },
-                        onCancel = { viewModel.onFinishSegmentEdit() },
-                    )
-                }
+                // SegmentEditActionPanel 은 음원분리/음원삽입/편집 행 아래로 이동 — 사용자 요청.
             }
         }
 
@@ -805,15 +782,18 @@ fun TimelineScreen(
         val anyJobRunning = state.autoSubtitleStatus == AutoJobStatus.RUNNING ||
             state.autoDubStatus == AutoJobStatus.RUNNING ||
             state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-            state.separationStatus == AutoJobStatus.RUNNING ||
+            state.processingSeparations.isNotEmpty() ||
             state.regenerateSubtitleStatus == AutoJobStatus.RUNNING ||
             state.sttPreflightStatus == AutoJobStatus.RUNNING
-        if (!state.isRangeSelecting && !state.localizationOpen) {
-            // 음원 단계 — 음원분리/음원삽입 두 버튼을 가로 양쪽 끝까지 채워 양쪽 정렬.
-            // 좌: 음원분리, 우: 음원삽입. weight(1f) 로 절반씩 균등 분배.
+        // segment edit 모드 (isSegmentEditMode=true) 일 때는 isRangeSelecting 도 true 가 되지만
+        // 음원분리·음원삽입·편집(닫기) 행을 유지해야 사용자가 "닫기" 로 빠져나올 수 있다.
+        // 음원분리 단독 range mode (isRangeSelecting=true, isSegmentEditMode=false) 일 때만 숨김.
+        if ((!state.isRangeSelecting || state.isSegmentEditMode) && !state.localizationOpen) {
+            // 음원 단계 — 음원분리/음원삽입/편집 세 버튼을 가로 양쪽 끝까지 채워 weight(1f) 로 균등 분배.
+            // 진행 상태는 timeline accent overlay 가 표시 — 버튼 라벨은 새 분리 진입점으로 고정.
+            // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
             if (showAudioSourcesContent) {
                 val sepLabel = when (state.separationStatus) {
-                    AutoJobStatus.RUNNING -> "⏳ 분리 진행 중"
                     AutoJobStatus.FAILED -> "❌ 다시 시도"
                     else -> "음원 분리"
                 }
@@ -835,12 +815,19 @@ fun TimelineScreen(
                     micLevel = 0f
                 }
                 var audioMenuOpen by remember { mutableStateOf(false) }
+                // 영상편집 토글 — 첫 video segment 기준 진입/이탈. segment edit 모드 일 때
+                // 음원분리·음원삽입은 disable 되고 본 버튼만 "닫기" 로 바뀌어 빠져나오는 동선.
+                val firstVideoSegId = state.segments.firstOrNull {
+                    it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+                }?.id
+                val editEnabled = firstVideoSegId != null && state.videoUri.isNotEmpty()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
                 ) {
                     OutlinedButton(
-                        enabled = firstSegId != null && state.separationStatus != AutoJobStatus.RUNNING,
+                        // RUNNING 시에도 enable — 사용자가 진행 중 잡 외에 다른 구간 분리를 동시에 시작할 수 있어야 함.
+                        enabled = firstSegId != null && !state.isSegmentEditMode,
                         modifier = Modifier.weight(1f).height(48.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
                         onClick = {
@@ -858,7 +845,7 @@ fun TimelineScreen(
                     // 위치 계산. 음원분리 버튼처럼 OutlinedButton 에 weight 만 걸면 메뉴 위치가 어긋남.
                     Box(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
-                            enabled = !state.isAddingBgm,
+                            enabled = !state.isAddingBgm && !state.isSegmentEditMode,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
                             onClick = {
@@ -915,6 +902,40 @@ fun TimelineScreen(
                             )
                         }
                     }
+                    OutlinedButton(
+                        enabled = editEnabled,
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                        onClick = {
+                            if (state.isSegmentEditMode) {
+                                viewModel.onFinishSegmentEdit()
+                            } else {
+                                val id = firstVideoSegId ?: return@OutlinedButton
+                                viewModel.onEnterSegmentEditMode(id)
+                            }
+                        },
+                    ) {
+                        Text(
+                            if (state.isSegmentEditMode) "닫기" else "편집",
+                            fontSize = 14.sp,
+                        )
+                    }
+                }
+                // 편집 토글 — 버튼 행 바로 아래. range slider 로 구간이 실제 선택된 뒤에만 노출.
+                if (state.isSegmentEditMode &&
+                    state.pendingRangeEndMs > state.pendingRangeStartMs
+                ) {
+                    SegmentEditActionPanel(
+                        volume = state.pendingRangeVolume,
+                        speed = state.pendingRangeSpeed,
+                        onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                        onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                        onApplyVolume = { viewModel.onApplyRangeVolume(it) },
+                        onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
+                        onDuplicate = { viewModel.onDuplicateRange() },
+                        onDelete = { viewModel.onDeleteRange() },
+                        onCancel = { viewModel.onFinishSegmentEdit() },
+                    )
                 }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
                 // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
@@ -1068,7 +1089,6 @@ fun TimelineScreen(
                             label = "원본",
                             selected = "" in state.localizationLangs || originalDone,
                             enabled = !originalBlocked,
-                            done = originalDone,
                             onClick = { viewModel.onToggleLocalizationLang("") },
                         )
                     }
@@ -1087,7 +1107,6 @@ fun TimelineScreen(
                             label = label,
                             selected = code in state.localizationLangs || done,
                             enabled = !blocked,
-                            done = done,
                             onClick = { viewModel.onToggleLocalizationLang(code) },
                         )
                     }
@@ -1396,8 +1415,7 @@ fun TimelineScreen(
 
 private val TimelineStep.label: String
     get() = when (this) {
-        TimelineStep.Edit -> "영상 편집"
-        TimelineStep.AudioSources -> "음원"
+        TimelineStep.EditAudio -> "편집·음원"
         TimelineStep.SubtitleDub -> "자막/더빙"
     }
 
@@ -1476,37 +1494,22 @@ data class ClipBar(
 )
 
 /**
- * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) 또는 진행 중(blocked=!enabled) lang 을
- * 시각적으로 구별. done=true 면 ✓ 아이콘이 leading 으로 노출 + selected 처럼 색칠. blocked 인 동안
- * onClick 비활성 (FilterChip enabled=false).
- *
- * leadingIcon 을 Composable 람다 파라미터로 분리하면 inline-if 의 람다 타입 추론이 모호해져
- * 컴파일러가 `@Composable (() -> Unit)?` 와 `() -> Unit` 사이에서 헷갈린다 — wrapper 로 본 이슈 회피.
+ * 자막/더빙 생성 패널의 lang chip — 이미 생성된(done) lang 은 호출부에서 `selected=true, enabled=false`
+ * 로 넘겨 selected 색칠 + 클릭 비활성. blocked 인 동안 onClick 비활성 (FilterChip enabled=false).
  */
 @Composable
 private fun LangFilterChip(
     label: String,
     selected: Boolean,
     enabled: Boolean,
-    done: Boolean,
     onClick: () -> Unit,
 ) {
-    if (done) {
-        FilterChip(
-            selected = selected,
-            enabled = enabled,
-            onClick = onClick,
-            label = { Text(label) },
-            leadingIcon = { Icon(Icons.Filled.Check, contentDescription = "이미 생성됨") },
-        )
-    } else {
-        FilterChip(
-            selected = selected,
-            enabled = enabled,
-            onClick = onClick,
-            label = { Text(label) },
-        )
-    }
+    FilterChip(
+        selected = selected,
+        enabled = enabled,
+        onClick = onClick,
+        label = { Text(label) },
+    )
 }
 
 /**
@@ -1597,6 +1600,9 @@ private fun SegmentEditActionPanel(
 ) {
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
+    // 볼륨/속도 슬라이더는 기본 숨김 — 액션 버튼(볼륨/속도)을 누르면 해당 bar 만 펼침.
+    // 한 번에 하나만 펼쳐지도록 enum 상태: null = 아무도 안 열림.
+    var expanded by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1604,7 +1610,7 @@ private fun SegmentEditActionPanel(
             .padding(VibiSpacing.sm),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // "구간 편집" 헤더 옆 복제/삭제 작은 버튼.
+        // "구간 편집" 헤더 + 네 가지 액션 버튼. 볼륨/속도는 토글, 복제/삭제는 즉시 액션.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -1616,7 +1622,22 @@ private fun SegmentEditActionPanel(
                 color = tokens.onBackgroundPrimary,
                 modifier = Modifier.weight(1f),
             )
-            // 복제/삭제 — 사용자가 가장 자주 누르는 액션이라 accent (iOS 파랑) 로 강조.
+            OutlinedButton(
+                onClick = { expanded = if (expanded == "volume") null else "volume" },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(30.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
+                ),
+            ) { Text("볼륨", fontSize = 12.sp) }
+            OutlinedButton(
+                onClick = { expanded = if (expanded == "speed") null else "speed" },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(30.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (expanded == "speed") tokens.accent else tokens.onBackgroundPrimary,
+                ),
+            ) { Text("속도", fontSize = 12.sp) }
             OutlinedButton(
                 onClick = onDuplicate,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
@@ -1632,43 +1653,45 @@ private fun SegmentEditActionPanel(
         }
 
         // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). 변경된 경우에만 "적용" 버튼이 의미 있음.
-        Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("볼륨 ${(volume * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
-                TextButton(onClick = { onApplyVolume(volume) }) { Text("볼륨 적용") }
+        if (expanded == "volume") {
+            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("볼륨 ${(volume * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
+                    TextButton(onClick = { onApplyVolume(volume) }) { Text("적용") }
+                }
+                Slider(
+                    value = volume,
+                    valueRange = 0f..2f,
+                    onValueChange = onVolumeChange,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-            Slider(
-                value = volume,
-                valueRange = 0f..2f,
-                onValueChange = onVolumeChange,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
 
         // 속도 — 0.25..4.
-        Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                val pct = (speed * 100).toInt()
-                Text("속도 ${pct}%", style = typo.bodySm, color = tokens.mutedText)
-                TextButton(onClick = { onApplySpeed(speed) }) { Text("속도 적용") }
+        if (expanded == "speed") {
+            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    val pct = (speed * 100).toInt()
+                    Text("속도 ${pct}%", style = typo.bodySm, color = tokens.mutedText)
+                    TextButton(onClick = { onApplySpeed(speed) }) { Text("적용") }
+                }
+                Slider(
+                    value = speed,
+                    valueRange = 0.25f..4f,
+                    onValueChange = onSpeedChange,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-            Slider(
-                value = speed,
-                valueRange = 0.25f..4f,
-                onValueChange = onSpeedChange,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
-
-        // 복제/삭제 는 헤더 row 로 이동했고, 우상단 X 가 "취소(저장)" 역할이라 하단 row 제거.
     }
 }
 
@@ -1709,6 +1732,16 @@ private object TimelineBarSpec {
     const val MinRangeGapMs = 100L
 }
 
+/**
+ * UnifiedTimelineBar 에 전달되는 in-flight 음원분리 overlay 1건. ViewModel 의
+ * [com.vibi.shared.ui.timeline.ProcessingSeparation] 가 UI 좌표로 펴진 형태.
+ */
+data class ProcessingSeparationOverlay(
+    val startMs: Long,
+    val endMs: Long,
+    val progress: Int,
+)
+
 @Composable
 private fun UnifiedTimelineBar(
     segments: List<com.vibi.shared.domain.model.Segment>,
@@ -1727,11 +1760,8 @@ private fun UnifiedTimelineBar(
     segmentColor: Color,
     segmentEditedColor: Color,
     directiveColor: Color,
-    /** 진행 중인 음원분리 range 시작/끝 ms. null = 진행 중 아님 → overlay 미노출. */
-    processingSeparationStartMs: Long? = null,
-    processingSeparationEndMs: Long? = null,
-    /** 진행률 0..100. null/0 이어도 overlay 자체는 표시 (사용자가 분리 시작했음을 즉시 인지). */
-    processingSeparationProgress: Int? = null,
+    /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
+    processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
     onSegmentTap: (String) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
@@ -1757,8 +1787,12 @@ private fun UnifiedTimelineBar(
     // onSelectSegmentInEdit 토글 로직이 처리.
     val currentStartForTap by rememberUpdatedState(rangeStartMs)
     val currentEndForTap by rememberUpdatedState(rangeEndMs)
+    // pointerInput key — progress 변경 (1~2초 폴링) 마다 processingSeparations ref 가 새로 생성되지만
+    // tap 검출은 start/end 만 보므로 그 둘만 추출. equals 가 stable 이라 polling tick 동안 gesture
+    // detector 가 재등록되지 않음.
+    val processingRangesKey = processingSeparations.map { it.startMs to it.endMs }
     val rangeTapModifier = if (showRange && totalMs > 0L) {
-        Modifier.pointerInput(showSegments, segments, directives, totalMs) {
+        Modifier.pointerInput(showSegments, segments, directives, processingRangesKey, totalMs) {
             detectTapGestures(onTap = { offset ->
                 val w = size.width.toFloat()
                 if (w <= 0f) return@detectTapGestures
@@ -1781,10 +1815,16 @@ private fun UnifiedTimelineBar(
                     return@detectTapGestures
                 }
 
-                // 음원분리: directive 위 ignore, 선택 영역 재탭 → toggle, 그 외 free interval → snap.
-                val sortedDir = directives.sortedBy { it.rangeStartMs }
-                val onDirective = sortedDir.any { ms in it.rangeStartMs..it.rangeEndMs }
-                if (onDirective) return@detectTapGestures
+                // 음원분리: directive / 진행 중 분리 위 ignore, 선택 영역 재탭 → toggle, 그 외 free interval → snap.
+                // committed directive + 진행 중 잡 (processingSeparations) 모두 동일하게 점유로 취급해
+                // 사용자가 분리 중인 구간을 탭/range 로 다시 잡지 못한다.
+                data class OccupiedRange(val start: Long, val end: Long)
+                val occupied = (
+                    directives.map { OccupiedRange(it.rangeStartMs, it.rangeEndMs) } +
+                        processingSeparations.map { OccupiedRange(it.startMs, it.endMs) }
+                    ).sortedBy { it.start }
+                val onOccupied = occupied.any { ms in it.start..it.end }
+                if (onOccupied) return@detectTapGestures
                 val hasSelection = currentEndForTap > currentStartForTap
                 if (hasSelection && ms in currentStartForTap..currentEndForTap) {
                     onRangeTapToggle()
@@ -1792,12 +1832,12 @@ private fun UnifiedTimelineBar(
                 }
                 var freeStart = 0L
                 var freeEnd = totalMs
-                for (d in sortedDir) {
-                    if (ms < d.rangeStartMs) {
-                        freeEnd = d.rangeStartMs
+                for (d in occupied) {
+                    if (ms < d.start) {
+                        freeEnd = d.start
                         break
                     }
-                    freeStart = maxOf(freeStart, d.rangeEndMs)
+                    freeStart = maxOf(freeStart, d.end)
                 }
                 onFreeIntervalTap(freeStart, freeEnd)
             })
@@ -1831,10 +1871,14 @@ private fun UnifiedTimelineBar(
                 horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
             ) {
                 segments.forEach { seg ->
-                    // 편집됨 = 본 segment 자체에 trim / volume / speed / duplicate 가 적용됨.
-                    // split / delete-range 결과 조각들은 각각 trim 을 가지므로 hasNonTrivialEdits 로 잡힘 —
-                    // 단순 append (다중 source) 만으로는 색 표시 안 함 (per-segment granularity 유지).
-                    val edited = seg.hasNonTrivialEdits() || (seg.duplicatedFromId != null)
+                    // 시각 "편집됨" = 사용자가 실제로 의도해 적용한 변경 — volume/speed/복제.
+                    // trim 은 onApplyRangeVolume/Speed 가 segment 를 left/middle/right 로 split 하면서
+                    // 세 조각 모두에 부여하므로 trim 까지 포함하면 사용자가 편집한 middle 뿐 아니라
+                    // 자르고 남은 left/right 까지 색이 바뀜. trim 은 시각 표시에서 제외한다.
+                    // (hasNonTrivialEdits 는 render-필요 판단용으로 별도 — 그쪽은 trim 포함 유지.)
+                    val edited = seg.volumeScale != 1.0f ||
+                        seg.speedScale != 1.0f ||
+                        seg.duplicatedFromId != null
                     // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
                     Box(
                         modifier = Modifier
@@ -1863,6 +1907,7 @@ private fun UnifiedTimelineBar(
                         .fillMaxHeight()
                         .background(directiveColor)
                         .let { if (!showRange) it.clickable { onDirectiveTap(directive.id) } else it }
+                    // 막대 자체만 — 파형은 음원분리 sheet 안에서만 노출 (타임라인은 깔끔하게).
                     Box(modifier = directiveModifier)
                     prevEnd = directive.rangeEndMs
                 }
@@ -1871,33 +1916,32 @@ private fun UnifiedTimelineBar(
             }
         }
 
-        // 진행 중인 음원분리 overlay — committed directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
-        // showRange / showSegments 와 무관하게 PROCESSING 인 한 노출 — 사용자가 어느 모드에서든 어떤
-        // 구간이 처리 중인지 인지 가능. 클릭 비활성 (정보용). progress 가 있으면 채움 fraction 으로 표시.
-        if (processingSeparationStartMs != null && processingSeparationEndMs != null &&
-            processingSeparationEndMs > processingSeparationStartMs && totalMs > 0L
-        ) {
-            val pStart = (processingSeparationStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val pEnd = (processingSeparationEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
-            val pStartDp = totalWidthDp * pStart
-            val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
-            Box(
-                modifier = Modifier
-                    .offset(x = pStartDp)
-                    .width(pWidthDp)
-                    .height(contentHeight)
-                    .align(Alignment.CenterStart)
-                    .background(accent.copy(alpha = 0.25f))
-            ) {
-                // 진행률 채움 — 0..100. null/0 이어도 base overlay 는 보이고 fill 만 0% 폭.
-                val fill = ((processingSeparationProgress ?: 0).coerceIn(0, 100)) / 100f
-                if (fill > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(fill)
-                            .background(accent.copy(alpha = 0.6f))
-                    )
+        // 진행 중인 음원분리 overlay — directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
+        // showRange / showSegments 와 무관하게 노출 — 어느 모드에서든 처리 중 구간 인지 가능. 클릭 비활성.
+        if (totalMs > 0L) {
+            processingSeparations.forEach { p ->
+                if (p.endMs <= p.startMs) return@forEach
+                val pStart = (p.startMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                val pEnd = (p.endMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                val pStartDp = totalWidthDp * pStart
+                val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
+                Box(
+                    modifier = Modifier
+                        .offset(x = pStartDp)
+                        .width(pWidthDp)
+                        .height(contentHeight)
+                        .align(Alignment.CenterStart)
+                        .background(accent.copy(alpha = 0.25f))
+                ) {
+                    val fill = (p.progress.coerceIn(0, 100)) / 100f
+                    if (fill > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(fill)
+                                .background(accent.copy(alpha = 0.6f))
+                        )
+                    }
                 }
             }
         }
@@ -2048,6 +2092,8 @@ private fun BgmTimelineLane(
     clips: List<com.vibi.shared.domain.model.BgmClip>,
     totalMs: Long,
     accent: Color,
+    markerColor: Color,
+    playbackPositionMs: Long,
     selectedClipId: String?,
     tapEnabled: Boolean,
     laneCount: Int,
@@ -2117,7 +2163,7 @@ private fun BgmTimelineLane(
                     .height(rowHeight)
                     .clip(VibiShape.xs)
                     .background(if (isSelected) accent else accent.copy(alpha = 0.55f))
-                    .pointerInput(clip.id, totalMs, laneWidthPx, tapEnabled) {
+                    .pointerInput(clip.id, totalMs, laneWidthPx, tapEnabled, currentRowCount) {
                         detectTapGestures(onTap = {
                             if (tapEnabled) onSelectClip(clip.id)
                         })
@@ -2168,6 +2214,21 @@ private fun BgmTimelineLane(
                             },
                         )
                     },
+            )
+            // 파형 캔버스 제거 — 타임라인은 깔끔하게. 파형은 BgmActionSheet 안에서만 노출.
+        }
+        // 영상 timeline 의 playhead 와 같은 시점을 BGM 트랙에도 세로선으로 그려 두 트랙을 시각적으로
+        // 연결. UnifiedTimelineBar 의 playhead 와 같은 좌표(playbackPositionMs / totalMs * width).
+        if (totalMs > 0L) {
+            val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+            val markerWidth = 2.dp
+            val markerXDp = laneWidthDp * frac - markerWidth / 2
+            Box(
+                modifier = Modifier
+                    .offset(x = markerXDp)
+                    .width(markerWidth)
+                    .fillMaxHeight()
+                    .background(markerColor.copy(alpha = 0.6f))
             )
         }
     }  // BoxWithConstraints 닫음
@@ -2240,6 +2301,19 @@ private fun BgmActionSheet(
     val previewer = com.vibi.cmp.platform.rememberAudioPreviewer()
     val displayName = clip.sourceUri.substringAfterLast('/').substringBeforeLast('.').take(28)
     var isPreviewing by remember(clip.id) { mutableStateOf(false) }
+    // 파형 peaks — 모듈 레벨 캐시(bgmPeaksCache) 에서 즉시 초기값. 캐시 미스 시 LaunchedEffect 가 비동기
+    // 추출 후 캐시 + state 갱신. sheet 닫고 다시 열어도 동일 sourceUri 면 즉시 표시 (composable scope 의
+    // remember 만 쓰면 매 reopen 시 빈 list → 깜박임 / 추출 실패 노출).
+    var peaks by remember(clip.id) { mutableStateOf(bgmPeaksCache[clip.sourceUri] ?: emptyList()) }
+    LaunchedEffect(clip.sourceUri) {
+        if (peaks.isEmpty()) {
+            val extracted = com.vibi.cmp.platform.extractAudioPeaks(clip.sourceUri, samples = 120)
+            if (extracted.isNotEmpty()) {
+                bgmPeaksCache[clip.sourceUri] = extracted
+                peaks = extracted
+            }
+        }
+    }
     val dismissAndStop: () -> Unit = {
         if (isPreviewing) {
             previewer.stop()
@@ -2247,6 +2321,8 @@ private fun BgmActionSheet(
         }
         onDismiss()
     }
+    // 볼륨/속도 슬라이더는 기본 숨김 — 액션 버튼 클릭 시 해당 bar 만 펼침.
+    var expanded by remember(clip.id) { mutableStateOf<String?>(null) }
     ModalBottomSheet(
         onDismissRequest = dismissAndStop,
         sheetState = sheetState,
@@ -2263,72 +2339,212 @@ private fun BgmActionSheet(
                 color = tokens.onBackgroundPrimary,
                 style = typo.titleSm,
             )
+            // 재생 버튼 + 파형. play 가 파형 앞(좌측) 에 위치 — 사용자 1차 액션 (재생/정지) 에 시선이 먼저 닿게.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
             ) {
-                TextButton(onClick = onSeparate) { Text("배경음 제거", fontSize = 13.sp, color = tokens.accent) }
-                TextButton(onClick = {
-                    if (isPreviewing) {
-                        previewer.stop()
-                        isPreviewing = false
-                    } else {
-                        // 현재 슬라이더 값 (volumeScale / speedScale) 을 적용해 미리듣기.
-                        // 자연 종료 → onComplete 가 isPreviewing=false 로 자동 토글.
-                        previewer.play(
-                            url = clip.sourceUri,
-                            volume = clip.volumeScale,
-                            rate = clip.speedScale,
-                            onComplete = { isPreviewing = false },
-                        )
-                        isPreviewing = true
-                    }
-                }) {
-                    Text(
-                        if (isPreviewing) "정지" else "미리듣기",
-                        fontSize = 13.sp,
-                        color = tokens.accent,
-                    )
-                }
-                TextButton(onClick = {
-                    if (isPreviewing) {
-                        previewer.stop()
-                        isPreviewing = false
-                    }
-                    onDelete()
-                    onDismiss()
-                }) { Text("삭제", fontSize = 13.sp, color = tokens.accent) }
+                RoundIconButton(
+                    icon = if (isPreviewing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isPreviewing) "정지" else "미리듣기",
+                    selected = isPreviewing,
+                    onClick = {
+                        if (isPreviewing) {
+                            previewer.stop()
+                            isPreviewing = false
+                        } else {
+                            previewer.play(
+                                url = clip.sourceUri,
+                                volume = clip.volumeScale,
+                                rate = clip.speedScale,
+                                onComplete = { isPreviewing = false },
+                            )
+                            isPreviewing = true
+                        }
+                    },
+                )
+                WaveformPlayBar(
+                    peaks = peaks,
+                    progressMs = previewer.progressMs.value,
+                    durationMs = previewer.durationMs.value,
+                    isPlaying = isPreviewing,
+                    modifier = Modifier.weight(1f),
+                    onSeek = if (isPreviewing) { ms -> previewer.seekTo(ms) } else null,
+                )
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
             ) {
-                Text("볼륨", style = typo.caption, color = tokens.mutedText)
-                Slider(
+                // 네 액션 모두 동일 라벨 버튼 패턴 — 볼륨/속도는 expand 토글 (selected 표시),
+                // 배경음분리는 강조(accent), 삭제는 destructive. 이전 round-icon + text 혼용은
+                // 사용자에게 시각 위계가 비일관적이라 모두 outline 라벨 버튼으로 통일.
+                LabeledActionButton(
+                    label = "볼륨",
+                    selected = expanded == "volume",
+                    onClick = { expanded = if (expanded == "volume") null else "volume" },
+                )
+                LabeledActionButton(
+                    label = "속도",
+                    selected = expanded == "speed",
+                    onClick = { expanded = if (expanded == "speed") null else "speed" },
+                )
+                LabeledActionButton(
+                    label = "배경음분리",
+                    accent = true,
+                    onClick = onSeparate,
+                )
+                LabeledActionButton(
+                    label = "삭제",
+                    accent = true,
+                    onClick = {
+                        if (isPreviewing) {
+                            previewer.stop()
+                            isPreviewing = false
+                        }
+                        onDelete()
+                        onDismiss()
+                    },
+                )
+            }
+            if (expanded == "volume") {
+                InlineSliderRow(
+                    label = "볼륨",
                     value = clip.volumeScale,
-                    valueRange = com.vibi.shared.domain.model.BgmClip.MIN_VOLUME..com.vibi.shared.domain.model.BgmClip.MAX_VOLUME,
-                    onValueChange = onUpdateVolume,
-                    modifier = Modifier.weight(1f),
+                    range = com.vibi.shared.domain.model.BgmClip.MIN_VOLUME..com.vibi.shared.domain.model.BgmClip.MAX_VOLUME,
+                    onChange = onUpdateVolume,
                 )
-                Text("${(clip.volumeScale * 100).toInt()}%", style = typo.caption, color = tokens.onBackgroundPrimary)
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-            ) {
-                Text("속도", style = typo.caption, color = tokens.mutedText)
-                Slider(
+            if (expanded == "speed") {
+                InlineSliderRow(
+                    label = "속도",
                     value = clip.speedScale,
-                    valueRange = com.vibi.shared.domain.model.BgmClip.MIN_SPEED..com.vibi.shared.domain.model.BgmClip.MAX_SPEED,
-                    onValueChange = onUpdateSpeed,
-                    modifier = Modifier.weight(1f),
+                    range = com.vibi.shared.domain.model.BgmClip.MIN_SPEED..com.vibi.shared.domain.model.BgmClip.MAX_SPEED,
+                    onChange = onUpdateSpeed,
                 )
-                Text("${(clip.speedScale * 100).toInt()}%", style = typo.caption, color = tokens.onBackgroundPrimary)
             }
-            // 길이 슬라이더는 제거 — 사용자 요청: BGM 편집 sheet 에 길이 조절 UI 노출 안 함.
-            // 속도 조절로 결국 효과 길이가 바뀌긴 하지만, 사용자에게는 "속도 = 길이" 가 직관 충돌이라
-            // 속도만 노출. 정확한 길이가 필요하면 추후 별도 trim flow.
         }
+    }
+}
+
+/**
+ * BgmActionSheet 의 파형 peaks 모듈 레벨 캐시. composable scope (`remember`) 만 쓰면 sheet 닫고
+ * 다시 열 때마다 빈 list 로 리셋되어 추출이 다시 시작 → 깜박임/실패 시 영영 안 보임. sourceUri 키로
+ * 1회 추출 후 영속(프로세스 lifetime) — 같은 클립 재진입 시 즉시 표시.
+ */
+private val bgmPeaksCache = mutableMapOf<String, List<Float>>()
+
+/**
+ * BgmActionSheet 의 볼륨/속도 인라인 슬라이더 — 회전된 popup 대신 row 가 펼쳐지는 패턴.
+ */
+@Composable
+private fun InlineSliderRow(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit,
+) {
+    val tokens = LocalVibiColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.mutedText,
+            modifier = Modifier.width(40.dp),
+        )
+        Slider(
+            value = value,
+            valueRange = range,
+            onValueChange = onChange,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${(value * 100).toInt()}%",
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.onBackgroundPrimary,
+            modifier = Modifier.width(44.dp),
+        )
+    }
+}
+
+/**
+ * BgmActionSheet 액션 row 의 라벨 버튼. RoundIconButton 의 outline + selected 패턴을
+ * 그대로 가져오되 아이콘 대신 텍스트 라벨로 노출 — 네 액션(볼륨/속도/배경음분리/삭제)을
+ * 일관된 outline pill 로 통일.
+ *
+ * - selected=true: accent 테두리 + 살짝 채움 (볼륨/속도 expand 상태)
+ * - accent=true:  accent 색 텍스트/테두리 (배경음분리·삭제 같은 강조 액션)
+ */
+@Composable
+private fun LabeledActionButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    accent: Boolean = false,
+) {
+    val tokens = LocalVibiColors.current
+    val borderColor = when {
+        selected -> tokens.accent
+        accent -> tokens.accent.copy(alpha = 0.6f)
+        else -> tokens.onBackgroundPrimary.copy(alpha = 0.25f)
+    }
+    val bgColor = if (selected) tokens.accent.copy(alpha = 0.12f) else Color.Transparent
+    val textColor = when {
+        selected || accent -> tokens.accent
+        else -> tokens.onBackgroundPrimary
+    }
+    Box(
+        modifier = modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            color = textColor,
+        )
+    }
+}
+
+/**
+ * BgmActionSheet 액션 row 의 동그란 라운드 아이콘 버튼. selected=true 면 accent 테두리 + 채움.
+ */
+@Composable
+private fun RoundIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+) {
+    val tokens = LocalVibiColors.current
+    val borderColor = if (selected) tokens.accent else tokens.onBackgroundPrimary.copy(alpha = 0.25f)
+    val bgColor = if (selected) tokens.accent.copy(alpha = 0.12f) else Color.Transparent
+    val iconTint = if (selected) tokens.accent else tokens.onBackgroundPrimary
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(bgColor)
+            .border(1.dp, borderColor, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = iconTint,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

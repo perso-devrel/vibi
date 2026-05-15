@@ -16,13 +16,18 @@ import com.vibi.shared.data.local.db.entity.EditProjectEntity
 import com.vibi.shared.data.local.db.entity.SegmentEntity
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.EditProject
+import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.platform.currentTimeMillis
+import com.vibi.shared.platform.deleteLocalFile
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 
 class EditProjectRepositoryImpl constructor(
     private val database: VibiDatabase,
@@ -88,6 +93,9 @@ class EditProjectRepositoryImpl constructor(
     }
 
     private suspend fun cascadeDeleteProject(projectId: String) {
+        // 프로젝트 소유 파일 (BFF 가 이 프로젝트용으로 렌더한 더빙 mp3/mp4) — DB 삭제 전에 path 수집 후 unlink.
+        // segment/bgm/image 의 sourceUri 는 picker_media (다른 프로젝트와 공유 가능) 라 삭제하지 않음.
+        runCatching { dao.getById(projectId)?.toDomain()?.deleteOwnedFiles() }
         // 자식 row 들 — Room FK ON DELETE CASCADE 미설정 환경에서 명시 cleanup.
         runCatching { segmentDao.deleteByProjectId(projectId) }
         runCatching { dubClipDao.deleteByProjectId(projectId) }
@@ -97,6 +105,15 @@ class EditProjectRepositoryImpl constructor(
         runCatching { bgmClipDao.deleteByProjectId(projectId) }
         runCatching { separationDirectiveDao.deleteByProject(projectId) }
         dao.deleteById(projectId)
+    }
+
+    private fun EditProject.deleteOwnedFiles() {
+        val paths = buildList {
+            dubbedAudioPath?.let { add(it) }
+            addAll(dubbedAudioPaths.values)
+            addAll(dubbedVideoPaths.values)
+        }
+        paths.forEach { runCatching { deleteLocalFile(it) } }
     }
 
     private fun EditProjectEntity.toDomain() = EditProject(
@@ -136,6 +153,7 @@ class EditProjectRepositoryImpl constructor(
         separationMuteOriginal = separationMuteOriginal,
         separationStatus = parseStatus(separationStatus),
         separationError = separationError,
+        processingSeparations = decodeProcessingSeparations(processingSeparationsJson),
         currentAudioRenderJobId = currentAudioRenderJobId,
         currentVideoRenderJobId = currentVideoRenderJobId,
         isRenderStale = isRenderStale,
@@ -180,6 +198,7 @@ class EditProjectRepositoryImpl constructor(
         separationMuteOriginal = separationMuteOriginal,
         separationStatus = separationStatus.name,
         separationError = separationError,
+        processingSeparationsJson = encodeProcessingSeparations(processingSeparations),
         currentAudioRenderJobId = currentAudioRenderJobId,
         currentVideoRenderJobId = currentVideoRenderJobId,
         isRenderStale = isRenderStale,
@@ -229,6 +248,54 @@ class EditProjectRepositoryImpl constructor(
 
     private fun parseStatus(name: String): AutoJobStatus =
         runCatching { AutoJobStatus.valueOf(name) }.getOrDefault(AutoJobStatus.IDLE)
+
+    @Serializable
+    private data class PersistedSeparationJobDto(
+        val jobId: String,
+        val segmentId: String,
+        val rangeStartMs: Long? = null,
+        val rangeEndMs: Long? = null,
+        val numberOfSpeakers: Int = 2,
+        val muteOriginalSegmentAudio: Boolean = true,
+    )
+
+    private val processingSeparationsJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val processingSeparationsSerializer =
+        ListSerializer(PersistedSeparationJobDto.serializer())
+
+    private fun encodeProcessingSeparations(list: List<PersistedSeparationJob>): String {
+        if (list.isEmpty()) return ""
+        return processingSeparationsJson.encodeToString(
+            processingSeparationsSerializer,
+            list.map {
+                PersistedSeparationJobDto(
+                    jobId = it.jobId,
+                    segmentId = it.segmentId,
+                    rangeStartMs = it.rangeStartMs,
+                    rangeEndMs = it.rangeEndMs,
+                    numberOfSpeakers = it.numberOfSpeakers,
+                    muteOriginalSegmentAudio = it.muteOriginalSegmentAudio,
+                )
+            }
+        )
+    }
+
+    private fun decodeProcessingSeparations(json: String): List<PersistedSeparationJob> {
+        if (json.isBlank()) return emptyList()
+        return runCatching {
+            processingSeparationsJson.decodeFromString(processingSeparationsSerializer, json)
+                .map {
+                    PersistedSeparationJob(
+                        jobId = it.jobId,
+                        segmentId = it.segmentId,
+                        rangeStartMs = it.rangeStartMs,
+                        rangeEndMs = it.rangeEndMs,
+                        numberOfSpeakers = it.numberOfSpeakers,
+                        muteOriginalSegmentAudio = it.muteOriginalSegmentAudio,
+                    )
+                }
+        }.getOrDefault(emptyList())
+    }
 
     private fun Segment.toEntity() = SegmentEntity(
         id = id,

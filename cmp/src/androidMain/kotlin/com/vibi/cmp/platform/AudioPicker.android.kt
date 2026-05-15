@@ -13,7 +13,9 @@ import com.vibi.shared.platform.currentTimeMillis
 import java.io.File
 
 /**
- * Android: SAF GetContent with audio mime wildcard. content URI 는 영속성이 보장 안 되므로 cacheDir 로 즉시 복사.
+ * Android: SAF OpenDocument 로 audio 선택. GetContent 로 audio mime wildcard 를 쓰면 일부
+ * 디바이스/Android 14 에서 picker 가 빈 화면으로 뜨거나 audio 파일을 노출 못 하는 사례가 있어
+ * OpenDocument 로 교체. content URI 는 영속성이 보장 안 되므로 cacheDir 로 즉시 복사.
  */
 @Composable
 actual fun rememberAudioPicker(
@@ -21,7 +23,7 @@ actual fun rememberAudioPicker(
 ): AudioPickerLauncher {
     val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val copied = copyAudioToCache(context, uri)
@@ -30,7 +32,19 @@ actual fun rememberAudioPicker(
     return remember(launcher) {
         object : AudioPickerLauncher {
             override fun launch() {
-                launcher.launch("audio/*")
+                // 다양한 audio mime 명시 — 일부 파일 매니저가 wildcard 를 인식 못 하는 경우 대비.
+                launcher.launch(
+                    arrayOf(
+                        "audio/*",
+                        "audio/mpeg",
+                        "audio/mp4",
+                        "audio/aac",
+                        "audio/wav",
+                        "audio/x-wav",
+                        "audio/ogg",
+                        "audio/flac",
+                    )
+                )
             }
         }
     }

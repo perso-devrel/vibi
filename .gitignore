@@ -30,7 +30,8 @@ iosApp/Configs/Auth.xcconfig
 xcuserdata/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
-# Xcode device build output (xcodebuild -derivedDataPath build-device)
+# Xcode build output (xcodebuild -derivedDataPath build-device|build-simulator)
 iosApp/build-device/
+iosApp/build-simulator/
 # Xcode SwiftPM workspace cache (locally generated)
 **/xcshareddata/swiftpm/

@@ -2,6 +2,7 @@ package com.vibi.shared.domain.chat
 
 import com.vibi.shared.data.remote.dto.ContextBgmClipDto
 import com.vibi.shared.data.remote.dto.ContextDubClipDto
+import com.vibi.shared.data.remote.dto.ContextProcessingSeparationDto
 import com.vibi.shared.data.remote.dto.ContextSegmentDto
 import com.vibi.shared.data.remote.dto.ContextSeparationDirectiveDto
 import com.vibi.shared.data.remote.dto.ContextStemDto
@@ -96,6 +97,16 @@ object ProjectContextBuilder {
             )
         }
 
+        // 진행 중 분리 잡 — WF-4 (이미 분리 중이면 새 분리 시작 금지) + WF-7 (BGM 정렬 candidate).
+        // video segment 분리 전용 — BGM 분리는 audioSeparation 싱글 state 로 흐름이 별개라 여기 안 들어옴.
+        // rangeStartMs/EndMs 가 null 이면 segment 전체이므로 videoDurationMs 로 fall back (BGM 영향 없음).
+        val processingSeparations = state.processingSeparations.map { p ->
+            ContextProcessingSeparationDto(
+                rangeStartMs = p.rangeStartMs ?: 0L,
+                rangeEndMs = p.rangeEndMs ?: state.videoDurationMs,
+            )
+        }
+
         val selectedClipId = state.selectedDubClipId
             ?: state.selectedSubtitleClipId
             ?: state.selectedImageClipId
@@ -118,6 +129,7 @@ object ProjectContextBuilder {
             bgmClips = bgms,
             separationStems = stems,
             separationDirectives = directives,
+            processingSeparations = processingSeparations,
             currentPlayheadMs = state.playbackPositionMs,
             selectedSegmentId = state.selectedSegmentId,
             selectedClipId = selectedClipId,

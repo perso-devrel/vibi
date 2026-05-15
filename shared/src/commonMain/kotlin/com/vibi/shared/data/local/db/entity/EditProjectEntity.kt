@@ -49,6 +49,12 @@ data class EditProjectEntity(
     val separationMuteOriginal: Boolean = true,
     val separationStatus: String = "IDLE",
     val separationError: String? = null,
+    /**
+     * JSON array — 동시 진행 중 음원분리 잡들. 빈 문자열이면 비어있음 (legacy 데이터 호환).
+     * 항목 스키마: PersistedSeparationJobDto (jobId, segmentId, rangeStartMs?, rangeEndMs?,
+     * numberOfSpeakers, muteOriginalSegmentAudio).
+     */
+    val processingSeparationsJson: String = "",
     /** 가장 최근 BFF audio-only render jobId (RenderKind.AUDIO). 자막/STT/분리 가 사용. */
     val currentAudioRenderJobId: String? = null,
     /** 가장 최근 BFF video render jobId (RenderKind.VIDEO). 자동 더빙이 사용. */

@@ -116,15 +116,19 @@ class GenerateAutoSubtitlesUseCase(
                 put("", ready.originalSrtUrl)
             }
         }
-        var totalCues = 0
-        srtByLang.forEach { (lang, url) ->
+        // 번역 lang 을 먼저 처리하고, 원본 lang="" 은 결과를 본 뒤 저장 여부 결정.
+        // 사용자가 원본 + 번역을 함께 골랐는데 번역이 모두 실패하면, 부산물로 만들어진
+        // 원본 lang="" 도 저장하지 않음 (chip 영구 disabled + 미리보기 chip 등장 방지).
+        // 번역 lang 자체가 없는 "원본만" 모드 (targetLanguageCodes 비어있음) 는 lang="" 가
+        // 유일 산출물이라 그대로 저장.
+        suspend fun saveLang(lang: String, url: String): Int {
             val body = autoSubtitleRepository.fetchSrt(url).getOrElse { e ->
                 println("[GenerateAutoSubtitles] fetchSrt $lang failed: ${e.message}")
-                return@forEach
+                return 0
             }
             val cues = runCatching { SrtParser.parse(body) }.getOrElse {
                 println("[GenerateAutoSubtitles] parse $lang failed: ${it.message}")
-                return@forEach
+                return 0
             }
             val rows = cues.map { cue ->
                 SubtitleClip(
@@ -139,7 +143,18 @@ class GenerateAutoSubtitlesUseCase(
                 )
             }
             subtitleClipRepository.addClips(rows)
-            totalCues += rows.size
+            return rows.size
+        }
+        var totalCues = 0
+        var translationSucceeded = 0
+        srtByLang.filterKeys { it.isNotBlank() }.forEach { (lang, url) ->
+            val added = saveLang(lang, url)
+            if (added > 0) translationSucceeded += 1
+            totalCues += added
+        }
+        val originalUrl = srtByLang[""]
+        if (originalUrl != null && (targetLanguageCodes.isEmpty() || translationSucceeded > 0)) {
+            totalCues += saveLang("", originalUrl)
         }
 
         editProjectRepository.updateProject(
