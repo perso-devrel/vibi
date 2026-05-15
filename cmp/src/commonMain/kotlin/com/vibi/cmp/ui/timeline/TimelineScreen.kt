@@ -331,8 +331,8 @@ fun TimelineScreen(
             .verticalScroll(rememberScrollState())
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(VibiSpacing.base),
+        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
     ) {
         // 헤더: 뒤로 + 단계 타이틀 + 공유/저장. 백그라운드 잡 진행 중이면 저장 disabled.
         // 저장 버튼이 자체적으로 모든 variant 렌더 → 갤러리 저장 → EditProject 삭제 → InputScreen 복귀를
@@ -346,7 +346,7 @@ fun TimelineScreen(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
         ) {
             Box(
                 modifier = Modifier
@@ -372,7 +372,7 @@ fun TimelineScreen(
             IconButton(
                 enabled = !sharing && !saveAnyJobRunning && !saving && state.segments.isNotEmpty(),
                 onClick = { viewModel.onShareExport() },
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(VibiSpacing.xxl),
             ) {
                 if (sharing) {
                     Text(
@@ -394,7 +394,7 @@ fun TimelineScreen(
             IconButton(
                 enabled = !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
                 onClick = { viewModel.onSaveAllVariants() },
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(VibiSpacing.xxl),
             ) {
                 if (saving) {
                     Text(
@@ -592,7 +592,7 @@ fun TimelineScreen(
                     modifier = Modifier
                         .align(align)
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm)
                         .background(parseArgbHexColor(activeSubtitleClip.backgroundColorHex), VibiShape.sm)
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center
@@ -613,7 +613,7 @@ fun TimelineScreen(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.sm)
             ) {
                 Box(
                     modifier = Modifier
@@ -758,7 +758,7 @@ fun TimelineScreen(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                 ) {
                     if (!state.isSegmentEditMode) {
                         Button(
@@ -837,7 +837,7 @@ fun TimelineScreen(
                 var audioMenuOpen by remember { mutableStateOf(false) }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
                 ) {
                     OutlinedButton(
                         enabled = firstSegId != null && state.separationStatus != AutoJobStatus.RUNNING,
@@ -928,7 +928,7 @@ fun TimelineScreen(
                     val deckDisabled = state.audioSeparation?.step ==
                         com.vibi.shared.ui.timeline.AudioSeparationStep.PROCESSING ||
                         state.isLocalizationBusy()
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(VibiSpacing.xs))
                     com.vibi.cmp.ui.timeline.sounddeck.SoundDeck(
                         cards = deckCards,
                         disabled = deckDisabled,
@@ -962,8 +962,8 @@ fun TimelineScreen(
             }
             androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
             ) {
                 // 자막/더빙 진입 버튼 제거 — 기능 비활성화.
                 // 음원 단계 (음원분리 + 음원삽입) 는 위 Row 에서 이미 처리.
@@ -1002,12 +1002,12 @@ fun TimelineScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(tokens.panelBg, VibiShape.lg)
-                    .padding(12.dp),
+                    .padding(VibiSpacing.sm),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("자막/더빙 생성", style = typo.titleSm, color = tokens.onBackgroundPrimary)
                 // 모드 선택 (자막 / 더빙 — 둘 중 하나)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                     FilterChip(
                         selected = state.localizationMode == "subtitle",
                         onClick = { viewModel.onSetLocalizationMode("subtitle") },
@@ -1058,8 +1058,8 @@ fun TimelineScreen(
                     else -> false
                 }
                 FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                 ) {
                     if (state.localizationMode == "subtitle") {
                         val originalBlocked = isChipBlocked("")
@@ -1137,7 +1137,7 @@ fun TimelineScreen(
                         { viewModel.onStartLocalization() },
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                     Button(
                         modifier = Modifier.weight(1f),
                         enabled = buttonEnabled,
@@ -1150,7 +1150,7 @@ fun TimelineScreen(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(VibiSpacing.xs))
 
         // 편집 영상 render 진행률 + 자막/더빙 생성 진행 상태는 위 "생성 시작" 버튼 라벨에 통합.
         // 별도 progress card 폐기.
@@ -1187,14 +1187,14 @@ fun TimelineScreen(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
-                .padding(20.dp),
+                .padding(VibiSpacing.md),
             badge = {
                 if (chatState.hasUnreadMessages) {
                     // AI 메시지 도착 신호 — 기본 Material3 Badge 의 6dp dot 은 너무 작아 멀리서 안 보임.
                     // 16dp 빨간 원으로 키워서 알아보기 쉽게.
                     Box(
                         modifier = Modifier
-                            .size(16.dp)
+                            .size(VibiSpacing.base)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.error),
                     )
@@ -1254,20 +1254,20 @@ fun TimelineScreen(
             onDismissRequest = { viewModel.onDismissScriptReviewSheet() },
             title = { Text("스크립트 검토") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                     Text(
                         "STT 결과를 확인하고 잘못 인식된 부분을 수정하세요. 확인 후 ${state.pendingReviewTargetLangs.joinToString(", ") { it.uppercase() }} 자막이 생성됩니다.",
                         style = typo.bodySm
                     )
                     androidx.compose.foundation.lazy.LazyColumn(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                     ) {
                         items(items = sourceClips, key = { it.id }) { clip ->
                             val draft = scriptReviewEdits[clip.id] ?: clip.text
                             Row(
                                 verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                             ) {
                                 Text(
                                     text = "${clip.startMs / 1000}s\n${clip.endMs / 1000}s",
@@ -1416,7 +1416,7 @@ private fun TimelineStepperRow(
     // 자막/더빙 탭 숨김 — 기능 비활성화.
     val steps = TimelineStep.entries.filterNot { it == TimelineStep.SubtitleDub }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = VibiSpacing.xxs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         steps.forEachIndexed { index, step ->
@@ -1435,7 +1435,7 @@ private fun TimelineStepperRow(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Box(
-                    modifier = Modifier.size(24.dp).clip(CircleShape).background(nodeColor),
+                    modifier = Modifier.size(VibiSpacing.lg).clip(CircleShape).background(nodeColor),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (!isCurrent) {
@@ -1527,12 +1527,12 @@ private fun ClipTrack(
     val typo = LocalVibiTypography.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
     ) {
         Box(
             modifier = Modifier
                 .width(56.dp)
-                .height(32.dp)
+                .height(VibiSpacing.xl)
                 .clip(VibiShape.pill)
                 .background(color.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center
@@ -1543,7 +1543,7 @@ private fun ClipTrack(
         androidx.compose.foundation.layout.BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
-                .height(32.dp)
+                .height(VibiSpacing.xl)
                 .clip(VibiShape.pill)
                 .background(color.copy(alpha = 0.10f))
                 .clickable { onClipClick(null) }
@@ -1601,14 +1601,14 @@ private fun SegmentEditActionPanel(
         modifier = Modifier
             .fillMaxWidth()
             .background(tokens.panelBg, VibiShape.lg)
-            .padding(12.dp),
+            .padding(VibiSpacing.sm),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // "구간 편집" 헤더 옆 복제/삭제 작은 버튼.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
         ) {
             Text(
                 "구간 편집",
@@ -1632,7 +1632,7 @@ private fun SegmentEditActionPanel(
         }
 
         // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). 변경된 경우에만 "적용" 버튼이 의미 있음.
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1650,7 +1650,7 @@ private fun SegmentEditActionPanel(
         }
 
         // 속도 — 0.25..4.
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1691,18 +1691,18 @@ private fun SegmentEditActionPanel(
  */
 private object TimelineBarSpec {
     val BarHeight = 56.dp
-    val ContentHeight = 12.dp
-    val HandleHitWidth = 32.dp
-    val HandleVisualWidth = 8.dp
+    val ContentHeight = VibiSpacing.sm
+    val HandleHitWidth = VibiSpacing.xl
+    val HandleVisualWidth = VibiSpacing.xs
     val GripWidth = 3.dp
-    val GripVerticalInset = 12.dp
-    val ContentCornerRadius = 4.dp
-    val HandleCornerRadius = 4.dp
+    val GripVerticalInset = VibiSpacing.sm
+    val ContentCornerRadius = VibiSpacing.xxs
+    val HandleCornerRadius = VibiSpacing.xxs
     val SegmentSpacing = 1.dp
     /** 재생 마커 hit area — drag 으로 scrub. 마커 visual 자체는 GripWidth, hit zone 은 더 넓게. */
-    val PlaybackHitWidth = 32.dp
+    val PlaybackHitWidth = VibiSpacing.xl
     /** 재생 마커 visual line 높이 — 바 높이보다 짧게 (bar 위/아래로 marker 가 튀어나오지 않도록). */
-    val PlaybackMarkerVerticalInset = 16.dp
+    val PlaybackMarkerVerticalInset = VibiSpacing.base
     /** 구간 선택 영역 상/하단 accent border 두께 — Android 초기 트림 핸들 스타일. */
     val RangeBorderThickness = 2.dp
     /** range 핸들 사이 최소 간격 — VM 의 MIN_RANGE_MS 와 동일 의미. */
@@ -2255,8 +2255,8 @@ private fun BgmActionSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
         ) {
             Text(
                 "🎵 $displayName",
@@ -2265,7 +2265,7 @@ private fun BgmActionSheet(
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
             ) {
                 TextButton(onClick = onSeparate) { Text("배경음 제거", fontSize = 13.sp, color = tokens.accent) }
                 TextButton(onClick = {
@@ -2301,7 +2301,7 @@ private fun BgmActionSheet(
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
             ) {
                 Text("볼륨", style = typo.caption, color = tokens.mutedText)
                 Slider(
@@ -2314,7 +2314,7 @@ private fun BgmActionSheet(
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
             ) {
                 Text("속도", style = typo.caption, color = tokens.mutedText)
                 Slider(
@@ -2418,7 +2418,7 @@ private fun StepTransitionWarningDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm)) {
                 Text(body, style = typo.bodyMd)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
