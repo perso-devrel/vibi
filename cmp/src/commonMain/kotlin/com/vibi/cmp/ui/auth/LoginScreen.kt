@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,7 +37,8 @@ fun LoginScreen(
     viewModel: LoginViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val loading = state is LoginViewModel.UiState.Loading
+    val loadingProvider = (state as? LoginViewModel.UiState.Loading)?.provider
+    val anyLoading = loadingProvider != null
 
     LaunchedEffect(viewModel) {
         viewModel.navigateToHome.collect { onSignedIn() }
@@ -63,15 +65,15 @@ fun LoginScreen(
 
             Button(
                 onClick = viewModel::signInWithGoogle,
-                enabled = !loading,
+                enabled = !anyLoading,
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
                 modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
             ) {
-                if (loading) {
+                if (loadingProvider == LoginViewModel.Provider.Google) {
                     CircularProgressIndicator(
                         color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp,
-                        modifier = Modifier.height(20.dp),
+                        modifier = Modifier.size(20.dp),
                     )
                 } else {
                     Text("Sign in with Google")
@@ -84,7 +86,7 @@ fun LoginScreen(
             // 다크/라이트 테마 무관하게 Apple 표준 외형 유지.
             Button(
                 onClick = viewModel::signInWithApple,
-                enabled = !loading,
+                enabled = !anyLoading,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Black,
                     contentColor = Color.White,
@@ -94,7 +96,15 @@ fun LoginScreen(
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
                 modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
             ) {
-                Text("Sign in with Apple")
+                if (loadingProvider == LoginViewModel.Provider.Apple) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(20.dp),
+                    )
+                } else {
+                    Text("Sign in with Apple")
+                }
             }
 
             (state as? LoginViewModel.UiState.Error)?.let { err ->

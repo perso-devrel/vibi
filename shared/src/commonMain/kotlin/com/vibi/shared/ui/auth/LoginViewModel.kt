@@ -15,9 +15,11 @@ class LoginViewModel(
     private val authRepository: AuthRepository,
 ) : ViewModel() {
 
+    enum class Provider { Google, Apple }
+
     sealed interface UiState {
         data object Idle : UiState
-        data object Loading : UiState
+        data class Loading(val provider: Provider) : UiState
         data class Error(val message: String) : UiState
     }
 
@@ -30,13 +32,13 @@ class LoginViewModel(
     private val _navigateToHome = MutableSharedFlow<Unit>()
     val navigateToHome: SharedFlow<Unit> = _navigateToHome.asSharedFlow()
 
-    fun signInWithGoogle() = runProvider { authRepository.signInWithGoogle() }
+    fun signInWithGoogle() = runProvider(Provider.Google) { authRepository.signInWithGoogle() }
 
-    fun signInWithApple() = runProvider { authRepository.signInWithApple() }
+    fun signInWithApple() = runProvider(Provider.Apple) { authRepository.signInWithApple() }
 
-    private fun <T> runProvider(block: suspend () -> Result<T>) {
+    private fun <T> runProvider(provider: Provider, block: suspend () -> Result<T>) {
         if (_state.value is UiState.Loading) return
-        _state.value = UiState.Loading
+        _state.value = UiState.Loading(provider)
         viewModelScope.launch {
             block().fold(
                 onSuccess = {
