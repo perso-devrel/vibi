@@ -18,6 +18,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -323,6 +324,23 @@ fun TimelineScreen(
 
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
+
+    // 영상 audio peaks — UnifiedTimelineBar 의 재생바 배경에 표시. 모듈 캐시(videoPeaksCache) 가
+    // sourceUri 단위로 1회 추출 결과 보관 → 화면 재진입 시 즉시. Android 는 extractAudioPeaks
+    // stub 이라 빈 list → UnifiedTimelineBar 가 기존 회색 strip 으로 fallback.
+    var videoPeaks by remember(state.videoUri) {
+        mutableStateOf(videoPeaksCache[state.videoUri] ?: emptyList())
+    }
+    LaunchedEffect(state.videoUri) {
+        if (state.videoUri.isNotEmpty() && videoPeaks.isEmpty()) {
+            val extracted = com.vibi.cmp.platform.extractAudioPeaks(state.videoUri, samples = 240)
+            if (extracted.isNotEmpty()) {
+                videoPeaksCache[state.videoUri] = extracted
+                videoPeaks = extracted
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
     Column(
         modifier = Modifier
@@ -709,6 +727,7 @@ fun TimelineScreen(
                 segmentColor = tokens.timelineBarSegment,
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
                 directiveColor = tokens.timelineBarDirective,
+                videoPeaks = videoPeaks,
                 processingSeparations = processingOverlays,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
                 onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
@@ -1499,6 +1518,12 @@ private fun LangFilterChip(
 private object TimelineBarSpec {
     val BarHeight = 56.dp
     val ContentHeight = VibiSpacing.sm
+    /**
+     * 영상 audio 파형 strip 높이 — ContentHeight(12dp) 회색 strip 보다 키워 파형 막대가 시각적으로
+     * 드러나게. 56dp playback region 안에 centered 라 위/아래로 ~8dp 여유가 남아 range 핸들 grip
+     * (gripHeight = ContentHeight) 이 파형 위에 겹쳐도 답답해 보이지 않는다.
+     */
+    val WaveformHeight = 40.dp
     val HandleHitWidth = VibiSpacing.xl
     val HandleVisualWidth = VibiSpacing.xs
     val GripWidth = 3.dp
@@ -1546,6 +1571,12 @@ private fun UnifiedTimelineBar(
     segmentColor: Color,
     segmentEditedColor: Color,
     directiveColor: Color,
+    /**
+     * 영상 audio peaks (0..1 normalized). 비지 않으면 재생바 strip 배경에 파형으로 렌더 — directive
+     * 구간 내 막대는 accent 컬러로, 그 외는 회색으로 칠해 음원분리 영역을 시각 표시.
+     * 비어 있으면 (Android stub / 추출 실패) 기존 회색 strip + directive 막대 fallback.
+     */
+    videoPeaks: List<Float> = emptyList(),
     /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
     processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
     onSegmentTap: (String) -> Unit = {},
@@ -1674,16 +1705,17 @@ private fun UnifiedTimelineBar(
                 .height(playbackRegionHeight)
                 .then(rangeTapModifier),
         ) {
-            // Layer 1 — 가운데 얇은 배경 strip + segment/directive content.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .height(contentHeight)
-                    .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
-                    .background(trackColor)
-            )
+            // Layer 1 — 영상편집 모드는 segment 색 박스, 그 외는 영상 audio 파형(directive 구간만 accent).
+            // peaks 비면(Android stub / 추출 실패) 기존 회색 strip + 짙은 grey directive 막대로 fallback.
             if (showSegments) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth()
+                        .height(contentHeight)
+                        .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
+                        .background(trackColor)
+                )
                 Row(
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -1709,31 +1741,51 @@ private fun UnifiedTimelineBar(
                         )
                     }
                 }
-            } else if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .fillMaxWidth()
-                        .height(contentHeight),
-                ) {
-                    var prevEnd = 0L
-                    directives.forEach { directive ->
-                        val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
-                        if (gap > 0L) Spacer(Modifier.weight(gap.toFloat()))
-                        val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
-                        // range 모드에서는 directive 탭 비활성 — 음원분리 sheet 안 열리도록.
-                        // 색은 edited segment 와 구별되는 짙은 grey — 사용자 가이드.
-                        val directiveModifier = Modifier
-                            .weight(w.toFloat())
-                            .fillMaxHeight()
-                            .background(directiveColor)
-                            .let { if (!showRange) it.clickable { onDirectiveTap(directive.id) } else it }
-                        // 막대 자체만 — 파형은 음원분리 sheet 안에서만 노출 (타임라인은 깔끔하게).
-                        Box(modifier = directiveModifier)
-                        prevEnd = directive.rangeEndMs
+            } else {
+                val hasWaveform = videoPeaks.isNotEmpty() && totalMs > 0L
+                if (hasWaveform) {
+                    TimelineWaveformBackground(
+                        peaks = videoPeaks,
+                        totalMs = totalMs,
+                        directiveRanges = directives.map { it.rangeStartMs..it.rangeEndMs },
+                        defaultBarColor = markerColor.copy(alpha = 0.45f),
+                        highlightBarColor = accent,
+                        trackBg = trackColor.copy(alpha = 0.55f),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .fillMaxWidth()
+                            .height(TimelineBarSpec.WaveformHeight),
+                    )
+                    if (showDirectives && directives.isNotEmpty()) {
+                        // range 모드에선 parent rangeTapModifier 가 directive tap 도 처리 — 본 overlay clickable 비활성.
+                        DirectiveOverlayRow(
+                            directives = directives,
+                            totalMs = totalMs,
+                            height = TimelineBarSpec.WaveformHeight,
+                            barColor = null,
+                            tapEnabled = !showRange,
+                            onDirectiveTap = onDirectiveTap,
+                        )
                     }
-                    val tail = (totalMs - prevEnd).coerceAtLeast(0L)
-                    if (tail > 0L) Spacer(Modifier.weight(tail.toFloat()))
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .fillMaxWidth()
+                            .height(contentHeight)
+                            .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
+                            .background(trackColor)
+                    )
+                    if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
+                        DirectiveOverlayRow(
+                            directives = directives,
+                            totalMs = totalMs,
+                            height = contentHeight,
+                            barColor = directiveColor,
+                            tapEnabled = !showRange,
+                            onDirectiveTap = onDirectiveTap,
+                        )
+                    }
                 }
             }
 
@@ -2057,6 +2109,89 @@ private fun UnifiedTimelineBar(
 }
 
 /**
+ * 재생바 strip 위에 directive 구간을 가로 띠로 깔고 탭 핸들러 부착. 파형 모드(barColor=null)에선
+ * invisible overlay 로 동작해 시각은 [TimelineWaveformBackground] 의 컬러 분기에 위임. fallback
+ * 모드(barColor=directiveColor)에선 막대 자체로 분리 영역을 표시.
+ */
+@Composable
+private fun BoxScope.DirectiveOverlayRow(
+    directives: List<com.vibi.shared.domain.model.SeparationDirective>,
+    totalMs: Long,
+    height: androidx.compose.ui.unit.Dp,
+    barColor: Color?,
+    tapEnabled: Boolean,
+    onDirectiveTap: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .align(Alignment.Center)
+            .fillMaxWidth()
+            .height(height),
+    ) {
+        var prevEnd = 0L
+        directives.forEach { directive ->
+            val gap = (directive.rangeStartMs - prevEnd).coerceAtLeast(0L)
+            if (gap > 0L) Spacer(Modifier.weight(gap.toFloat()))
+            val w = (directive.rangeEndMs - directive.rangeStartMs).coerceAtLeast(1L)
+            val boxMod = Modifier
+                .weight(w.toFloat())
+                .fillMaxHeight()
+                .let { if (barColor != null) it.background(barColor) else it }
+                .let { if (tapEnabled) it.clickable { onDirectiveTap(directive.id) } else it }
+            Box(modifier = boxMod)
+            prevEnd = directive.rangeEndMs
+        }
+        val tail = (totalMs - prevEnd).coerceAtLeast(0L)
+        if (tail > 0L) Spacer(Modifier.weight(tail.toFloat()))
+    }
+}
+
+/**
+ * 재생바 strip 배경에 영상 audio 파형을 그린다. directive 구간에 속하는 막대는 highlightBarColor 로,
+ * 그 외는 defaultBarColor 로 칠해 음원분리 적용 영역을 시각 구분.
+ *
+ * - 파형 amplitude 는 sqrt 보정해 작은 peak 도 살짝 보이게 — WaveformPlayBar 와 같은 톤.
+ * - tap/drag 는 본 composable 안에서 처리 안 함. 호출자(UnifiedTimelineBar) 가 invisible overlay 로 처리.
+ */
+@Composable
+private fun TimelineWaveformBackground(
+    peaks: List<Float>,
+    totalMs: Long,
+    directiveRanges: List<LongRange>,
+    defaultBarColor: Color,
+    highlightBarColor: Color,
+    trackBg: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
+            .background(trackBg),
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val n = peaks.size
+            if (n == 0 || totalMs <= 0L) return@Canvas
+            val slot = size.width / n
+            val barWidth = (slot * 0.6f).coerceAtLeast(1.5f)
+            val cy = size.height / 2f
+            val maxHalfHeight = size.height / 2f - 3f
+            for (i in 0 until n) {
+                val peak = peaks[i].coerceIn(0f, 1f)
+                val h = maxOf(1.5f, kotlin.math.sqrt(peak) * maxHalfHeight)
+                val x = slot * i + (slot - barWidth) / 2f
+                val msAtCenter = ((i + 0.5f) / n * totalMs).toLong()
+                val inDirective = directiveRanges.any { msAtCenter in it }
+                drawRect(
+                    color = if (inDirective) highlightBarColor else defaultBarColor,
+                    topLeft = Offset(x, cy - h),
+                    size = Size(barWidth, h * 2f),
+                )
+            }
+        }
+    }
+}
+
+/**
  * BGM 클립 액션 시트 — 타임라인 lane 의 막대 탭 시 ModalBottomSheet 로 표시.
  *  - 4 액션 버튼 (음원분리 / 미리듣기 / 삽입 / 삭제) + 볼륨/속도 슬라이더 항상 노출.
  *  - "삽입" = 현재 playhead 로 startMs 재고정.
@@ -2210,6 +2345,12 @@ private fun BgmActionSheet(
  * 1회 추출 후 영속(프로세스 lifetime) — 같은 클립 재진입 시 즉시 표시.
  */
 private val bgmPeaksCache = mutableMapOf<String, List<Float>>()
+
+/**
+ * UnifiedTimelineBar 재생바 배경 파형용 캐시. videoUri 키로 1회 추출 후 영속 — 화면 재진입 / state
+ * 갱신 시 재추출 없이 즉시 표시. iOS 만 동작(extractAudioPeaks android stub).
+ */
+private val videoPeaksCache = mutableMapOf<String, List<Float>>()
 
 /**
  * BgmActionSheet 의 볼륨/속도 인라인 슬라이더 — 회전된 popup 대신 row 가 펼쳐지는 패턴.
