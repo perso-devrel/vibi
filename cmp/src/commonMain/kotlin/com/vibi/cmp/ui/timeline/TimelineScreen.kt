@@ -1197,7 +1197,7 @@ fun TimelineScreen(
         // running/done 은 별도 표시 안 함. 실패 메시지만 사용자에게 알림.
         when (val s = state.saveStatus) {
             is SaveStatus.FAILED -> Text(
-                "저장 실패: ${s.message}",
+                s.message,
                 color = Color(0xFFFF6B6B),
                 style = typo.bodySm,
             )

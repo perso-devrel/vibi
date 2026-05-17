@@ -27,12 +27,12 @@ class ChatToolDispatcher {
             try {
                 executeStep(step, vm)
                 applied += labelFor(step)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 return DispatchResult.Failure(
                     appliedLabels = applied,
                     failedAtIndex = idx,
                     failedLabel = labelFor(step),
-                    message = e.message ?: "알 수 없는 오류",
+                    message = "알 수 없는 오류",
                 )
             }
         }

@@ -45,7 +45,7 @@ class LoginViewModel(
                     _state.value = UiState.Idle
                     _navigateToHome.emit(Unit)
                 },
-                onFailure = { e -> _state.value = UiState.Error(e.message ?: "Sign-in failed") },
+                onFailure = { _ -> _state.value = UiState.Error("Sign-in failed") },
             )
         }
     }

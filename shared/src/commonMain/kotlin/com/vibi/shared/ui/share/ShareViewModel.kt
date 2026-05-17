@@ -42,10 +42,10 @@ class ShareViewModel(
                         savedToGallery = true
                     )
                 },
-                onFailure = { e ->
+                onFailure = { _ ->
                     _uiState.value = _uiState.value.copy(
                         isSaving = false,
-                        error = e.message ?: "Failed to save"
+                        error = "Failed to save"
                     )
                 }
             )
@@ -66,10 +66,10 @@ class ShareViewModel(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(isSharing = false)
                 },
-                onFailure = { e ->
+                onFailure = { _ ->
                     _uiState.value = _uiState.value.copy(
                         isSharing = false,
-                        error = e.message ?: "Failed to share"
+                        error = "Failed to share"
                     )
                 }
             )

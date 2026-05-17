@@ -1880,7 +1880,7 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             val variants = listExportVariants(projectId).getOrElse { e ->
                 _uiState.value = _uiState.value.copy(
-                    saveStatus = SaveStatus.FAILED(e.message ?: "저장 준비 실패")
+                    saveStatus = SaveStatus.FAILED("저장 준비 실패")
                 )
                 return@launch
             }
@@ -1952,7 +1952,7 @@ class TimelineViewModel constructor(
             },
             onFailure = { e ->
                 _uiState.value = _uiState.value.copy(
-                    saveStatus = SaveStatus.FAILED(e.message ?: "저장 실패")
+                    saveStatus = SaveStatus.FAILED("저장 실패")
                 )
             }
         )
@@ -1982,7 +1982,7 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             val variants = listExportVariants(projectId).getOrElse { e ->
                 _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED(e.message ?: "공유 준비 실패")
+                    shareStatus = ShareStatus.FAILED("공유 준비 실패")
                 )
                 return@launch
             }
@@ -2053,14 +2053,14 @@ class TimelineViewModel constructor(
                     },
                     onFailure = { e ->
                         _uiState.value = _uiState.value.copy(
-                            shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
+                            shareStatus = ShareStatus.FAILED("공유 실패")
                         )
                     }
                 )
             },
             onFailure = { e ->
                 _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED(e.message ?: "공유 실패")
+                    shareStatus = ShareStatus.FAILED("공유 실패")
                 )
             }
         )
@@ -3306,7 +3306,7 @@ class TimelineViewModel constructor(
         )
         setRenderProgress(null)
         if (r.isFailure) {
-            val err = r.exceptionOrNull()?.message ?: "스크립트 생성 실패"
+            val err = "스크립트 생성 실패"
             _chatAssistantEvents.emit("⚠ 스크립트 생성에 실패했습니다: $err")
             throw IllegalStateException(err)
         }
@@ -3383,7 +3383,7 @@ class TimelineViewModel constructor(
             targetLanguageCodes = targets,
         )
         if (r.isFailure) {
-            val err = r.exceptionOrNull()?.message ?: "자막 생성 실패"
+            val err = "자막 생성 실패"
             _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
             throw IllegalStateException(err)
         }
@@ -3455,7 +3455,7 @@ class TimelineViewModel constructor(
             }
             _chatAssistantEvents.emit("자막이 준비됐습니다 — [${langs.joinToString(", ")}]")
         } else {
-            val err = r.exceptionOrNull()?.message ?: "자막 생성 실패"
+            val err = "자막 생성 실패"
             _chatAssistantEvents.emit("⚠ 자막 생성에 실패했습니다: $err")
             throw IllegalStateException(err)
         }
@@ -3493,7 +3493,7 @@ class TimelineViewModel constructor(
         result.onSuccess {
             _chatAssistantEvents.emit("더빙이 준비됐습니다 — [$lang]")
         }.onFailure {
-            val err = it.message ?: "알 수 없는 오류"
+            val err = "알 수 없는 오류"
             _chatAssistantEvents.emit("⚠ 더빙 생성에 실패했습니다: $err")
             throw IllegalStateException(err)
         }
@@ -3604,7 +3604,7 @@ class TimelineViewModel constructor(
                 )
                 pushUndoState()
             } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(frameError = e.message ?: "Invalid frame")
+                _uiState.value = _uiState.value.copy(frameError = "Invalid frame")
             }
         }
     }
@@ -3665,7 +3665,7 @@ class TimelineViewModel constructor(
             } catch (e: IllegalArgumentException) {
                 // SetProjectFrameUseCase is the source of truth for color/dimension
                 // validation; keep its message as-is for the UI.
-                _uiState.value = _uiState.value.copy(frameError = e.message ?: "Invalid frame")
+                _uiState.value = _uiState.value.copy(frameError = "Invalid frame")
             }
         }
     }
@@ -3767,7 +3767,7 @@ class TimelineViewModel constructor(
                 pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(
-                    textOverlayError = e.message ?: "Invalid text overlay"
+                    textOverlayError = "Invalid text overlay"
                 )
             }
         }
@@ -3930,7 +3930,7 @@ class TimelineViewModel constructor(
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(
                     isAddingBgm = false,
-                    bgmError = e.message ?: "BGM을 추가하지 못함"
+                    bgmError = "BGM을 추가하지 못함"
                 )
             }
         }
@@ -3967,7 +3967,7 @@ class TimelineViewModel constructor(
             )
             if (r.isFailure) {
                 _uiState.value = _uiState.value.copy(
-                    autoSubtitleError = r.exceptionOrNull()?.message ?: "자막 생성 실패",
+                    autoSubtitleError = "자막 생성 실패",
                 )
             }
         }
@@ -3989,7 +3989,7 @@ class TimelineViewModel constructor(
             )
             if (r.isFailure) {
                 _uiState.value = _uiState.value.copy(
-                    autoDubError = r.exceptionOrNull()?.message ?: "더빙 생성 실패",
+                    autoDubError = "더빙 생성 실패",
                 )
             }
         }
@@ -4609,7 +4609,7 @@ class TimelineViewModel constructor(
                 },
             ).getOrElse { err ->
                 setRenderProgress(null)
-                handleSeparationFailure(clientToken, err.message ?: ERROR_SEPARATION_GENERIC)
+                handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
                 return@launch
             }
             setRenderProgress(null)
@@ -4622,7 +4622,7 @@ class TimelineViewModel constructor(
                 editedRenderJobId = editedRenderJobId,
             )
             val jobId = startResult.getOrElse { err ->
-                handleSeparationFailure(clientToken, err.message ?: ERROR_SEPARATION_GENERIC)
+                handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
                 return@launch
             }
             updateProcessingSeparationEntry(clientToken) { it.copy(jobId = jobId) }
@@ -4721,7 +4721,7 @@ class TimelineViewModel constructor(
                 }
             }
         } catch (e: Exception) {
-            handleSeparationFailure(clientToken, e.message ?: ERROR_SEPARATION_GENERIC)
+            handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
         }
     }
 
@@ -4796,7 +4796,7 @@ class TimelineViewModel constructor(
             mainUndoManagerForCurrent().clear()
             pushUndoState()
         } catch (e: Exception) {
-            handleSeparationFailure(clientToken, e.message ?: ERROR_SEPARATION_GENERIC)
+            handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
         }
     }
 

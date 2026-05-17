@@ -128,10 +128,10 @@ class InputViewModel constructor(
                         isLoadingLanguages = false
                     )
                 },
-                onFailure = { e ->
+                onFailure = { _ ->
                     _uiState.value = _uiState.value.copy(
                         isLoadingLanguages = false,
-                        languagesError = e.message ?: "Failed to load languages"
+                        languagesError = "Failed to load languages"
                     )
                 }
             )

@@ -164,9 +164,9 @@ class GenerateAutoSubtitlesUseCase(
             )
         )
         totalCues
-    }.onFailure { e ->
+    }.onFailure {
         editProjectRepository.getProject(projectId)?.let {
-            markFailed(it, sanitizeMessage(e))
+            markFailed(it, "자막 실패")
         }
     }
 
@@ -179,8 +179,4 @@ class GenerateAutoSubtitlesUseCase(
         )
     }
 
-    private fun sanitizeMessage(error: Throwable): String = when (error) {
-        is IllegalStateException -> error.message ?: "자막 실패"
-        else -> "자막 실패"
-    }
 }

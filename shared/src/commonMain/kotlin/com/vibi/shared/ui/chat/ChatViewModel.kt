@@ -101,10 +101,10 @@ class ChatViewModel(
             )
             chatRepository.chat(req).fold(
                 onSuccess = { resp -> applyResponse(resp) },
-                onFailure = { e ->
+                onFailure = { _ ->
                     _state.value = _state.value.copy(
                         isSending = false,
-                        error = e.message ?: "채팅 호출 실패",
+                        error = "채팅 호출 실패",
                     )
                 },
             )
@@ -163,7 +163,7 @@ class ChatViewModel(
                     appliedLabels = emptyList(),
                     failedAtIndex = 0,
                     failedLabel = labels.firstOrNull() ?: "?",
-                    message = it.message ?: "알 수 없는 오류",
+                    message = "알 수 없는 오류",
                 ) }
             val finalContent = formatDispatchResult(result)
             val replaced = _state.value.messages.map { msg ->

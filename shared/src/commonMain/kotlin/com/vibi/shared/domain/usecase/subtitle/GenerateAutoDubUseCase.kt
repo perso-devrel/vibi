@@ -123,7 +123,7 @@ class GenerateAutoDubUseCase(
         localAudioPath
     }.onFailure { e ->
         editProjectRepository.getProject(projectId)?.let {
-            markFailed(it, targetLanguageCode, sanitizeMessage(e))
+            markFailed(it, targetLanguageCode, "더빙 실패")
         }
     }
 
@@ -137,8 +137,4 @@ class GenerateAutoDubUseCase(
         )
     }
 
-    private fun sanitizeMessage(error: Throwable): String = when (error) {
-        is IllegalStateException -> error.message ?: "더빙 실패"
-        else -> "더빙 실패"
-    }
 }
