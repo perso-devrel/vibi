@@ -193,6 +193,9 @@ sealed class EditTarget {
     data class Stem(val stemId: String) : EditTarget()
 }
 
+fun Set<EditTarget>.hasVideo(): Boolean = any { it is EditTarget.Video }
+fun Set<EditTarget>.hasBgm(): Boolean = any { it is EditTarget.Bgm }
+
 /**
  * 미리듣기 모드 — Sound Deck UI 의 A/B 비교용.
  *  - [MIX]   : 현재 사용자가 만든 mix (분리 stem volume 적용 + directive range 내 video mute).
@@ -2474,6 +2477,35 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * Segment edit 중 영상 strip 의 free 영역 탭 — editTargets=Video 로 전환 + range 스냅을 한 번에.
+     * UI 가 두 콜을 따로 하면 매번 _uiState 갱신 2회 → 중간 recomposition 한 번 더 발생.
+     */
+    fun onSelectVideoRange(startMs: Long, endMs: Long) {
+        val state = _uiState.value
+        if (state.isSegmentEditMode && !state.editTargets.hasVideo()) {
+            _uiState.value = state.copy(editTargets = setOf(EditTarget.Video))
+        }
+        onSelectFreeRange(startMs, endMs)
+    }
+
+    /**
+     * Segment edit 중 BGM 블럭 탭 — selectedBgm + editTargets=Bgm 전환 + range=BGM bounds 를 한 번에.
+     * 셋을 따로 호출하면 _uiState 갱신 3회 → recomposition 3사이클. selectExclusively 가 _uiState
+     * 를 직접 갱신하는 구조라 외부에서 단일 copy 로는 합쳐지지 않아 두 단계(selection, range+target)로만 묶음.
+     */
+    fun onSelectBgmForRangeEdit(clipId: String) {
+        val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return
+        onSelectBgmClip(clipId)
+        val state = _uiState.value
+        if (!state.editTargets.hasBgm() ||
+            state.editTargets.none { it is EditTarget.Bgm && it.clipId == clipId }
+        ) {
+            _uiState.value = state.copy(editTargets = setOf(EditTarget.Bgm(clipId)))
+        }
+        onSelectFreeRange(clip.startMs, clip.startMs + clip.effectiveDurationMs)
+    }
+
+    /**
      * 영상편집 모드: 전체 timeline [0, totalMs] — sliceGlobalRange 가 다중 segment 자동 처리.
      * 음원분리 모드: directive-free interval 안으로 clamp.
      */
@@ -2611,8 +2643,8 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
-        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val applyToVideo = state.editTargets.hasVideo()
+        val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
@@ -2641,8 +2673,8 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
-        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val applyToVideo = state.editTargets.hasVideo()
+        val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
@@ -2668,8 +2700,8 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
-        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val applyToVideo = state.editTargets.hasVideo()
+        val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
@@ -2695,8 +2727,8 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
-        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val applyToVideo = state.editTargets.hasVideo()
+        val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         val newSpeed = if (value > 0f) value else 1f

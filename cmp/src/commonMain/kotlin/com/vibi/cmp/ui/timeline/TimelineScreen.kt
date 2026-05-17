@@ -111,8 +111,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.VideoPlayer
 import com.vibi.shared.ui.chat.ChatViewModel
+import com.vibi.shared.ui.timeline.EditTarget
 import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
+import com.vibi.shared.ui.timeline.hasBgm
 import com.vibi.shared.ui.timeline.StepTransitionWarning
 import com.vibi.shared.ui.timeline.PreviewMode
 import com.vibi.shared.ui.timeline.TimelineStep
@@ -760,13 +762,7 @@ fun TimelineScreen(
                 onRangeStartChange = { viewModel.onSetPendingRangeStart(it) },
                 onRangeEndChange = { viewModel.onSetPendingRangeEnd(it) },
                 onTranslateRange = { viewModel.onTranslateRange(it) },
-                onFreeIntervalTap = { s, e ->
-                    // segment edit 중 영상 strip 의 free 영역 탭 — target=Video 로 전환해 BGM 모드에서 영상 모드로.
-                    if (state.isSegmentEditMode) {
-                        viewModel.onSetEditTargets(setOf(com.vibi.shared.ui.timeline.EditTarget.Video))
-                    }
-                    viewModel.onSelectFreeRange(s, e)
-                },
+                onFreeIntervalTap = { s, e -> viewModel.onSelectVideoRange(s, e) },
                 onRangeTapToggle = { viewModel.onClearRangeSelection() },
                 bgmClips = state.bgmClips,
                 bgmLaneCount = state.bgmLaneCount,
@@ -774,16 +770,7 @@ fun TimelineScreen(
                 // segment edit 모드에서만 BGM 탭 허용 — 탭 시 그 BGM 의 timeline bounds 로 range 스냅해
                 // 위 EditActionsPanel 로 volume/speed/duplicate/delete 적용. 시각 highlight 도 함께 부여.
                 bgmTapEnabled = state.isSegmentEditMode,
-                onBgmSelectClip = { clipId ->
-                    val clip = state.bgmClips.firstOrNull { it.id == clipId } ?: return@UnifiedTimelineBar
-                    viewModel.onSelectBgmClip(clipId)
-                    // BGM 블럭 탭 → editTargets 를 Bgm 으로 전환 (영상 자동 deselect). apply 는 BGM 만 적용.
-                    viewModel.onSetEditTargets(setOf(com.vibi.shared.ui.timeline.EditTarget.Bgm(clipId)))
-                    viewModel.onSelectFreeRange(
-                        clip.startMs,
-                        clip.startMs + clip.effectiveDurationMs,
-                    )
-                },
+                onBgmSelectClip = viewModel::onSelectBgmForRangeEdit,
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
                 onBgmUpdateLane = viewModel::onUpdateBgmLane,
                 onBgmSetLaneCount = viewModel::onSetBgmLaneCount,
@@ -792,9 +779,7 @@ fun TimelineScreen(
                 showBgm = showAudioSourcesContent,
                 // BGM 타깃 모드 — editTargets 에 Bgm 포함 시 영상 strip 의 range overlay 숨기고 BGM lane
                 // 에 동일 디자인의 range fill 노출. 영상/BGM 동시 선택 막아 사용자 의도가 분명한 트랙에만 apply.
-                bgmRangeMode = state.editTargets.any {
-                    it is com.vibi.shared.ui.timeline.EditTarget.Bgm
-                },
+                bgmRangeMode = state.editTargets.hasBgm(),
             )
             if (state.isRangeSelecting) {
                 Text(
@@ -1985,31 +1970,53 @@ private fun UnifiedTimelineBar(
                     .height(bgmRegionHeight),
             ) {
                 // BGM 타깃 모드 + range 선택 상태면 lane 위에 영상 strip 과 같은 디자인의 fill+border 표시.
-                // 막대들 아래 layer 라 BGM bar 가 위에 그려져 막대 시각은 보존된다.
+                // 막대들 아래 layer 라 BGM bar 가 위에 그려져 막대 시각은 보존된다. 핸들은 bgmClips.forEach 뒤에 그려 top-most.
+                val bgmRangeStartFrac = if (bgmRangeMode && rangeEndMs > rangeStartMs) {
+                    (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                } else 0f
+                val bgmRangeEndFrac = if (bgmRangeMode && rangeEndMs > rangeStartMs) {
+                    (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                } else 0f
+                val bgmFillStartDp = laneWidthDp * bgmRangeStartFrac
+                val bgmFillWidthDp = laneWidthDp * (bgmRangeEndFrac - bgmRangeStartFrac).coerceAtLeast(0f)
                 if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
-                    val startFrac = (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
-                    val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
-                    val fillStartDp = laneWidthDp * startFrac
-                    val fillWidthDp = laneWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
+                    var bgmFillBaseStartMs by remember { mutableStateOf(0L) }
+                    var bgmFillAccumPx by remember { mutableStateOf(0f) }
                     Box(
                         modifier = Modifier
-                            .offset(x = fillStartDp)
-                            .width(fillWidthDp)
+                            .offset(x = bgmFillStartDp)
+                            .width(bgmFillWidthDp)
                             .fillMaxHeight()
                             .background(accent.copy(alpha = 0.32f))
+                            .pointerInput(totalWidthPx, totalMs) {
+                                // fill drag → 영상 strip 의 onTranslateRange 와 동일 — range 전체 평행 이동.
+                                detectHorizontalDragGestures(
+                                    onDragStart = {
+                                        bgmFillBaseStartMs = currentRangeStart
+                                        bgmFillAccumPx = 0f
+                                    },
+                                    onHorizontalDrag = { _, dragAmount ->
+                                        bgmFillAccumPx += dragAmount
+                                        if (totalWidthPx > 0f && totalMs > 0L) {
+                                            val deltaMs = (bgmFillAccumPx / totalWidthPx) * totalMs
+                                            onTranslateRange((bgmFillBaseStartMs + deltaMs).toLong())
+                                        }
+                                    }
+                                )
+                            }
                     )
                     Box(
                         modifier = Modifier
-                            .offset(x = fillStartDp)
-                            .width(fillWidthDp)
+                            .offset(x = bgmFillStartDp)
+                            .width(bgmFillWidthDp)
                             .height(TimelineBarSpec.RangeBorderThickness)
                             .align(Alignment.TopStart)
                             .background(accent)
                     )
                     Box(
                         modifier = Modifier
-                            .offset(x = fillStartDp)
-                            .width(fillWidthDp)
+                            .offset(x = bgmFillStartDp)
+                            .width(bgmFillWidthDp)
                             .height(TimelineBarSpec.RangeBorderThickness)
                             .align(Alignment.BottomStart)
                             .background(accent)
@@ -2102,6 +2109,39 @@ private fun UnifiedTimelineBar(
                                     },
                                 )
                             },
+                    )
+                }
+                // BGM lane 의 range handles — top-most layer 로 BGM bar 위에 표시. hit zone 은
+                // bgmRegionHeight 만큼만 잡아 top playback strip 의 핸들과 충돌 안 함.
+                if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
+                    val minGap = TimelineBarSpec.MinRangeGapMs
+                    RangeHandle(
+                        offsetX = bgmFillStartDp - handleHitWidth / 2,
+                        hitWidth = handleHitWidth,
+                        hitHeight = bgmRegionHeight,
+                        visualWidth = handleVisualWidth,
+                        handleColor = accent,
+                        gripColor = markerColor,
+                        gripHeight = bgmRowHeight,
+                        totalWidthPx = totalWidthPx,
+                        totalMs = totalMs,
+                        baseMsProvider = { currentRangeStart },
+                        clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
+                        onChange = onRangeStartChange,
+                    )
+                    RangeHandle(
+                        offsetX = bgmFillStartDp + bgmFillWidthDp - handleHitWidth / 2,
+                        hitWidth = handleHitWidth,
+                        hitHeight = bgmRegionHeight,
+                        visualWidth = handleVisualWidth,
+                        handleColor = accent,
+                        gripColor = markerColor,
+                        gripHeight = bgmRowHeight,
+                        totalWidthPx = totalWidthPx,
+                        totalMs = totalMs,
+                        baseMsProvider = { currentRangeEnd },
+                        clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
+                        onChange = onRangeEndChange,
                     )
                 }
             }
