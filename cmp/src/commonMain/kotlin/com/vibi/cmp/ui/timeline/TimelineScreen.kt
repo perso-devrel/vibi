@@ -1979,16 +1979,24 @@ private fun UnifiedTimelineBar(
                 } else 0f
                 val bgmFillStartDp = laneWidthDp * bgmRangeStartFrac
                 val bgmFillWidthDp = laneWidthDp * (bgmRangeEndFrac - bgmRangeStartFrac).coerceAtLeast(0f)
+                // 선택된 BGM 의 lane y offset 계산 — multi-lane 일 때 overlay 가 그 행의 정확한 위치·높이에 맞도록.
+                val selectedBgmForOverlay = bgmClips.firstOrNull { it.id == selectedBgmClipId }
+                val bgmLaneYDp = bgmRowStrideDp * (selectedBgmForOverlay?.lane?.coerceAtLeast(0) ?: 0)
                 if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
                     var bgmFillBaseStartMs by remember { mutableStateOf(0L) }
                     var bgmFillAccumPx by remember { mutableStateOf(0f) }
+                    // 평행 이동도 선택된 BGM 의 bounds 안에서만 — 영상 timeline 전체로 슬라이드되지 않도록.
+                    val translateMin = selectedBgmForOverlay?.startMs ?: 0L
+                    val translateMaxStart = selectedBgmForOverlay?.let {
+                        (it.startMs + it.effectiveDurationMs - (rangeEndMs - rangeStartMs)).coerceAtLeast(it.startMs)
+                    } ?: (totalMs - (rangeEndMs - rangeStartMs)).coerceAtLeast(0L)
                     Box(
                         modifier = Modifier
-                            .offset(x = bgmFillStartDp)
+                            .offset(x = bgmFillStartDp, y = bgmLaneYDp)
                             .width(bgmFillWidthDp)
-                            .fillMaxHeight()
+                            .height(bgmRowHeight)
                             .background(accent.copy(alpha = 0.32f))
-                            .pointerInput(totalWidthPx, totalMs) {
+                            .pointerInput(totalWidthPx, totalMs, translateMin, translateMaxStart) {
                                 // fill drag → 영상 strip 의 onTranslateRange 와 동일 — range 전체 평행 이동.
                                 detectHorizontalDragGestures(
                                     onDragStart = {
@@ -1999,7 +2007,9 @@ private fun UnifiedTimelineBar(
                                         bgmFillAccumPx += dragAmount
                                         if (totalWidthPx > 0f && totalMs > 0L) {
                                             val deltaMs = (bgmFillAccumPx / totalWidthPx) * totalMs
-                                            onTranslateRange((bgmFillBaseStartMs + deltaMs).toLong())
+                                            val newStart = (bgmFillBaseStartMs + deltaMs).toLong()
+                                                .coerceIn(translateMin, translateMaxStart)
+                                            onTranslateRange(newStart)
                                         }
                                     }
                                 )
@@ -2007,18 +2017,16 @@ private fun UnifiedTimelineBar(
                     )
                     Box(
                         modifier = Modifier
-                            .offset(x = bgmFillStartDp)
+                            .offset(x = bgmFillStartDp, y = bgmLaneYDp)
                             .width(bgmFillWidthDp)
                             .height(TimelineBarSpec.RangeBorderThickness)
-                            .align(Alignment.TopStart)
                             .background(accent)
                     )
                     Box(
                         modifier = Modifier
-                            .offset(x = bgmFillStartDp)
+                            .offset(x = bgmFillStartDp, y = bgmLaneYDp + bgmRowHeight - TimelineBarSpec.RangeBorderThickness)
                             .width(bgmFillWidthDp)
                             .height(TimelineBarSpec.RangeBorderThickness)
-                            .align(Alignment.BottomStart)
                             .background(accent)
                     )
                 }
@@ -2053,14 +2061,15 @@ private fun UnifiedTimelineBar(
                             .width(widthDp)
                             .height(bgmRowHeight)
                             .clip(VibiShape.xs)
+                            // selected 상태로 색을 진하게 하지 않음 — 사용자가 강렬한 시각 변화로 산만함을 느낀다는 피드백.
+                            // 선택 시각은 BGM lane 의 range overlay (fill+border+handles) 가 단독으로 담당.
                             .background(
-                                when {
-                                    isMuted -> markerColor.copy(alpha = if (isSelected) 0.5f else 0.25f)
-                                    isSelected -> accent
-                                    else -> accent.copy(alpha = 0.55f)
-                                }
+                                if (isMuted) markerColor.copy(alpha = 0.25f)
+                                else accent.copy(alpha = 0.55f)
                             )
-                            .pointerInput(clip.id, totalMs, laneWidthPx, bgmTapEnabled, currentRowCount) {
+                            .pointerInput(clip.id, bgmTapEnabled) {
+                                // tap 은 BGM 바 자체 영역 (= 10dp × clip width) 에서만 인식 — lane 의
+                                // 빈 공간 (행 사이 gap, BGM 없는 x 구간) 은 탭 안 됨.
                                 detectTapGestures(onTap = {
                                     if (bgmTapEnabled) onBgmSelectClip(clip.id)
                                 })
@@ -2111,14 +2120,20 @@ private fun UnifiedTimelineBar(
                             },
                     )
                 }
-                // BGM lane 의 range handles — top-most layer 로 BGM bar 위에 표시. hit zone 은
-                // bgmRegionHeight 만큼만 잡아 top playback strip 의 핸들과 충돌 안 함.
+                // BGM lane 의 range handles — top-most layer 로 BGM bar 위에 표시. hit zone 은 그 행 높이만큼만
+                // 잡아 다른 lane 행 / playback strip 의 핸들과 충돌 안 함.
+                // 선택된 BGM 의 bounds 안에서만 움직이도록 clamp — BGM 길이 넘어선 range 방지.
                 if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
                     val minGap = TimelineBarSpec.MinRangeGapMs
+                    val bgmMinMs = selectedBgmForOverlay?.startMs ?: 0L
+                    val bgmMaxMs = selectedBgmForOverlay?.let {
+                        it.startMs + it.effectiveDurationMs
+                    } ?: totalMs
                     RangeHandle(
                         offsetX = bgmFillStartDp - handleHitWidth / 2,
+                        offsetY = bgmLaneYDp,
                         hitWidth = handleHitWidth,
-                        hitHeight = bgmRegionHeight,
+                        hitHeight = bgmRowHeight,
                         visualWidth = handleVisualWidth,
                         handleColor = accent,
                         gripColor = markerColor,
@@ -2126,13 +2141,14 @@ private fun UnifiedTimelineBar(
                         totalWidthPx = totalWidthPx,
                         totalMs = totalMs,
                         baseMsProvider = { currentRangeStart },
-                        clamp = { it.coerceIn(0L, (currentRangeEnd - minGap).coerceAtLeast(0L)) },
+                        clamp = { it.coerceIn(bgmMinMs, (currentRangeEnd - minGap).coerceAtLeast(bgmMinMs)) },
                         onChange = onRangeStartChange,
                     )
                     RangeHandle(
                         offsetX = bgmFillStartDp + bgmFillWidthDp - handleHitWidth / 2,
+                        offsetY = bgmLaneYDp,
                         hitWidth = handleHitWidth,
-                        hitHeight = bgmRegionHeight,
+                        hitHeight = bgmRowHeight,
                         visualWidth = handleVisualWidth,
                         handleColor = accent,
                         gripColor = markerColor,
@@ -2140,7 +2156,7 @@ private fun UnifiedTimelineBar(
                         totalWidthPx = totalWidthPx,
                         totalMs = totalMs,
                         baseMsProvider = { currentRangeEnd },
-                        clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(totalMs), totalMs) },
+                        clamp = { it.coerceIn((currentRangeStart + minGap).coerceAtMost(bgmMaxMs), bgmMaxMs) },
                         onChange = onRangeEndChange,
                     )
                 }
@@ -2784,6 +2800,7 @@ private fun RangeHandle(
     baseMsProvider: () -> Long,
     clamp: (Long) -> Long,
     onChange: (Long) -> Unit,
+    offsetY: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
@@ -2791,7 +2808,7 @@ private fun RangeHandle(
     var accumPx by remember { mutableStateOf(0f) }
     Box(
         modifier = Modifier
-            .offset(x = offsetX)
+            .offset(x = offsetX, y = offsetY)
             .width(hitWidth)
             .height(hitHeight)
             .pointerInput(totalWidthPx, totalMs) {

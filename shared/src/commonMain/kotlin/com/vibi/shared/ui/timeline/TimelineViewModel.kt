@@ -2272,6 +2272,8 @@ class TimelineViewModel constructor(
     fun onSelectSegmentInEdit(segmentId: String) {
         val state = _uiState.value
         if (!state.isSegmentEditMode) return
+        // 영상 strip 탭 → editTargets 를 Video 로 복귀 (BGM 모드였다면 자동 해제). selectSegmentInEditInternal
+        // 의 state.copy 와 합쳐서 한 번에 갱신되도록 selectSegmentInEditInternal 내부에서 처리.
         if (state.selectedSegmentId == segmentId &&
             state.pendingRangeEndMs > state.pendingRangeStartMs
         ) {
@@ -2280,6 +2282,7 @@ class TimelineViewModel constructor(
                 rangeTargetSegmentId = null,
                 pendingRangeStartMs = 0L,
                 pendingRangeEndMs = 0L,
+                editTargets = setOf(EditTarget.Video),
             )
             return
         }
@@ -2305,6 +2308,8 @@ class TimelineViewModel constructor(
             pendingRangeVolume = seg.volumeScale,
             pendingRangeSpeed = seg.speedScale,
             playbackPositionMs = segStart,
+            // 영상 segment 탭 → editTargets 를 Video 로 (BGM 모드였다면 자동 해제).
+            editTargets = setOf(EditTarget.Video),
         )
     }
 
