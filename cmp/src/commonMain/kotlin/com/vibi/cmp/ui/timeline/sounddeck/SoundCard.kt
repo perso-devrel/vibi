@@ -105,8 +105,9 @@ fun SoundCard(
                         style = typo.bodyStrong,
                         color = tokens.onBackgroundPrimary,
                         textDecoration = if (model.selected) TextDecoration.None else TextDecoration.LineThrough,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        // 펼친(=expanded) 상태에선 이름 줄임 없이 전체 노출 — 긴 BGM 파일명을 다듬기 패널 진입 시 확인.
+                        maxLines = if (expanded) Int.MAX_VALUE else 1,
+                        overflow = if (expanded) TextOverflow.Visible else TextOverflow.Ellipsis,
                     )
                     val rangeStr = formatRange(model.rangeStartMs, model.rangeEndMs)
                     if (rangeStr != null) {

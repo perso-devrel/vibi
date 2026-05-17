@@ -12,7 +12,6 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.reinterpret
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 import platform.AVFAudio.AVAudioFile
 import platform.AVFAudio.AVAudioPCMBuffer
 import platform.AVFAudio.AVFormatIDKey
@@ -123,22 +122,35 @@ private fun extractPeaksViaAudioFile(url: NSURL, samples: Int): List<Float> {
     val channels = buffer.floatChannelData ?: return emptyList()
     val ch0: CPointer<FloatVar> = channels[0] ?: return emptyList()
 
+    // bucket 별 RMS — bucket-MAX 는 음악/말소리에서 거의 모든 bucket 이 1.0 근처로 saturate (짧은 peak
+    // 하나만 있어도 max=1). RMS 가 평균 에너지를 반영해 다이내믹 레인지를 보존.
     val bucketSize = (frames / samples).coerceAtLeast(1)
-    val peaks = ArrayList<Float>(samples)
+    val rmsList = ArrayList<Float>(samples)
     var i = 0
-    while (i < frames && peaks.size < samples) {
+    while (i < frames && rmsList.size < samples) {
         val end = (i + bucketSize).coerceAtMost(frames)
-        var maxAbs = 0f
+        var sumSq = 0.0
         var j = i
         while (j < end) {
-            val s = abs(ch0[j])
-            if (s > maxAbs) maxAbs = s
+            val s = ch0[j].toDouble()
+            sumSq += s * s
             j++
         }
-        peaks.add(maxAbs.coerceIn(0f, 1f))
+        val rms = kotlin.math.sqrt(sumSq / (end - i)).toFloat()
+        rmsList.add(rms)
         i = end
     }
-    return peaks
+    return rmsList.normalizeToMax()
+}
+
+/**
+ * RMS list 를 최대값 1.0 으로 normalize — 전체 클립이 조용해도 상대적으로 큰 부분은 max bar 로 보이고
+ * 빈 영역은 짧게 유지. 최대값 0 (전 구간 무음) 은 그대로 0 으로 둠.
+ */
+private fun List<Float>.normalizeToMax(): List<Float> {
+    val maxRms = this.maxOrNull() ?: return this
+    if (maxRms <= 0f) return this
+    return this.map { (it / maxRms).coerceIn(0f, 1f) }
 }
 
 /**
@@ -184,9 +196,12 @@ private fun extractPeaksViaAssetReader(url: NSURL, samples: Int): List<Float> {
 
     // bucket index = globalFrame * samples / estimatedTotalFrames. sampleRate 정확치 몰라도 균등
     // 분포 유지. 추정치가 실제보다 작으면 마지막 bucket 으로 over-saturate → coerceAtMost(last) 로 보호.
+    // bucket 별 sum(s²) + count 누적 후 종료 시 RMS — MAX 누적은 음악에서 거의 모든 bucket 이 1.0 으로
+    // saturate (한 sample 만 peak 여도 bucket max=1). RMS 가 평균 에너지를 보존해 다이내믹 차이 가시화.
     val sampleRate = 44100.0
     val estimatedTotalFrames = (durationSec * sampleRate).toLong().coerceAtLeast(samples.toLong())
-    val maxPerBucket = FloatArray(samples)
+    val sumSqPerBucket = DoubleArray(samples)
+    val countPerBucket = IntArray(samples)
     var globalFrameIdx = 0L
 
     while (reader.status == AVAssetReaderStatusReading) {
@@ -203,8 +218,9 @@ private fun extractPeaksViaAssetReader(url: NSURL, samples: Int): List<Float> {
                     for (i in 0 until floatCount) {
                         val bucketIdx = (((globalFrameIdx + i).toDouble() * samples) / estimatedTotalFrames)
                             .toInt().coerceIn(0, samples - 1)
-                        val v = abs(buf[i])
-                        if (v > maxPerBucket[bucketIdx]) maxPerBucket[bucketIdx] = v
+                        val v = buf[i].toDouble()
+                        sumSqPerBucket[bucketIdx] += v * v
+                        countPerBucket[bucketIdx]++
                     }
                 }
             }
@@ -216,5 +232,9 @@ private fun extractPeaksViaAssetReader(url: NSURL, samples: Int): List<Float> {
         }
     }
 
-    return maxPerBucket.map { it.coerceIn(0f, 1f) }
+    val rmsList = (0 until samples).map { i ->
+        val c = countPerBucket[i]
+        if (c <= 0) 0f else kotlin.math.sqrt(sumSqPerBucket[i] / c).toFloat()
+    }
+    return rmsList.normalizeToMax()
 }

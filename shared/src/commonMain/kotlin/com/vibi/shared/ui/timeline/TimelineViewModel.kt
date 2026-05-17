@@ -2611,7 +2611,9 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
+        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
@@ -2619,11 +2621,13 @@ class TimelineViewModel constructor(
             slices.forEach { s ->
                 lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
             }
-            applyBgmRangeDuplicate(start, end)
-            // directive ripple — 순서 중요: shift 가 inside directive 의 rangeStart 를 안 옮긴 상태에서
-            // duplicate 가 안 directive 를 새 위치(+width)에 복제. 둘이 합쳐져 원본 + 복제 모두 보존.
-            applyDirectiveShiftAfter(after = end, deltaMs = end - start)
-            applyDirectiveDuplicateInside(start, end)
+            if (applyToBgm) applyBgmRangeDuplicate(start, end)
+            if (applyToVideo) {
+                // directive ripple — 순서 중요: shift 가 inside directive 의 rangeStart 를 안 옮긴 상태에서
+                // duplicate 가 안 directive 를 새 위치(+width)에 복제. 둘이 합쳐져 원본 + 복제 모두 보존.
+                applyDirectiveShiftAfter(after = end, deltaMs = end - start)
+                applyDirectiveDuplicateInside(start, end)
+            }
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastDuplicated?.id?.let { selectSegmentInEditInternal(it) }
@@ -2637,15 +2641,19 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
+        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
             slices.forEach { s -> removeSegmentRange(s.segmentId, s.localStart, s.localEnd) }
-            applyBgmRippleDelete(start, end)
-            // directive ripple — 구간을 관통하는 directive 는 두 조각으로 split (사용자: "구간1-1, 구간1-2"),
-            // 완전 포함은 삭제, 부분 겹침은 truncate, 구간 뒤는 width 만큼 left shift.
-            applyDirectiveRippleDelete(start, end)
+            if (applyToBgm) applyBgmRippleDelete(start, end)
+            if (applyToVideo) {
+                // directive ripple — 구간을 관통하는 directive 는 두 조각으로 split (사용자: "구간1-1, 구간1-2"),
+                // 완전 포함은 삭제, 부분 겹침은 truncate, 구간 뒤는 width 만큼 left shift.
+                applyDirectiveRippleDelete(start, end)
+            }
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
@@ -2660,7 +2668,9 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
+        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         resetRangeMode()
         viewModelScope.launch {
@@ -2670,7 +2680,7 @@ class TimelineViewModel constructor(
                 updateSegmentVolume(r.middle.id, value)
                 lastMiddleId = r.middle.id
             }
-            applyBgmRangeVolume(start, end, value)
+            if (applyToBgm) applyBgmRangeVolume(start, end, value)
             // volume 은 timeline 길이를 바꾸지 않아 directive ripple 필요 없음.
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
@@ -2685,7 +2695,9 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
-        val slices = sliceGlobalRange(start, end).sortedByDescending { it.order }
+        val applyToVideo = state.editTargets.any { it is EditTarget.Video }
+        val applyToBgm = state.editTargets.any { it is EditTarget.Bgm }
+        val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         val newSpeed = if (value > 0f) value else 1f
         // directive ripple delta = (새 effective 합 - 옛 effective 합). 각 slice 의 source 구간 길이는
@@ -2710,11 +2722,13 @@ class TimelineViewModel constructor(
                 updateSegmentSpeed(r.middle.id, newSpeed)
                 lastMiddleId = r.middle.id
             }
-            applyBgmRangeSpeed(start, end, newSpeed)
-            // directive 정리 — speed 와 겹치는 directive 는 stem tempo mismatch 로 sync 깨짐 →
-            // 삭제 후 재분리 유도. delete 가 먼저, shift 는 살아남은 downstream directive 만 처리.
-            applyDirectiveDeleteOverlapping(start, end)
-            applyDirectiveShiftAfter(after = end, deltaMs = rippleDelta)
+            if (applyToBgm) applyBgmRangeSpeed(start, end, newSpeed)
+            if (applyToVideo) {
+                // directive 정리 — speed 와 겹치는 directive 는 stem tempo mismatch 로 sync 깨짐 →
+                // 삭제 후 재분리 유도. delete 가 먼저, shift 는 살아남은 downstream directive 만 처리.
+                applyDirectiveDeleteOverlapping(start, end)
+                applyDirectiveShiftAfter(after = end, deltaMs = rippleDelta)
+            }
             refreshSegmentsStateFromDb()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }

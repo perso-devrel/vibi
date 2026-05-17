@@ -100,7 +100,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -341,6 +343,36 @@ fun TimelineScreen(
         }
     }
 
+    // 각 directive 의 stem audio peaks — 분리된 화자/배경음 stem 별로 자체 파형을 추출해 timeline
+    // directive 영역에 그대로 반영. 원본 video peaks 만 쓰면 모든 directive 가 동일한 shape 으로
+    // 보임 (volume scalar 차이만). stem peaks 를 사용하면 voice/background 구간이 시각적으로 달라짐.
+    val stemPeaks = remember {
+        androidx.compose.runtime.mutableStateMapOf<String, List<Float>>().apply {
+            putAll(stemPeaksCacheTimeline)
+        }
+    }
+    val activeStemUrls = remember(state.separationDirectives) {
+        state.separationDirectives
+            .flatMap { d -> d.selections }
+            .mapNotNull { it.audioUrl?.takeIf { url -> url.isNotBlank() } }
+            .distinct()
+    }
+    LaunchedEffect(activeStemUrls) {
+        // 각 stem 추출은 독립적이라 병렬 실행 — sequential 이면 N stems × per-URL latency 누적.
+        coroutineScope {
+            for (url in activeStemUrls) {
+                if (!stemPeaks[url].isNullOrEmpty()) continue
+                launch {
+                    val extracted = com.vibi.cmp.platform.extractAudioPeaks(url, samples = 240)
+                    if (extracted.isNotEmpty()) {
+                        stemPeaksCacheTimeline[url] = extracted
+                        stemPeaks[url] = extracted
+                    }
+                }
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
     Column(
         modifier = Modifier
@@ -386,46 +418,34 @@ fun TimelineScreen(
             val savingPercent = (state.saveStatus as? SaveStatus.RUNNING)?.progress ?: 0
             val sharing = state.shareStatus is ShareStatus.RUNNING
             val sharingPercent = (state.shareStatus as? ShareStatus.RUNNING)?.progress ?: 0
-            IconButton(
-                enabled = !sharing && !saveAnyJobRunning && !saving && state.segments.isNotEmpty(),
-                onClick = { viewModel.onShareExport() },
-                modifier = Modifier.size(VibiSpacing.xxl),
+            var exportSheetOpen by remember { mutableStateOf(false) }
+            // 내보내기 진입점 — 텍스트 라벨 버튼. 진행 중이면 라벨 자리에 progress percent 노출.
+            OutlinedButton(
+                enabled = !sharing && !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
+                onClick = { exportSheetOpen = true },
+                shape = VibiShape.lg,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.sm, vertical = 0.dp),
+                modifier = Modifier.height(VibiSpacing.xxl),
             ) {
-                if (sharing) {
-                    Text(
-                        "${sharingPercent}%",
-                        fontSize = 11.sp,
-                        color = tokens.onBackgroundPrimary,
-                    )
-                } else {
-                    Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
-                        contentDescription = "공유",
-                        tint = tokens.onBackgroundPrimary,
-                    )
+                val label = when {
+                    saving -> "${savingPercent}%"
+                    sharing -> "${sharingPercent}%"
+                    else -> "Export"
                 }
+                Text(label, style = typo.bodySm, color = tokens.onBackgroundPrimary)
             }
-            // 저장 아이콘 — 진행 중이면 percent 텍스트로 토글.
-            // segments 비어있으면 ExportWithDubbingUseCase 가 require(isNotEmpty) 에서 throw →
-            // 사용자가 silent crash 보기 전에 버튼 단계에서 차단.
-            IconButton(
-                enabled = !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
-                onClick = { viewModel.onSaveAllVariants() },
-                modifier = Modifier.size(VibiSpacing.xxl),
-            ) {
-                if (saving) {
-                    Text(
-                        "${savingPercent}%",
-                        fontSize = 11.sp,
-                        color = tokens.onBackgroundPrimary,
-                    )
-                } else {
-                    Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
-                        contentDescription = "저장",
-                        tint = tokens.onBackgroundPrimary,
-                    )
-                }
+            if (exportSheetOpen) {
+                ExportOptionsSheet(
+                    onSave = {
+                        exportSheetOpen = false
+                        viewModel.onSaveAllVariants()
+                    },
+                    onShare = {
+                        exportSheetOpen = false
+                        viewModel.onShareExport()
+                    },
+                    onDismiss = { exportSheetOpen = false },
+                )
             }
         }
 
@@ -728,27 +748,53 @@ fun TimelineScreen(
                 segmentEditedColor = tokens.timelineBarSegmentEdited,
                 directiveColor = tokens.timelineBarDirective,
                 videoPeaks = videoPeaks,
+                stemPeaksByUrl = stemPeaks,
                 primarySourceUri = state.videoUri,
                 primarySourceDurationMs = state.segments.firstOrNull { it.sourceUri == state.videoUri }
                     ?.durationMs ?: state.videoDurationMs,
                 processingSeparations = processingOverlays,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
-                onDirectiveTap = { viewModel.onEditExistingSeparation(it) },
+                // directive 탭 시 AudioSeparationSheet 띄우지 않음 — 편집은 SoundDeck 의 stem 카드에서 처리.
+                onDirectiveTap = {},
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
                 onRangeStartChange = { viewModel.onSetPendingRangeStart(it) },
                 onRangeEndChange = { viewModel.onSetPendingRangeEnd(it) },
                 onTranslateRange = { viewModel.onTranslateRange(it) },
-                onFreeIntervalTap = { s, e -> viewModel.onSelectFreeRange(s, e) },
+                onFreeIntervalTap = { s, e ->
+                    // segment edit 중 영상 strip 의 free 영역 탭 — target=Video 로 전환해 BGM 모드에서 영상 모드로.
+                    if (state.isSegmentEditMode) {
+                        viewModel.onSetEditTargets(setOf(com.vibi.shared.ui.timeline.EditTarget.Video))
+                    }
+                    viewModel.onSelectFreeRange(s, e)
+                },
                 onRangeTapToggle = { viewModel.onClearRangeSelection() },
                 bgmClips = state.bgmClips,
                 bgmLaneCount = state.bgmLaneCount,
                 selectedBgmClipId = state.selectedBgmClipId,
-                bgmTapEnabled = !state.isRangeSelecting,
-                onBgmSelectClip = viewModel::onSelectBgmClip,
+                // segment edit 모드에서만 BGM 탭 허용 — 탭 시 그 BGM 의 timeline bounds 로 range 스냅해
+                // 위 EditActionsPanel 로 volume/speed/duplicate/delete 적용. 시각 highlight 도 함께 부여.
+                bgmTapEnabled = state.isSegmentEditMode,
+                onBgmSelectClip = { clipId ->
+                    val clip = state.bgmClips.firstOrNull { it.id == clipId } ?: return@UnifiedTimelineBar
+                    viewModel.onSelectBgmClip(clipId)
+                    // BGM 블럭 탭 → editTargets 를 Bgm 으로 전환 (영상 자동 deselect). apply 는 BGM 만 적용.
+                    viewModel.onSetEditTargets(setOf(com.vibi.shared.ui.timeline.EditTarget.Bgm(clipId)))
+                    viewModel.onSelectFreeRange(
+                        clip.startMs,
+                        clip.startMs + clip.effectiveDurationMs,
+                    )
+                },
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
                 onBgmUpdateLane = viewModel::onUpdateBgmLane,
                 onBgmSetLaneCount = viewModel::onSetBgmLaneCount,
-                showBgm = showAudioSourcesContent && !state.isSegmentEditMode,
+                // segment edit 모드에서도 BGM 표시 — range-edit (volume/speed/duplicate/delete) 가
+                // applyBgmRange* 헬퍼로 BGM 까지 적용하므로 사용자가 lane 을 보면서 편집 가능.
+                showBgm = showAudioSourcesContent,
+                // BGM 타깃 모드 — editTargets 에 Bgm 포함 시 영상 strip 의 range overlay 숨기고 BGM lane
+                // 에 동일 디자인의 range fill 노출. 영상/BGM 동시 선택 막아 사용자 의도가 분명한 트랙에만 apply.
+                bgmRangeMode = state.editTargets.any {
+                    it is com.vibi.shared.ui.timeline.EditTarget.Bgm
+                },
             )
             if (state.isRangeSelecting) {
                 Text(
@@ -822,6 +868,23 @@ fun TimelineScreen(
                     micLevel = 0f
                 }
                 var audioMenuOpen by remember { mutableStateOf(false) }
+                // 편집 토글 — segment edit 모드 내내 표시. range 미선택 상태 (start==end) 면 apply 류는
+                // VM 가드에서 no-op 처리되고 onCancel 만 활성. 사용자가 토글 사라짐 → 다시 진입 반복하지 않도록.
+                if (state.isSegmentEditMode) {
+                    com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
+                        title = "구간 편집",
+                        volume = state.pendingRangeVolume,
+                        speed = state.pendingRangeSpeed,
+                        onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                        onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                        onApplyVolume = { viewModel.onApplyRangeVolume(it) },
+                        onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
+                        secondaryActionLabel = "복제",
+                        onSecondaryAction = { viewModel.onDuplicateRange() },
+                        onDelete = { viewModel.onDeleteRange() },
+                        onCancel = { viewModel.onFinishSegmentEdit() },
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
@@ -830,6 +893,7 @@ fun TimelineScreen(
                         // RUNNING 시에도 enable — 사용자가 진행 중 잡 외에 다른 구간 분리를 동시에 시작할 수 있어야 함.
                         enabled = firstSegId != null && !state.isSegmentEditMode,
                         modifier = Modifier.weight(1f).height(56.dp),
+                        shape = VibiShape.lg,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
                         onClick = {
                             val segId = firstSegId ?: return@OutlinedButton
@@ -848,6 +912,7 @@ fun TimelineScreen(
                         OutlinedButton(
                             enabled = !state.isAddingBgm && !state.isSegmentEditMode,
                             modifier = Modifier.fillMaxWidth().height(56.dp),
+                            shape = VibiShape.lg,
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
                             onClick = {
                                 if (recording) recorder.stop()
@@ -903,24 +968,6 @@ fun TimelineScreen(
                             )
                         }
                     }
-                }
-                // 편집 토글 — 버튼 행 바로 아래. range slider 로 구간이 실제 선택된 뒤에만 노출.
-                if (state.isSegmentEditMode &&
-                    state.pendingRangeEndMs > state.pendingRangeStartMs
-                ) {
-                    com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
-                        title = "구간 편집",
-                        volume = state.pendingRangeVolume,
-                        speed = state.pendingRangeSpeed,
-                        onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
-                        onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
-                        onApplyVolume = { viewModel.onApplyRangeVolume(it) },
-                        onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
-                        secondaryActionLabel = "복제",
-                        onSecondaryAction = { viewModel.onDuplicateRange() },
-                        onDelete = { viewModel.onDeleteRange() },
-                        onCancel = { viewModel.onFinishSegmentEdit() },
-                    )
                 }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
                 // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
@@ -1325,7 +1372,8 @@ fun TimelineScreen(
     }
 
     // BGM 클립 액션 sheet — 음원 단계에서 lane 의 막대를 탭했을 때 selectedBgmClipId 가 set 되면 표시.
-    if (showAudioSourcesContent) {
+    // segment edit 중에는 selectedBgmClipId 가 시각 highlight 용으로만 set 되므로 sheet 안 띄움.
+    if (showAudioSourcesContent && !state.isSegmentEditMode) {
         state.bgmClips.firstOrNull { it.id == state.selectedBgmClipId }?.let { selectedClip ->
             BgmActionSheet(
                 clip = selectedClip,
@@ -1580,6 +1628,8 @@ private fun UnifiedTimelineBar(
      * 비어 있으면 (Android stub / 추출 실패) 기존 회색 strip + directive 막대 fallback.
      */
     videoPeaks: List<Float> = emptyList(),
+    /** stem audioUrl → 추출된 peaks. directive 영역에서 source peaks 대신 사용해 각 stem 의 실제 파형 노출. */
+    stemPeaksByUrl: Map<String, List<Float>> = emptyMap(),
     /** Peak 가 추출된 source URI — segment.sourceUri 가 일치하는 segment 만 peak lookup. 다른 source 영역은 0. */
     primarySourceUri: String = "",
     /** Peak source 의 raw duration (ms). segment trim/speed 역매핑에 사용. */
@@ -1606,6 +1656,8 @@ private fun UnifiedTimelineBar(
     onBgmUpdateLane: (String, Int) -> Unit = { _, _ -> },
     onBgmSetLaneCount: (Int) -> Unit = {},
     showBgm: Boolean = false,
+    /** true 면 영상 strip 의 range overlay 숨기고 BGM lane 에 range fill 노출. mutual exclusion. */
+    bgmRangeMode: Boolean = false,
 ) {
     val density = LocalDensity.current
     val currentRangeStart by rememberUpdatedState(rangeStartMs)
@@ -1712,45 +1764,12 @@ private fun UnifiedTimelineBar(
                 .height(playbackRegionHeight)
                 .then(rangeTapModifier),
         ) {
-            // Layer 1 — 영상편집 모드는 segment 색 박스, 그 외는 영상 audio 파형(directive 구간만 accent).
-            // peaks 비면(Android stub / 추출 실패) 기존 회색 strip + 짙은 grey directive 막대로 fallback.
-            if (showSegments) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .fillMaxWidth()
-                        .height(contentHeight)
-                        .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
-                        .background(trackColor)
-                )
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .fillMaxWidth()
-                        .height(contentHeight),
-                    horizontalArrangement = Arrangement.spacedBy(TimelineBarSpec.SegmentSpacing),
-                ) {
-                    segments.forEach { seg ->
-                        // 시각 "편집됨" = 사용자가 실제로 의도해 적용한 변경 — volume/speed/복제.
-                        // trim 은 onApplyRangeVolume/Speed 가 segment 를 left/middle/right 로 split 하면서
-                        // 세 조각 모두에 부여하므로 trim 까지 포함하면 사용자가 편집한 middle 뿐 아니라
-                        // 자르고 남은 left/right 까지 색이 바뀜. trim 은 시각 표시에서 제외한다.
-                        // (hasNonTrivialEdits 는 render-필요 판단용으로 별도 — 그쪽은 trim 포함 유지.)
-                        val edited = seg.volumeScale != 1.0f ||
-                            seg.speedScale != 1.0f ||
-                            seg.duplicatedFromId != null
-                        // tap 은 parent rangeTapModifier 가 ms → segment id 역검색으로 처리.
-                        Box(
-                            modifier = Modifier
-                                .weight(seg.effectiveDurationMs.toFloat().coerceAtLeast(1f))
-                                .fillMaxHeight()
-                                .background(if (edited) segmentEditedColor else segmentColor),
-                        )
-                    }
-                }
-            } else {
-                val hasWaveform = videoPeaks.isNotEmpty() && totalMs > 0L
-                if (hasWaveform) {
+            // Layer 1 — 영상 audio 파형. 영상편집 모드에서도 동일하게 — 사용자가 audio 위치를 보면서
+            // 구간을 잡도록. segment 의 volume/speed 변경은 파형 bar 높이/밀도에 이미 반영됨
+            // (TimelineWaveformBackground 가 seg.volumeScale, speedScale 을 곱해 매핑).
+            // peaks 비면 (Android stub / 추출 실패) 회색 strip + directive 막대 fallback.
+            val hasWaveform = videoPeaks.isNotEmpty() && totalMs > 0L
+            if (hasWaveform) {
                     TimelineWaveformBackground(
                         sourcePeaks = videoPeaks,
                         segments = segments,
@@ -1758,6 +1777,7 @@ private fun UnifiedTimelineBar(
                         sourceDurationMs = primarySourceDurationMs,
                         totalMs = totalMs,
                         directives = directives,
+                        stemPeaksByUrl = stemPeaksByUrl,
                         defaultBarColor = markerColor.copy(alpha = 0.45f),
                         highlightBarColor = accent,
                         trackBg = trackColor.copy(alpha = 0.55f),
@@ -1773,7 +1793,8 @@ private fun UnifiedTimelineBar(
                             totalMs = totalMs,
                             height = TimelineBarSpec.WaveformHeight,
                             barColor = null,
-                            tapEnabled = !showRange,
+                            // directive 탭은 no-op — clickable 자체를 안 붙여 ripple 시각 효과 제거.
+                            tapEnabled = false,
                             onDirectiveTap = onDirectiveTap,
                         )
                     }
@@ -1792,11 +1813,11 @@ private fun UnifiedTimelineBar(
                             totalMs = totalMs,
                             height = contentHeight,
                             barColor = directiveColor,
-                            tapEnabled = !showRange,
+                            // directive 탭은 no-op — clickable 자체를 안 붙여 ripple 시각 효과 제거.
+                            tapEnabled = false,
                             onDirectiveTap = onDirectiveTap,
                         )
                     }
-                }
             }
 
             // 진행 중인 음원분리 overlay — directive 막대(짙은 회색) 와 다른 accent 컬러로 구별.
@@ -1832,7 +1853,8 @@ private fun UnifiedTimelineBar(
             // Layer 2 — 회색 타임라인 strip(=contentHeight 12dp)에 정렬. 트림 핸들도 동일 높이.
             // tap absorber 없음 → 자식 segment.clickable / parent free-interval tap 모두 살림.
             // rangeEndMs <= rangeStartMs (zero-width) = "선택 없음" 상태 → range 시각 모두 숨김 (mode 유지).
-            if (showRange && totalMs > 0L && rangeEndMs > rangeStartMs) {
+            // bgmRangeMode 면 영상 strip 의 fill/handles 안 그림 — BGM lane 에 같은 시각이 노출.
+            if (showRange && totalMs > 0L && rangeEndMs > rangeStartMs && !bgmRangeMode) {
                 val startFrac = (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
                 val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
                 val rangeStartDp = totalWidthDp * startFrac
@@ -1962,6 +1984,37 @@ private fun UnifiedTimelineBar(
                     .fillMaxWidth()
                     .height(bgmRegionHeight),
             ) {
+                // BGM 타깃 모드 + range 선택 상태면 lane 위에 영상 strip 과 같은 디자인의 fill+border 표시.
+                // 막대들 아래 layer 라 BGM bar 가 위에 그려져 막대 시각은 보존된다.
+                if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
+                    val startFrac = (rangeStartMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val endFrac = (rangeEndMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val fillStartDp = laneWidthDp * startFrac
+                    val fillWidthDp = laneWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
+                    Box(
+                        modifier = Modifier
+                            .offset(x = fillStartDp)
+                            .width(fillWidthDp)
+                            .fillMaxHeight()
+                            .background(accent.copy(alpha = 0.32f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(x = fillStartDp)
+                            .width(fillWidthDp)
+                            .height(TimelineBarSpec.RangeBorderThickness)
+                            .align(Alignment.TopStart)
+                            .background(accent)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(x = fillStartDp)
+                            .width(fillWidthDp)
+                            .height(TimelineBarSpec.RangeBorderThickness)
+                            .align(Alignment.BottomStart)
+                            .background(accent)
+                    )
+                }
                 bgmClips.forEach { clip ->
                     val globalDurMs = ((clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))).toLong()
                         .coerceAtLeast(1L)
@@ -1986,13 +2039,20 @@ private fun UnifiedTimelineBar(
                     val offsetXDp = laneWidthDp * startFrac
                     val offsetYDp = bgmRowStrideDp * effectiveLane
                     val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
+                    val isMuted = clip.volumeScale <= 0f
                     Box(
                         modifier = Modifier
                             .offset(x = offsetXDp, y = offsetYDp)
                             .width(widthDp)
                             .height(bgmRowHeight)
                             .clip(VibiShape.xs)
-                            .background(if (isSelected) accent else accent.copy(alpha = 0.55f))
+                            .background(
+                                when {
+                                    isMuted -> markerColor.copy(alpha = if (isSelected) 0.5f else 0.25f)
+                                    isSelected -> accent
+                                    else -> accent.copy(alpha = 0.55f)
+                                }
+                            )
                             .pointerInput(clip.id, totalMs, laneWidthPx, bgmTapEnabled, currentRowCount) {
                                 detectTapGestures(onTap = {
                                     if (bgmTapEnabled) onBgmSelectClip(clip.id)
@@ -2181,19 +2241,33 @@ private fun TimelineWaveformBackground(
     sourceDurationMs: Long,
     totalMs: Long,
     directives: List<com.vibi.shared.domain.model.SeparationDirective>,
+    stemPeaksByUrl: Map<String, List<Float>>,
     defaultBarColor: Color,
     highlightBarColor: Color,
     trackBg: Color,
     modifier: Modifier = Modifier,
 ) {
-    // directive 별 effective scale — 매 frame 재계산하지 않도록 directives 변경 시에만.
-    val directiveOverlays = remember(directives) {
+    // directive 별 effective scale + stem 기여도. directive 영역의 bar 높이는 선택된 모든 stem 의 peak 를
+    // volume 으로 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) — 화자+배경 둘 다 켜면 mix shape 이 보임.
+    // muteOriginalSegmentAudio=false 면 source peak 도 추가 항으로 합산.
+    val directiveOverlays = remember(directives, stemPeaksByUrl) {
         directives.map { d ->
             val originalContrib = if (d.muteOriginalSegmentAudio) 0f else 1f
-            val stemContrib = d.selections
-                .filter { it.selected }
-                .maxOfOrNull { it.volume } ?: 0f
-            DirectiveScaleOverlay(d.rangeStartMs, d.rangeEndMs, (originalContrib + stemContrib).coerceIn(0f, 1.5f))
+            val selectedStems = d.selections.filter { it.selected }
+            val stemContrib = selectedStems.maxOfOrNull { it.volume } ?: 0f
+            val contributions = selectedStems.mapNotNull { sel ->
+                val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val peaks = stemPeaksByUrl[url] ?: return@mapNotNull null
+                if (peaks.isEmpty()) null else StemPeakContribution(peaks, sel.volume)
+            }
+            DirectiveScaleOverlay(
+                startMs = d.rangeStartMs,
+                endMs = d.rangeEndMs,
+                scale = (originalContrib + stemContrib).coerceIn(0f, 1.5f),
+                stemContributions = contributions,
+                includeOriginal = !d.muteOriginalSegmentAudio,
+                sourceOffsetMs = d.sourceOffsetMs,
+            )
         }
     }
     // segment 누적 (acc, segment) — timelineMs → segment 역검색을 N=240 번 돌릴 때 O(N×S) 보다 빠르도록 미리 펼침.
@@ -2243,18 +2317,41 @@ private fun TimelineWaveformBackground(
                     }
                 }
 
-                // directive overlay scale + 시각 컬러 분기 결정.
+                // directive overlay scale + 시각 컬러 분기 결정. directive 안일 때 선택된 모든 stem 의 peak 를
+                // volume 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) → 화자+배경 둘 다 켜면 합쳐진 mix 가 보임.
+                // mute 안 한 경우 source peak 도 추가 항으로 더함. stem peaks 없으면 기존 source × scale fallback.
                 var directiveScale = 1f
                 var inDirective = false
+                var directivePeak: Float? = null
                 for (ov in directiveOverlays) {
                     if (timelineMs in ov.startMs..ov.endMs) {
                         directiveScale = ov.scale
                         inDirective = true
+                        if (ov.stemContributions.isNotEmpty()) {
+                            val durMs = (ov.endMs - ov.startMs).coerceAtLeast(1L)
+                            val rel = (timelineMs - ov.startMs).coerceAtLeast(0L) + ov.sourceOffsetMs
+                            var sumSq = 0.0
+                            for (c in ov.stemContributions) {
+                                val idx = ((rel.toDouble() / durMs) * c.peaks.size).toInt()
+                                    .coerceIn(0, c.peaks.size - 1)
+                                val v = c.peaks[idx] * c.volume
+                                sumSq += v * v
+                            }
+                            if (ov.includeOriginal) {
+                                val v = sourcePeak * segVolume
+                                sumSq += v * v
+                            }
+                            directivePeak = kotlin.math.sqrt(sumSq).toFloat()
+                        }
                         break
                     }
                 }
 
-                val effectivePeak = (sourcePeak * segVolume * directiveScale).coerceIn(0f, 1f)
+                val effectivePeak = if (directivePeak != null) {
+                    directivePeak.coerceIn(0f, 1f)
+                } else {
+                    (sourcePeak * segVolume * directiveScale).coerceIn(0f, 1f)
+                }
                 val h = maxOf(1.5f, kotlin.math.sqrt(effectivePeak) * maxHalfHeight)
                 val x = slot * i + (slot - barWidth) / 2f
                 drawRect(
@@ -2267,7 +2364,15 @@ private fun TimelineWaveformBackground(
     }
 }
 
-private data class DirectiveScaleOverlay(val startMs: Long, val endMs: Long, val scale: Float)
+private data class DirectiveScaleOverlay(
+    val startMs: Long,
+    val endMs: Long,
+    val scale: Float,
+    val stemContributions: List<StemPeakContribution> = emptyList(),
+    val includeOriginal: Boolean = true,
+    val sourceOffsetMs: Long = 0L,
+)
+private data class StemPeakContribution(val peaks: List<Float>, val volume: Float)
 private data class SegmentSpan(
     val startMs: Long,
     val endMs: Long,
@@ -2280,6 +2385,72 @@ private data class SegmentSpan(
  *  - "삽입" = 현재 playhead 로 startMs 재고정.
  *  - "미리듣기" = TODO (별도 BGM playback 인프라 필요 — stub).
  */
+/**
+ * 헤더의 "내보내기" 아이콘 탭 시 노출. 저장(갤러리)·공유 두 옵션. 시트 자체는 단순 메뉴 — 실제 progress
+ * 는 헤더 아이콘이 percent 텍스트로 그대로 표시하므로 별도 progress UI 없음.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ExportOptionsSheet(
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = tokens.panelBg,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
+        ) {
+            Text("내보내기", color = tokens.onBackgroundPrimary, style = typo.titleSm)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+            ) {
+                OutlinedButton(
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    shape = VibiShape.lg,
+                    onClick = onSave,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
+                            contentDescription = null,
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                        Spacer(Modifier.width(VibiSpacing.xs))
+                        Text("저장", style = typo.bodySm)
+                    }
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    shape = VibiShape.lg,
+                    onClick = onShare,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
+                            contentDescription = null,
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                        Spacer(Modifier.width(VibiSpacing.xs))
+                        Text("공유", style = typo.bodySm)
+                    }
+                }
+            }
+            Spacer(Modifier.height(VibiSpacing.sm))
+        }
+    }
+}
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun BgmActionSheet(
@@ -2434,6 +2605,11 @@ private val bgmPeaksCache = mutableMapOf<String, List<Float>>()
  * 갱신 시 재추출 없이 즉시 표시. iOS 만 동작(extractAudioPeaks android stub).
  */
 private val videoPeaksCache = mutableMapOf<String, List<Float>>()
+
+/**
+ * Timeline 의 directive 영역 파형용 — stem audioUrl → peaks. 모듈 레벨이라 화면 재진입에도 보존.
+ */
+private val stemPeaksCacheTimeline = mutableMapOf<String, List<Float>>()
 
 /**
  * BgmActionSheet 의 볼륨/속도 인라인 슬라이더 — 회전된 popup 대신 row 가 펼쳐지는 패턴.
