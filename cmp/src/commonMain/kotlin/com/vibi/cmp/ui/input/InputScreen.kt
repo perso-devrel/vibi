@@ -38,7 +38,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
+import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
+import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.ui.account.UserAvatarButton
 import com.vibi.cmp.ui.account.UserMenuSheet
 import com.vibi.cmp.ui.cupertino.BodyText
@@ -415,25 +417,28 @@ private fun GreetingRow(name: String?, credits: Int) {
                 )
             )
         }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Color(0x1F767680))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-        ) {
-            Text(
-                text = "✦",
-                style = TextStyle(fontSize = 12.sp, color = Color(0xFF0A84FF))
-            )
-            Spacer(Modifier.width(4.dp))
-            Text(
-                text = "$credits",
-                style = TextStyle(
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
+        if (RuntimeFlags.iapEnabled) {
+            val tokens = LocalVibiColors.current
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(tokens.chipBg)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = "✦",
+                    style = TextStyle(fontSize = 12.sp, color = tokens.accent)
                 )
-            )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "$credits",
+                    style = TextStyle(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                )
+            }
         }
     }
 }

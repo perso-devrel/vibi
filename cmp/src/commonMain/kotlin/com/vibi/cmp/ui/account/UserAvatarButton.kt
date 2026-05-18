@@ -6,12 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.shared.domain.model.AuthUser
 
 @Composable
@@ -49,12 +50,13 @@ fun UserAvatar(
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
 ) {
+    val tokens = LocalVibiColors.current
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(Color(0xFF2C2C2E))
-            .border(width = 1.dp, color = Color(0x33FFFFFF), shape = CircleShape),
+            .background(tokens.chipBg)
+            .border(width = 1.dp, color = tokens.hairline, shape = CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         val picture = user?.picture?.takeIf { it.isNotBlank() }
@@ -73,7 +75,7 @@ fun UserAvatar(
                 text = initial,
                 style = TextStyle(
                     fontSize = initialFontSize,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                 )
             )

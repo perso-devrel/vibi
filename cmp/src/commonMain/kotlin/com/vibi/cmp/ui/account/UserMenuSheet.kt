@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -29,11 +30,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vibi.cmp.platform.RuntimeFlags
+import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.ui.account.UserMenuViewModel
 import org.koin.compose.viewmodel.koinViewModel
@@ -43,6 +45,9 @@ import org.koin.compose.viewmodel.koinViewModel
  *
  * 진입 시점에 BFF 잔액을 1회 refresh — InputScreen 재진입마다 fetch 하지 않도록.
  * 로그아웃 또는 회원탈퇴 완료 시 [onSignedOut] 호출.
+ *
+ * 크레딧 구매 진입점은 [RuntimeFlags.iapEnabled] = false 일 때 숨겨진다. App Store 심사 통과
+ * 전 (StoreKit 미연동) 상태로 IAP UI 노출 시 가이드라인 2.1 / 3.1.1 reject 위험.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,18 +58,19 @@ fun UserMenuSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val state by viewModel.uiState.collectAsState()
+    val tokens = LocalVibiColors.current
     var purchaseOpen by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
-        viewModel.refreshBalance()
+        if (RuntimeFlags.iapEnabled) viewModel.refreshBalance()
         viewModel.navigateToLogin.collect { onSignedOut() }
     }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF1C1C1E),
+        containerColor = tokens.panelBg,
     ) {
         Column(
             modifier = Modifier
@@ -73,9 +79,15 @@ fun UserMenuSheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            ProfileHeader(user = state.user, credits = state.credits)
+            ProfileHeader(
+                user = state.user,
+                credits = state.credits,
+                showCredits = RuntimeFlags.iapEnabled,
+            )
 
-            BuyCreditsRow(onClick = { purchaseOpen = true })
+            if (RuntimeFlags.iapEnabled) {
+                BuyCreditsRow(onClick = { purchaseOpen = true })
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -86,7 +98,7 @@ fun UserMenuSheet(
                     text = "로그아웃",
                     style = TextStyle(
                         fontSize = 15.sp,
-                        color = Color(0xCCEBEBF5),
+                        color = tokens.mutedText,
                     ),
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -97,7 +109,7 @@ fun UserMenuSheet(
                     text = "회원탈퇴",
                     style = TextStyle(
                         fontSize = 15.sp,
-                        color = Color(0xFFFF453A),
+                        color = MaterialTheme.colorScheme.error,
                     ),
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -112,6 +124,7 @@ fun UserMenuSheet(
         CreditPurchaseSheet(
             products = viewModel.products,
             currentCredits = state.credits,
+            isAdmin = state.isAdmin,
             onDismiss = { purchaseOpen = false },
             onPurchased = { product, platform, receipt, transactionId ->
                 viewModel.purchaseCredits(
@@ -121,6 +134,7 @@ fun UserMenuSheet(
                     transactionId = transactionId,
                 )
             },
+            onAdminGrant = viewModel::adminGrantCredits,
         )
     }
     if (confirmDelete) {
@@ -135,7 +149,7 @@ fun UserMenuSheet(
             confirmButton = {
                 Text(
                     text = "탈퇴",
-                    color = Color(0xFFFF453A),
+                    color = MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .clickable {
@@ -153,15 +167,13 @@ fun UserMenuSheet(
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             },
-            containerColor = Color(0xFF2C2C2E),
-            titleContentColor = Color.White,
-            textContentColor = Color(0xCCEBEBF5),
         )
     }
 }
 
 @Composable
-private fun ProfileHeader(user: AuthUser?, credits: Int) {
+private fun ProfileHeader(user: AuthUser?, credits: Int, showCredits: Boolean) {
+    val tokens = LocalVibiColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -173,7 +185,7 @@ private fun ProfileHeader(user: AuthUser?, credits: Int) {
                 text = user?.name?.takeIf { it.isNotBlank() } ?: "게스트",
                 style = TextStyle(
                     fontSize = 17.sp,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                 ),
                 maxLines = 1,
@@ -183,41 +195,44 @@ private fun ProfileHeader(user: AuthUser?, credits: Int) {
                 text = user?.email?.takeIf { it.isNotBlank() } ?: "로그인된 계정 없음",
                 style = TextStyle(
                     fontSize = 13.sp,
-                    color = Color(0x99EBEBF5),
+                    color = tokens.mutedText,
                 ),
                 maxLines = 1,
             )
         }
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = "보유 크레딧",
-                style = TextStyle(
-                    fontSize = 11.sp,
-                    color = Color(0x99EBEBF5),
-                    letterSpacing = 0.4.sp,
+        if (showCredits) {
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "보유 크레딧",
+                    style = TextStyle(
+                        fontSize = 11.sp,
+                        color = tokens.mutedText,
+                        letterSpacing = 0.4.sp,
+                    )
                 )
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "$credits",
-                style = TextStyle(
-                    fontSize = 22.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "$credits",
+                    style = TextStyle(
+                        fontSize = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    )
                 )
-            )
+            }
         }
     }
 }
 
 @Composable
 private fun BuyCreditsRow(onClick: () -> Unit) {
+    val tokens = LocalVibiColors.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF2C2C2E))
+            .background(tokens.chipBg)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
@@ -225,14 +240,14 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
             modifier = Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF0A84FF)),
+                .background(tokens.accent),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "+",
                 style = TextStyle(
                     fontSize = 18.sp,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onPrimary,
                     fontWeight = FontWeight.Bold,
                 )
             )
@@ -243,7 +258,7 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
                 text = "크레딧 구매",
                 style = TextStyle(
                     fontSize = 16.sp,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                 )
             )
@@ -252,13 +267,13 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
                 text = "음원 분리 · 자동 더빙에 사용",
                 style = TextStyle(
                     fontSize = 12.sp,
-                    color = Color(0x99EBEBF5),
+                    color = tokens.mutedText,
                 )
             )
         }
         Text(
             text = "›",
-            style = TextStyle(fontSize = 22.sp, color = Color(0x66EBEBF5))
+            style = TextStyle(fontSize = 22.sp, color = tokens.mutedText)
         )
     }
 }

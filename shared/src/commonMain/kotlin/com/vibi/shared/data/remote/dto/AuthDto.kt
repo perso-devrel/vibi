@@ -27,8 +27,15 @@ data class AuthUserDto(
     val email: String,
     val name: String,
     val picture: String? = null,
+    val role: String = AuthUser.ROLE_USER,
 ) {
-    fun toDomain(): AuthUser = AuthUser(sub = sub, email = email, name = name, picture = picture)
+    fun toDomain(): AuthUser = AuthUser(
+        sub = sub,
+        email = email,
+        name = name,
+        picture = picture,
+        role = role,
+    )
 }
 
 @Serializable

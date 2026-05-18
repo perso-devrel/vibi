@@ -116,6 +116,17 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+
+            Spacer(Modifier.height(24.dp))
+            // App Store 가이드라인 5.1.1 데이터 수집 고지. URL 핸들러 도입 시 clickable 링크로 전환 —
+            // empty onClick 링크는 심사 reject 사유이므로 현재는 plain text.
+            Text(
+                text = "Sign In 시 이용약관 및 개인정보 처리방침에 동의하는 것으로 간주됩니다.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

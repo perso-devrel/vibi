@@ -19,8 +19,8 @@ actual class PurchaseLauncher actual constructor() {
         )
     }
 
-    actual suspend fun restorePurchases(): PurchaseResult {
+    actual suspend fun restorePurchases(): RestoreResult {
         delay(250)
-        return PurchaseResult.Failed("복원할 구매 내역이 없습니다.")
+        return RestoreResult.Failed("복원할 구매 내역이 없습니다.")
     }
 }

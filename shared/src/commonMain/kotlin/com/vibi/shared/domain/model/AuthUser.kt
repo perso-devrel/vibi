@@ -9,4 +9,13 @@ data class AuthUser(
     val email: String,
     val name: String,
     val picture: String? = null,
-)
+    /** BFF JWT 의 `role` claim. 'user' 또는 'admin'. */
+    val role: String = ROLE_USER,
+) {
+    val isAdmin: Boolean get() = role == ROLE_ADMIN
+
+    companion object {
+        const val ROLE_USER = "user"
+        const val ROLE_ADMIN = "admin"
+    }
+}

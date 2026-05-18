@@ -58,6 +58,7 @@ class AuthTokenStore(private val settings: Settings) {
         settings.putString(KEY_USER_SUB, user.sub)
         settings.putString(KEY_USER_EMAIL, user.email)
         settings.putString(KEY_USER_NAME, user.name)
+        settings.putString(KEY_USER_ROLE, user.role)
         user.picture?.let { settings.putString(KEY_USER_PICTURE, it) }
             ?: settings.remove(KEY_USER_PICTURE)
         _cachedUser.value = user
@@ -72,6 +73,7 @@ class AuthTokenStore(private val settings: Settings) {
             email = email,
             name = name,
             picture = settings.getStringOrNull(KEY_USER_PICTURE),
+            role = settings.getStringOrNull(KEY_USER_ROLE) ?: AuthUser.ROLE_USER,
         )
     }
 
@@ -83,6 +85,9 @@ class AuthTokenStore(private val settings: Settings) {
         private const val KEY_USER_EMAIL = "auth.user.email"
         private const val KEY_USER_NAME = "auth.user.name"
         private const val KEY_USER_PICTURE = "auth.user.picture"
-        private val USER_KEYS = listOf(KEY_USER_SUB, KEY_USER_EMAIL, KEY_USER_NAME, KEY_USER_PICTURE)
+        private const val KEY_USER_ROLE = "auth.user.role"
+        private val USER_KEYS = listOf(
+            KEY_USER_SUB, KEY_USER_EMAIL, KEY_USER_NAME, KEY_USER_PICTURE, KEY_USER_ROLE,
+        )
     }
 }

@@ -21,10 +21,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         let googleBridge = GoogleSignInBridgeImpl()
         let appleBridge = AppleSignInBridgeImpl()
+        let iapBridge = IapBridgeImpl()
         let composeVC = MainViewControllerKt.MainViewController(
             bffBaseUrl: bffBaseUrl,
             googleSignInBridge: googleBridge,
-            appleSignInBridge: appleBridge
+            appleSignInBridge: appleBridge,
+            iapBridge: iapBridge
         )
 
         // safe-area inset 무시하고 화면 전체 차지

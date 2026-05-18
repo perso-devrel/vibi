@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -32,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,33 +40,34 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vibi.cmp.platform.PurchaseLauncher
 import com.vibi.cmp.platform.PurchaseResult
+import com.vibi.cmp.platform.RestoreResult
+import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.shared.domain.model.IapPlatform
 import com.vibi.shared.ui.account.CreditProduct
 import kotlinx.coroutines.launch
 
 /**
- * 크레딧 구매 storefront — **App Store / Play Store 심사 통과 가능한 디자인**.
+ * 크레딧 구매 storefront — **App Store / Play Store 심사 통과 디자인**.
  *
  * 가이드라인 핵심:
- *  - Apple 시스템 결제 popup (Face ID / Touch ID prompt, "구매하시겠습니까") 은 **앱이 그리지 않는다**.
- *    실제 popup 은 OS 가 띄움 — 본 sheet 는 "구매" 버튼 트리거까지만.
- *  - 비소비성 / 구독이 아닐 때도 ["구매 복원"] 노출 — Apple 가이드라인 3.1.1 권장.
- *  - 약관 / 개인정보 처리방침 / "Apple ID 로 청구" 안내문구 포함 — 가이드라인 3.1.2 / 5.1.1.
- *
- * 의도적으로 Apple 시스템 dialog 스타일 (작은 회색 popup) 은 피하고, App Store 의
- * "구독 페이지" 처럼 큰 storefront 모달로 디자인.
+ *  - Apple 시스템 결제 popup (Face ID / Touch ID prompt) 은 OS 만 그린다 (3.1.1 / 4.1 / 4.5).
+ *  - 비소비성 / 구독이 아니어도 "구매 복원" 노출 권장 (3.1.1).
+ *  - 결제 고지 ("Apple ID 청구 / 환불 불가") 표시 (3.1.2 / 5.1.1).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreditPurchaseSheet(
     products: List<CreditProduct>,
     currentCredits: Int,
+    isAdmin: Boolean,
     onDismiss: () -> Unit,
     onPurchased: (product: CreditProduct, platform: IapPlatform, receipt: String, transactionId: String) -> Unit,
+    onAdminGrant: suspend (product: CreditProduct) -> Result<Unit>,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val launcher = remember { PurchaseLauncher() }
     val scope = rememberCoroutineScope()
+    val tokens = LocalVibiColors.current
 
     var selected by remember(products) {
         mutableStateOf(products.firstOrNull { it.highlight } ?: products.firstOrNull())
@@ -76,7 +77,7 @@ fun CreditPurchaseSheet(
     ModalBottomSheet(
         onDismissRequest = { if (status != Status.Purchasing) onDismiss() },
         sheetState = sheetState,
-        containerColor = Color(0xFF1C1C1E),
+        containerColor = tokens.panelBg,
     ) {
         Column(
             modifier = Modifier
@@ -85,7 +86,7 @@ fun CreditPurchaseSheet(
                 .padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Header(currentCredits = currentCredits)
+            Header(currentCredits = currentCredits, isAdmin = isAdmin)
 
             HeroBanner()
 
@@ -101,13 +102,26 @@ fun CreditPurchaseSheet(
 
             PurchaseCta(
                 productLabel = selected?.priceLabel,
+                isAdmin = isAdmin,
                 isPurchasing = status == Status.Purchasing,
                 onClick = {
                     val target = selected ?: return@PurchaseCta
                     status = Status.Purchasing
                     scope.launch {
-                        status = launcher.purchase(target.productId).toStatus { success ->
-                            onPurchased(target, success.platform, success.receipt, success.transactionId)
+                        if (isAdmin) {
+                            status = onAdminGrant(target).fold(
+                                onSuccess = { Status.Success },
+                                onFailure = { Status.Error(it.message ?: "관리자 충전 실패") },
+                            )
+                            return@launch
+                        }
+                        when (val r = launcher.purchase(target.productId)) {
+                            is PurchaseResult.Success -> {
+                                onPurchased(target, r.platform, r.receipt, r.transactionId)
+                                status = Status.Success
+                            }
+                            is PurchaseResult.UserCancelled -> status = Status.Idle
+                            is PurchaseResult.Failed -> status = Status.Error(r.message)
                         }
                     }
                 }
@@ -116,33 +130,38 @@ fun CreditPurchaseSheet(
             when (val s = status) {
                 is Status.Error -> Text(
                     text = "⚠ ${s.message}",
-                    style = TextStyle(fontSize = 12.sp, color = Color(0xFFFF453A)),
+                    style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.error),
                 )
                 Status.Success -> Text(
-                    text = "✓ 구매가 완료되었습니다.",
-                    style = TextStyle(fontSize = 12.sp, color = Color(0xFF30D158)),
+                    text = if (isAdmin) "✓ 관리자 충전이 적용되었습니다." else "✓ 구매가 완료되었습니다.",
+                    style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.primary),
                 )
                 else -> Unit
             }
 
-            RestoreRow(
-                isWorking = status == Status.Restoring,
-                onClick = {
-                    if (status == Status.Restoring) return@RestoreRow
-                    status = Status.Restoring
-                    scope.launch {
-                        status = launcher.restorePurchases().toStatus { /* restore: no side effect */ }
+            // admin 분기는 IAP 우회라 store 가이드라인 (3.1.1 복원, 3.1.2 청구 고지) 적용 대상 아님.
+            if (!isAdmin) {
+                RestoreRow(
+                    isWorking = status == Status.Restoring,
+                    onClick = {
+                        if (status == Status.Restoring) return@RestoreRow
+                        status = Status.Restoring
+                        scope.launch {
+                            when (val r = launcher.restorePurchases()) {
+                                RestoreResult.Completed -> status = Status.Success
+                                RestoreResult.UserCancelled -> status = Status.Idle
+                                is RestoreResult.Failed -> status = Status.Error(r.message)
+                            }
+                        }
                     }
-                }
-            )
-
-            FinePrint()
+                )
+                FinePrint()
+            }
         }
     }
 
     LaunchedEffect(status) {
         if (status is Status.Success) {
-            // 짧게 노출 후 sheet 닫기 — 사용자가 결과를 본 뒤 자동 dismiss.
             kotlinx.coroutines.delay(900)
             onDismiss()
         }
@@ -157,45 +176,62 @@ private sealed interface Status {
     data class Error(val message: String) : Status
 }
 
-/**
- * PurchaseResult → Status 매핑 공통 — Success 시 [onSuccess] 콜백 후 Success 상태로,
- * UserCancelled 면 Idle, Failed 면 Error 로 전이. purchase / restorePurchases 양쪽이 공유.
- */
-private inline fun PurchaseResult.toStatus(onSuccess: (PurchaseResult.Success) -> Unit): Status =
-    when (this) {
-        is PurchaseResult.Success -> { onSuccess(this); Status.Success }
-        is PurchaseResult.UserCancelled -> Status.Idle
-        is PurchaseResult.Failed -> Status.Error(message)
-    }
-
 @Composable
-private fun Header(currentCredits: Int) {
-    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp)) {
-        Text(
-            text = "크레딧 구매",
-            style = TextStyle(
-                fontSize = 22.sp,
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
+private fun Header(currentCredits: Int, isAdmin: Boolean) {
+    val tokens = LocalVibiColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (isAdmin) "크레딧 충전" else "크레딧 구매",
+                    style = TextStyle(
+                        fontSize = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    )
+                )
+                if (isAdmin) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "관리자",
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.4.sp,
+                            )
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "현재 보유 · ${currentCredits} 크레딧",
+                style = TextStyle(fontSize = 13.sp, color = tokens.mutedText),
             )
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = "현재 보유 · $currentCredits 크레딧",
-            style = TextStyle(fontSize = 13.sp, color = Color(0x99EBEBF5)),
-        )
+        }
     }
 }
 
 @Composable
 private fun HeroBanner() {
+    val tokens = LocalVibiColors.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.linearGradient(
-                    colors = listOf(Color(0xFF6E45E2), Color(0xFF88D3CE))
+                    colors = listOf(tokens.gradientLavender, tokens.gradientSky)
                 )
             )
             .padding(horizontal = 18.dp, vertical = 16.dp),
@@ -205,12 +241,12 @@ private fun HeroBanner() {
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(Color(0x33FFFFFF)),
+                    .background(tokens.panelBg.copy(alpha = 0.55f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "✦",
-                    style = TextStyle(fontSize = 22.sp, color = Color.White)
+                    style = TextStyle(fontSize = 22.sp, color = tokens.onBackgroundPrimary)
                 )
             }
             Spacer(Modifier.width(12.dp))
@@ -219,14 +255,17 @@ private fun HeroBanner() {
                     text = "음원만 더 깔끔하게",
                     style = TextStyle(
                         fontSize = 15.sp,
-                        color = Color.White,
+                        color = tokens.onBackgroundPrimary,
                         fontWeight = FontWeight.SemiBold,
                     )
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = "분리 · 자동 더빙 · 자동 자막 한 번에",
-                    style = TextStyle(fontSize = 12.sp, color = Color(0xCCFFFFFF))
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        color = tokens.onBackgroundPrimary.copy(alpha = 0.75f),
+                    )
                 )
             }
         }
@@ -239,78 +278,78 @@ private fun ProductRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val borderColor = if (selected) Color(0xFF0A84FF) else Color(0x1FFFFFFF)
+    val tokens = LocalVibiColors.current
+    val borderColor = if (selected) tokens.accent else tokens.hairline
     val borderWidth = if (selected) 2.dp else 1.dp
-    Box(
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF2C2C2E))
+            .background(tokens.chipBg)
             .border(borderWidth, borderColor, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioDot(selected = selected)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = product.title,
-                        style = TextStyle(
-                            fontSize = 16.sp,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                        )
+        RadioDot(selected = selected)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = product.title,
+                    style = TextStyle(
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
                     )
-                    if (product.highlight) {
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color(0xFF0A84FF))
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                        ) {
-                            Text(
-                                text = "BEST",
-                                style = TextStyle(
-                                    fontSize = 10.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.4.sp,
-                                )
+                )
+                if (product.highlight) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(tokens.accent)
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "BEST",
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.4.sp,
                             )
-                        }
+                        )
                     }
                 }
-                product.subtitle?.let { sub ->
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = sub,
-                        style = TextStyle(fontSize = 12.sp, color = Color(0x99EBEBF5)),
-                    )
-                }
             }
-            Text(
-                text = product.priceLabel,
-                style = TextStyle(
-                    fontSize = 16.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
+            product.subtitle?.let { sub ->
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = sub,
+                    style = TextStyle(fontSize = 12.sp, color = tokens.mutedText),
                 )
-            )
+            }
         }
+        Text(
+            text = product.priceLabel,
+            style = TextStyle(
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+        )
     }
 }
 
 @Composable
 private fun RadioDot(selected: Boolean) {
-    val outerColor = if (selected) Color(0xFF0A84FF) else Color(0x66EBEBF5)
+    val tokens = LocalVibiColors.current
+    val outerColor = if (selected) tokens.accent else tokens.mutedText
     Box(
         modifier = Modifier
             .size(20.dp)
             .clip(CircleShape)
-            .background(Color.Transparent)
             .border(2.dp, outerColor, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
@@ -319,7 +358,7 @@ private fun RadioDot(selected: Boolean) {
                 modifier = Modifier
                     .size(10.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF0A84FF))
+                    .background(tokens.accent)
             )
         }
     }
@@ -328,12 +367,19 @@ private fun RadioDot(selected: Boolean) {
 @Composable
 private fun PurchaseCta(
     productLabel: String?,
+    isAdmin: Boolean,
     isPurchasing: Boolean,
     onClick: () -> Unit,
 ) {
+    val tokens = LocalVibiColors.current
     val enabled = productLabel != null && !isPurchasing
-    val bg = if (enabled) Color.White else Color(0x33FFFFFF)
-    val fg = if (enabled) Color.Black else Color(0x66FFFFFF)
+    val bg = if (enabled) tokens.accent else tokens.chipBgDisabled
+    val fg = if (enabled) MaterialTheme.colorScheme.onPrimary else tokens.chipContentDisabled
+    val label = when {
+        productLabel == null -> "상품을 선택하세요"
+        isAdmin -> "관리자 무료 충전"
+        else -> "$productLabel 구매"
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -345,13 +391,13 @@ private fun PurchaseCta(
     ) {
         if (isPurchasing) {
             CircularProgressIndicator(
-                color = Color.Black,
+                color = fg,
                 strokeWidth = 2.dp,
                 modifier = Modifier.size(20.dp),
             )
         } else {
             Text(
-                text = productLabel?.let { "$it 구매" } ?: "상품을 선택하세요",
+                text = label,
                 style = TextStyle(
                     fontSize = 17.sp,
                     color = fg,
@@ -372,7 +418,7 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
     ) {
         if (isWorking) {
             CircularProgressIndicator(
-                color = Color(0xFF0A84FF),
+                color = MaterialTheme.colorScheme.primary,
                 strokeWidth = 2.dp,
                 modifier = Modifier.size(14.dp),
             )
@@ -382,7 +428,7 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
             text = "구매 내역 복원",
             style = TextStyle(
                 fontSize = 14.sp,
-                color = Color(0xFF0A84FF),
+                color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Medium,
             ),
             modifier = Modifier
@@ -398,12 +444,13 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
  */
 @Composable
 private fun FinePrint() {
+    val tokens = LocalVibiColors.current
     Text(
         text = "결제는 구매 확인 시 Apple ID 또는 Google 계정으로 청구됩니다. " +
             "크레딧은 환불되지 않으며 미사용분도 양도/현금 환산할 수 없습니다.",
         style = TextStyle(
             fontSize = 11.sp,
-            color = Color(0x99EBEBF5),
+            color = tokens.mutedText,
             lineHeight = 15.sp,
         )
     )

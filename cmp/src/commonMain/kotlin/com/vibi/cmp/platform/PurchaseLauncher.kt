@@ -13,8 +13,13 @@ import com.vibi.shared.domain.model.IapPlatform
  */
 expect class PurchaseLauncher() {
     suspend fun purchase(productId: String): PurchaseResult
-    /** App Store / Play Store 가 보관 중인 이전 비소비성 / 구독 구매 복원. */
-    suspend fun restorePurchases(): PurchaseResult
+    /**
+     * App Store / Play Store 가 보관 중인 이전 비소비성 / 구독 구매 복원.
+     *
+     * 본 호출은 단순히 OS 캐시를 새로고침할 뿐 — 복원된 transaction 자체는 별도 listener
+     * (`Transaction.updates`, 출시 전 TODO) 가 enumerate. 따라서 [RestoreResult] 는 단순 완료/취소/실패만.
+     */
+    suspend fun restorePurchases(): RestoreResult
 }
 
 sealed interface PurchaseResult {
@@ -33,4 +38,10 @@ sealed interface PurchaseResult {
     ) : PurchaseResult
     data object UserCancelled : PurchaseResult
     data class Failed(val message: String) : PurchaseResult
+}
+
+sealed interface RestoreResult {
+    data object Completed : RestoreResult
+    data object UserCancelled : RestoreResult
+    data class Failed(val message: String) : RestoreResult
 }

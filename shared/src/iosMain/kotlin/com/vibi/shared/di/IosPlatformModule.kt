@@ -12,6 +12,7 @@ import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
 import com.vibi.shared.platform.IosAppleSignInClient
 import com.vibi.shared.platform.IosGoogleSignInClient
+import com.vibi.shared.platform.IosIapClient
 import com.vibi.shared.platform.IosVideoThumbnailExtractor
 import com.vibi.shared.platform.VideoThumbnailExtractor
 import com.russhwolf.settings.NSUserDefaultsSettings
@@ -48,4 +49,5 @@ val iosPlatformModule = module {
     single<Settings> { NSUserDefaultsSettings(NSUserDefaults.standardUserDefaults) }
     single<GoogleSignInClient> { IosGoogleSignInClient(bridge = get()) }
     single<AppleSignInClient> { IosAppleSignInClient(bridge = get()) }
+    single { IosIapClient(bridge = get()) }
 }

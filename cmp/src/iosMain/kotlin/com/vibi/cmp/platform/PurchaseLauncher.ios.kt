@@ -1,28 +1,38 @@
 package com.vibi.cmp.platform
 
 import com.vibi.shared.domain.model.IapPlatform
-import com.vibi.shared.platform.currentTimeMillis
-import kotlinx.coroutines.delay
+import com.vibi.shared.platform.IosIapClient
+import com.vibi.shared.platform.IosPurchaseOutcome
+import com.vibi.shared.platform.IosRestoreOutcome
+import org.koin.mp.KoinPlatform
 
 /**
- * iOS actual — v1 mock. 실제 결제는 App Store Connect productId 등록 +
- * `StoreKit.Product.purchase()` 호출 + Apple 서버 영수증 검증 BFF 작업 후 교체.
- *
- * **앱 심사 주의**: 결제 확인 popup 은 Apple 만 그린다. 가이드라인 3.1.1 / 4.1 / 4.5.
+ * iOS actual — Swift `IapBridgeImpl` (StoreKit2) 에 위임. AppleSignIn 과 동일한 bridge 패턴.
+ * 결제 확인 popup 은 OS 가 그린다 (가이드라인 3.1.1 / 4.1 / 4.5).
  */
 actual class PurchaseLauncher actual constructor() {
-    actual suspend fun purchase(productId: String): PurchaseResult {
-        delay(450)
-        return PurchaseResult.Success(
-            productId = productId,
-            transactionId = "mock-apple-${currentTimeMillis()}",
-            receipt = "mock-receipt-$productId",
-            platform = IapPlatform.APPLE,
-        )
-    }
+    private val client: IosIapClient by lazy { KoinPlatform.getKoin().get() }
 
-    actual suspend fun restorePurchases(): PurchaseResult {
-        delay(250)
-        return PurchaseResult.Failed("복원할 구매 내역이 없습니다.")
-    }
+    actual suspend fun purchase(productId: String): PurchaseResult =
+        client.purchase(productId).toResult()
+
+    actual suspend fun restorePurchases(): RestoreResult =
+        client.restorePurchases().toResult()
+}
+
+private fun IosPurchaseOutcome.toResult(): PurchaseResult = when (this) {
+    is IosPurchaseOutcome.Success -> PurchaseResult.Success(
+        productId = productId,
+        transactionId = transactionId,
+        receipt = receipt,
+        platform = IapPlatform.APPLE,
+    )
+    IosPurchaseOutcome.Cancelled -> PurchaseResult.UserCancelled
+    is IosPurchaseOutcome.Failed -> PurchaseResult.Failed(message)
+}
+
+private fun IosRestoreOutcome.toResult(): RestoreResult = when (this) {
+    IosRestoreOutcome.Completed -> RestoreResult.Completed
+    IosRestoreOutcome.Cancelled -> RestoreResult.UserCancelled
+    is IosRestoreOutcome.Failed -> RestoreResult.Failed(message)
 }
