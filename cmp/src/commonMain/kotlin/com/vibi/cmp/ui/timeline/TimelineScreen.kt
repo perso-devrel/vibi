@@ -1212,8 +1212,8 @@ fun TimelineScreen(
     }
 
     // 하단 A/B 미리듣기 바 가시성 — FAB 위치 계산이 이 플래그에 의존하므로 FAB 보다 먼저 계산.
+    // directive 유무와 무관하게 항상 노출 — 사용자가 분리 전에도 토글 affordance 를 인지하도록.
     val abBarVisible = unifiedScroll &&
-        state.separationDirectives.isNotEmpty() &&
         !state.isSegmentEditMode &&
         !state.localizationOpen &&
         !state.showDetailEdit &&
@@ -1241,7 +1241,8 @@ fun TimelineScreen(
         !chatSheetVisible
     if (chatFabVisible) {
         // AB 바 노출 시 FAB 가 가리지 않도록 위로 들어올림. AB 바 높이 = chip(xxl 40dp) + 내부 padding(xxs*2 8dp) + 외부 padding(xxs*2 8dp) ≈ 56dp.
-        val fabBottomPadding = if (abBarVisible) VibiSpacing.md + VibiSpacing.xxl + VibiSpacing.base else VibiSpacing.md
+        // AB 바 위 여유 간격은 xs(8dp) — 이전 md(20dp) 보다 12dp 줄여 FAB 가 화면 하단에 더 가깝게.
+        val fabBottomPadding = if (abBarVisible) VibiSpacing.xs + VibiSpacing.xxl + VibiSpacing.base else VibiSpacing.md
         BadgedBox(
             modifier = Modifier
                 .align(Alignment.BottomEnd)

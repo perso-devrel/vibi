@@ -24,9 +24,9 @@ import com.vibi.shared.ui.timeline.PreviewMode
 /**
  * 하단 고정 A/B 미리듣기 바 — "원본" / "내 믹스" 두 segment 토글.
  *
- * "결과 예측 어려움" 페르소나 고통의 직접 해결책. directive 가 하나도 없으면 의미 없으므로 상위에서
- * hidden. 토글은 mixer 의 stem 볼륨 + video segment volume 둘 다 영향 — 상위 TimelineScreen 의
- * stemSyncKey LaunchedEffect 가 previewMode 를 보고 일괄 처리.
+ * "결과 예측 어려움" 페르소나 고통의 직접 해결책. directive 유무와 무관하게 항상 노출 — 사용자가
+ * 분리 전에도 토글 affordance 를 인지하도록. 토글은 mixer 의 stem 볼륨 + video segment volume
+ * 둘 다 영향 — 상위 TimelineScreen 의 stemSyncKey LaunchedEffect 가 previewMode 를 보고 일괄 처리.
  *
  * pill geometry — DESIGN.md 의 chip 패턴 차용 (rounded.pill, surface-card bg, hairline border).
  */
