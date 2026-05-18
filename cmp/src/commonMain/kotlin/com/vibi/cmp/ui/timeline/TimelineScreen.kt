@@ -2339,6 +2339,19 @@ private fun TimelineWaveformBackground(
     // volume 으로 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) — 화자+배경 둘 다 켜면 mix shape 이 보임.
     // muteOriginalSegmentAudio=false 면 source peak 도 추가 항으로 합산.
     val directiveOverlays = remember(directives, stemPeaksByUrl) {
+        // 같은 stem audio URL 을 공유하는 모든 piece (split 결과) 중 (sourceOffset + duration) 의 max
+        // 를 stem audio 전체 길이로 추정. waveform peak idx 매핑이 piece 길이가 아니라 stem 전체 길이
+        // 기준이어야 split 뒷 piece (sourceOffset > 0) 가 stem 의 올바른 구간을 보여줌.
+        val stemTotalDurByUrl: Map<String, Long> = buildMap {
+            for (d in directives) {
+                val pieceEnd = d.sourceOffsetMs + d.durationMs
+                for (sel in d.selections) {
+                    val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: continue
+                    val prev = get(url) ?: 0L
+                    if (pieceEnd > prev) put(url, pieceEnd)
+                }
+            }
+        }
         directives.map { d ->
             val originalContrib = if (d.muteOriginalSegmentAudio) 0f else 1f
             val selectedStems = d.selections.filter { it.selected }
@@ -2346,7 +2359,12 @@ private fun TimelineWaveformBackground(
             val contributions = selectedStems.mapNotNull { sel ->
                 val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 val peaks = stemPeaksByUrl[url] ?: return@mapNotNull null
-                if (peaks.isEmpty()) null else StemPeakContribution(peaks, sel.volume)
+                if (peaks.isEmpty()) null
+                else StemPeakContribution(
+                    peaks = peaks,
+                    volume = sel.volume,
+                    totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
+                )
             }
             DirectiveScaleOverlay(
                 startMs = d.rangeStartMs,
@@ -2416,11 +2434,12 @@ private fun TimelineWaveformBackground(
                         directiveScale = ov.scale
                         inDirective = true
                         if (ov.stemContributions.isNotEmpty()) {
-                            val durMs = (ov.endMs - ov.startMs).coerceAtLeast(1L)
+                            // rel = stem audio 안의 글로벌 ms. fraction 은 stem 전체 길이 기준 — piece 길이
+                            // 로 나누면 split 뒷 piece 에서 idx 가 항상 끝으로 clamp 돼 파형이 깨짐.
                             val rel = (timelineMs - ov.startMs).coerceAtLeast(0L) + ov.sourceOffsetMs
                             var sumSq = 0.0
                             for (c in ov.stemContributions) {
-                                val idx = ((rel.toDouble() / durMs) * c.peaks.size).toInt()
+                                val idx = ((rel.toDouble() / c.totalDurMs) * c.peaks.size).toInt()
                                     .coerceIn(0, c.peaks.size - 1)
                                 val v = c.peaks[idx] * c.volume
                                 sumSq += v * v
@@ -2460,7 +2479,11 @@ private data class DirectiveScaleOverlay(
     val includeOriginal: Boolean = true,
     val sourceOffsetMs: Long = 0L,
 )
-private data class StemPeakContribution(val peaks: List<Float>, val volume: Float)
+private data class StemPeakContribution(
+    val peaks: List<Float>,
+    val volume: Float,
+    val totalDurMs: Long,
+)
 private data class SegmentSpan(
     val startMs: Long,
     val endMs: Long,
