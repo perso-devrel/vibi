@@ -62,6 +62,16 @@ actual fun VideoPlayer(
         exoPlayer.playWhenReady = isPlaying
     }
 
+    // volume 변경 (예: 음원 분리 directive 진입 시 원본 mute) 을 즉시 반영.
+    // playlistKey 에 volume 미포함이라 player rebuild 없이 mutation 만 적용 — 현재 재생 중인
+    // item index 기준으로 volume 만 갈아끼움. media item transition 콜백 (applyPerItemPlayback)
+    // 으로는 단일 segment 중간의 volume 변경을 못 잡는 결함 회피.
+    val volumeKey = items.joinToString("|") { it.volumeScale.toString() }
+    LaunchedEffect(exoPlayer, volumeKey) {
+        val idx = exoPlayer.currentMediaItemIndex
+        items.getOrNull(idx)?.let { exoPlayer.volume = it.volumeScale.coerceIn(0f, 1f) }
+    }
+
     // global seekToMs 를 (item index, item-local ms) 로 변환해서 seek.
     LaunchedEffect(seekToMs) {
         if (seekToMs == null) return@LaunchedEffect

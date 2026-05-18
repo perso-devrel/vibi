@@ -349,6 +349,8 @@ private fun MultiSegmentVideoPlayer(
 
     val onEndedState = rememberUpdatedState(onEnded)
     val onPositionChangedState = rememberUpdatedState(onPositionChanged)
+    // polling/volume effect 가 stale items 를 캡처하지 않도록 최신 reference 유지.
+    val itemsState = rememberUpdatedState(items)
 
     // seek guard — SingleItemVideoPlayer 동일 race 대응. polling 이 pre-seek currentTime() 을
     // 읽어 state 를 stale 값으로 덮는 것 차단. DisposableEffect endObserver 도 사용.
@@ -366,6 +368,14 @@ private fun MultiSegmentVideoPlayer(
         // 새 player 오면 즉시 trim/volume 적용 + 이전 player 정리는 DisposableEffect 로.
         items.firstOrNull()?.let { newPlayer.volume = it.volumeScale.coerceIn(0f, 1f) }
         player = newPlayer
+    }
+
+    // volume 변경 (예: 음원 분리 directive 진입 시 원본 mute) 을 즉시 반영.
+    // playlistKey 에 volume 미포함이라 player rebuild 없이 mutation 만 적용.
+    val volumeKey = items.joinToString("|") { it.volumeScale.toString() }
+    LaunchedEffect(player, volumeKey) {
+        val p = player ?: return@LaunchedEffect
+        items.firstOrNull()?.let { p.volume = it.volumeScale.coerceIn(0f, 1f) }
     }
 
     DisposableEffect(player) {
@@ -426,9 +436,11 @@ private fun MultiSegmentVideoPlayer(
             val sec = CMTimeGetSeconds(p.currentTime())
             if (!sec.isNaN()) {
                 val globalMs = (sec * 1000.0).toLong()
+                // itemsState.value 로 최신 items 참조 — recomposition 시 volume/per-item 변경 즉시 반영.
+                val curItems = itemsState.value
                 var acc = 0L
-                var curIdx = items.size - 1
-                for ((idx, it) in items.withIndex()) {
+                var curIdx = curItems.size - 1
+                for ((idx, it) in curItems.withIndex()) {
                     val srcLen = if (it.trimEndMs > 0L) {
                         (it.trimEndMs - it.trimStartMs).coerceAtLeast(0L)
                     } else Long.MAX_VALUE
@@ -439,7 +451,7 @@ private fun MultiSegmentVideoPlayer(
                     }
                     acc += segGlobalDur
                 }
-                items.getOrNull(curIdx)?.let { item ->
+                curItems.getOrNull(curIdx)?.let { item ->
                     val curVol = item.volumeScale.coerceIn(0f, 1f)
                     if (curVol != lastVolume) {
                         p.volume = curVol
