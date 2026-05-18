@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -337,7 +338,7 @@ fun TimelineScreen(
     }
     LaunchedEffect(state.videoUri) {
         if (state.videoUri.isNotEmpty() && videoPeaks.isEmpty()) {
-            val extracted = com.vibi.cmp.platform.extractAudioPeaks(state.videoUri, samples = 240)
+            val extracted = com.vibi.cmp.platform.extractAudioPeaks(state.videoUri, samples = 480)
             if (extracted.isNotEmpty()) {
                 videoPeaksCache[state.videoUri] = extracted
                 videoPeaks = extracted
@@ -365,7 +366,7 @@ fun TimelineScreen(
             for (url in activeStemUrls) {
                 if (!stemPeaks[url].isNullOrEmpty()) continue
                 launch {
-                    val extracted = com.vibi.cmp.platform.extractAudioPeaks(url, samples = 240)
+                    val extracted = com.vibi.cmp.platform.extractAudioPeaks(url, samples = 480)
                     if (extracted.isNotEmpty()) {
                         stemPeaksCacheTimeline[url] = extracted
                         stemPeaks[url] = extracted
@@ -2391,14 +2392,19 @@ private fun TimelineWaveformBackground(
             .background(trackBg),
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val n = sourcePeaks.size
-            if (n == 0 || totalMs <= 0L) return@Canvas
-            val slot = size.width / n
-            val barWidth = (slot * 0.6f).coerceAtLeast(1.5f)
+            val peakCount = sourcePeaks.size
+            if (peakCount == 0 || totalMs <= 0L) return@Canvas
+            // 시각 막대 수는 canvas width 기반 (1dp bar + 1dp gap — hair-thin). peaks 인덱싱은
+            // 절대 fraction 으로 유지 — segment trim/speed 매핑이 sourcePeaks.size 에 의존.
+            val barPx = 1.dp.toPx()
+            val gapPx = 1.dp.toPx()
+            val slotPx = barPx + gapPx
+            val barCount = (size.width / slotPx).toInt().coerceAtLeast(1)
+            val cornerR = CornerRadius(barPx / 2f, barPx / 2f)
             val cy = size.height / 2f
             val maxHalfHeight = size.height / 2f - 3f
-            for (i in 0 until n) {
-                val timelineMs = ((i + 0.5f) / n * totalMs).toLong()
+            for (i in 0 until barCount) {
+                val timelineMs = ((i + 0.5f) / barCount * totalMs).toLong()
 
                 // segment 역매핑: timelineMs 가 속한 segment 의 volumeScale + sourceMs 위치 → peak.
                 var segVolume = 1f
@@ -2415,8 +2421,8 @@ private fun TimelineWaveformBackground(
                         if (span.segment.sourceUri == primarySourceUri && sourceDurationMs > 0L) {
                             val rel = (timelineMs - span.startMs).coerceAtLeast(0L)
                             val sourceMs = (rel * span.segment.speedScale).toLong() + span.segment.trimStartMs
-                            val peakIdx = ((sourceMs.toDouble() / sourceDurationMs) * n).toInt()
-                                .coerceIn(0, n - 1)
+                            val peakIdx = ((sourceMs.toDouble() / sourceDurationMs) * peakCount).toInt()
+                                .coerceIn(0, peakCount - 1)
                             sourcePeak = sourcePeaks[peakIdx]
                         }
                         break
@@ -2459,12 +2465,13 @@ private fun TimelineWaveformBackground(
                 } else {
                     (sourcePeak * segVolume * directiveScale).coerceIn(0f, 1f)
                 }
-                val h = maxOf(1.5f, kotlin.math.sqrt(effectivePeak) * maxHalfHeight)
-                val x = slot * i + (slot - barWidth) / 2f
-                drawRect(
+                val h = maxOf(barPx / 2f, kotlin.math.sqrt(effectivePeak) * maxHalfHeight)
+                val x = slotPx * i
+                drawRoundRect(
                     color = if (inDirective) highlightBarColor else defaultBarColor,
                     topLeft = Offset(x, cy - h),
-                    size = Size(barWidth, h * 2f),
+                    size = Size(barPx, h * 2f),
+                    cornerRadius = cornerR,
                 )
             }
         }
@@ -2588,7 +2595,7 @@ private fun BgmActionSheet(
     var peaks by remember(clip.id) { mutableStateOf(bgmPeaksCache[clip.sourceUri] ?: emptyList()) }
     LaunchedEffect(clip.sourceUri) {
         if (peaks.isEmpty()) {
-            val extracted = com.vibi.cmp.platform.extractAudioPeaks(clip.sourceUri, samples = 120)
+            val extracted = com.vibi.cmp.platform.extractAudioPeaks(clip.sourceUri, samples = 240)
             if (extracted.isNotEmpty()) {
                 bgmPeaksCache[clip.sourceUri] = extracted
                 peaks = extracted

@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -89,25 +90,30 @@ fun WaveformPlayBar(
     ) {
         Canvas(modifier = Modifier.fillMaxWidth().height(containerHeight)) {
             widthPx = size.width
-            val n = peaks.size
-            if (n > 0) {
-                // 각 막대 슬롯 width — 작은 gap 포함. 가운데 정렬, 위/아래 대칭.
-                val slot = size.width / n
-                val barWidth = (slot * 0.6f).coerceAtLeast(1.5f)
+            val peakCount = peaks.size
+            if (peakCount > 0) {
+                // dp 기반 슬롯/막대 — hair-thin voice UI (Spotify mini-scrubber / SoundCloud 류). 1dp 면 3x
+                // 디스플레이에서 raw 3px → 한 막대가 짧은 선처럼 보임. canvas 폭에서 barCount 동적 계산해
+                // 컴팩트 행과 풀폭에서 일관된 시각 밀도. peaks 가 더 dense 하면 fraction 매핑으로 리샘플.
+                val barPx = 1.dp.toPx()
+                val gapPx = (if (compact) 0.5.dp else 1.dp).toPx()
+                val slotPx = barPx + gapPx
+                val barCount = (size.width / slotPx).toInt().coerceAtLeast(1)
+                val cornerR = CornerRadius(barPx / 2f, barPx / 2f)
                 val cy = size.height / 2f
                 val maxHalfHeight = size.height / 2f - 4f
-                for (i in 0 until n) {
-                    val peak = peaks[i].coerceIn(0f, 1f)
+                for (i in 0 until barCount) {
+                    val peakIdx = ((i.toFloat() / barCount) * peakCount).toInt().coerceIn(0, peakCount - 1)
+                    val peak = peaks[peakIdx].coerceIn(0f, 1f)
                     // 시각적 dynamic range 보정 — 너무 작은 peak 도 살짝 보이도록 sqrt 적용.
-                    val h = max(2f, kotlin.math.sqrt(peak) * maxHalfHeight)
-                    val x = slot * i + (slot - barWidth) / 2f
-                    val played = (i.toFloat() / n) < progressFraction
-                    drawBar(
-                        x = x,
-                        cy = cy,
-                        width = barWidth,
-                        halfHeight = h,
+                    val h = max(barPx / 2f, kotlin.math.sqrt(peak) * maxHalfHeight)
+                    val x = slotPx * i
+                    val played = (i.toFloat() / barCount) < progressFraction
+                    drawRoundRect(
                         color = if (played) playedColor else barColor,
+                        topLeft = Offset(x, cy - h),
+                        size = Size(barPx, h * 2f),
+                        cornerRadius = cornerR,
                     )
                 }
             } else if (!compact) {

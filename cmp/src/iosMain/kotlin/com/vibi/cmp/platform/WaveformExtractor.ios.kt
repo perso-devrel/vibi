@@ -140,17 +140,17 @@ private fun extractPeaksViaAudioFile(url: NSURL, samples: Int): List<Float> {
         rmsList.add(rms)
         i = end
     }
-    return rmsList.normalizeToMax()
+    return rmsList.scaleForDisplay()
 }
 
 /**
- * RMS list 를 최대값 1.0 으로 normalize — 전체 클립이 조용해도 상대적으로 큰 부분은 max bar 로 보이고
- * 빈 영역은 짧게 유지. 최대값 0 (전 구간 무음) 은 그대로 0 으로 둠.
+ * Raw RMS 를 표시용으로 가볍게 스케일. per-clip max normalize 를 쓰면 조용한 클립도 max=1 로 펴져
+ * 막대가 saturate, 클립별 다이내믹 차이가 사라짐. 여기서는 고정 ref(0.4) 로 분할 — 일반 음성 RMS
+ * ~0.05~0.15 → 막대 12~37% 높이, 음악 max 0.3~0.5 → 75~100%. 0..1 clamp.
  */
-private fun List<Float>.normalizeToMax(): List<Float> {
-    val maxRms = this.maxOrNull() ?: return this
-    if (maxRms <= 0f) return this
-    return this.map { (it / maxRms).coerceIn(0f, 1f) }
+private fun List<Float>.scaleForDisplay(): List<Float> {
+    val ref = 0.4f
+    return this.map { (it / ref).coerceIn(0f, 1f) }
 }
 
 /**
@@ -236,5 +236,5 @@ private fun extractPeaksViaAssetReader(url: NSURL, samples: Int): List<Float> {
         val c = countPerBucket[i]
         if (c <= 0) 0f else kotlin.math.sqrt(sumSqPerBucket[i] / c).toFloat()
     }
-    return rmsList.normalizeToMax()
+    return rmsList.scaleForDisplay()
 }

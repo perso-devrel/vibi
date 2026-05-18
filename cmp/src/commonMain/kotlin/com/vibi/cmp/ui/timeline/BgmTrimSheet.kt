@@ -81,7 +81,7 @@ fun BgmTrimSheet(
     }
     LaunchedEffect(request.sourceUri) {
         if (peaks.isEmpty()) {
-            val extracted = extractAudioPeaks(request.sourceUri, samples = 240)
+            val extracted = extractAudioPeaks(request.sourceUri, samples = 480)
             if (extracted.isNotEmpty()) {
                 bgmTrimPeaksCache[request.sourceUri] = extracted
                 peaks = extracted
