@@ -528,22 +528,16 @@ class TimelineViewModel constructor(
     val chatAssistantEvents: SharedFlow<String> = _chatAssistantEvents.asSharedFlow()
 
     /**
-     * 메인 timeline undo 스택 — TimelineStep 별로 분리.
-     *  - 단계 forward 이동 시 출발 단계의 스택 유지 (사용자가 돌아오면 그대로 이어 undo 가능).
-     *  - 단계 backward 이동 시 출발 단계의 스택 초기화 (사용자가 다시 앞으로 가도 새 시작).
-     * 음원분리 / 음원삽입 / 영상편집(segment edit) 액션은 모두 같은 EditAudio 스택에 push —
-     * 사용자가 단일 undo 흐름으로 되돌릴 수 있도록 통합.
+     * 메인 timeline undo 스택 — 모든 편집(영상 segment / BGM / 자막 / 더빙 / 분리 directive / frame /
+     * text overlay / image clip) 이 같은 스택을 공유. TimelineStep 가 EditAudio ↔ SubtitleDub 사이를
+     * 오가도 스택은 그대로 — 사용자는 step 와 무관하게 직전 편집을 되돌릴 수 있다.
+     *
+     * 단, 영상편집 commit / 음원분리 commit 같은 비가역 checkpoint 후에는 [UndoRedoManager.clear] +
+     * 새 baseline push 로 스택을 끊어 사용자가 commit 이전 상태로 되돌리지 않도록 막는다.
      */
-    private val mainUndoManagersByStep: Map<TimelineStep, UndoRedoManager<TimelineSnapshot>> =
-        TimelineStep.entries.associateWith { UndoRedoManager(maxHistory = 50) }
-
-    private fun mainUndoManagerForCurrent(): UndoRedoManager<TimelineSnapshot> =
-        mainUndoManagersByStep.getValue(_uiState.value.currentStep)
+    private val mainUndoManager: UndoRedoManager<TimelineSnapshot> = UndoRedoManager(maxHistory = 50)
 
     private var hasSeededUndoSnapshot = false
-
-    private fun activeUndoManager(): UndoRedoManager<TimelineSnapshot> =
-        mainUndoManagerForCurrent()
 
     /**
      * `editedVideoRenderProgress` 단일 필드 mutation helper.
@@ -760,7 +754,6 @@ class TimelineViewModel constructor(
                 previewLangCode = null,
             )
         }
-        updateUndoRedoState()
     }
 
     /**
@@ -1277,13 +1270,13 @@ class TimelineViewModel constructor(
      *   초기 seed 또는 reset 후 baseline 푸시는 false.
      */
     private fun pushUndoState(markStale: Boolean = true) {
-        activeUndoManager().pushState(buildSnapshot())
+        mainUndoManager.pushState(buildSnapshot())
         updateUndoRedoState()
         if (markStale) markRenderStale()
     }
 
     private fun updateUndoRedoState() {
-        val mgr = activeUndoManager()
+        val mgr = mainUndoManager
         _uiState.value = _uiState.value.copy(
             canUndo = mgr.canUndo,
             canRedo = mgr.canRedo
@@ -1737,7 +1730,7 @@ class TimelineViewModel constructor(
 
     fun onUndo() {
         viewModelScope.launch {
-            val snapshot = activeUndoManager().undo() ?: return@launch
+            val snapshot = mainUndoManager.undo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
             // undo 도 segments / volumes / speeds 를 변경하므로 render 캐시 무효화.
@@ -1747,7 +1740,7 @@ class TimelineViewModel constructor(
 
     fun onRedo() {
         viewModelScope.launch {
-            val snapshot = activeUndoManager().redo() ?: return@launch
+            val snapshot = mainUndoManager.redo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
             markRenderStale()
@@ -2247,7 +2240,7 @@ class TimelineViewModel constructor(
      * [onEnterRangeMode] 와 동일한 range slider UI 를 띄우지만 confirm 액션이 음성분리가 아닌
      * segment edit action sheet (복제/삭제/볼륨/속도) 로 갈라진다.
      *
-     * 영상편집 액션은 통합 EditAudio undo 스택에 push — 음원분리/음원삽입과 같이 단일 흐름으로 되돌릴 수 있다.
+     * 영상편집 액션은 통합 timeline undo 스택에 push — 음원분리/음원삽입/자막/더빙과 같이 단일 흐름으로 되돌릴 수 있다.
      */
     fun onEnterSegmentEditMode(
         segmentId: String,
@@ -2419,7 +2412,7 @@ class TimelineViewModel constructor(
      * BGM/stem 시간축 보정은 별도 sync (후속 phase) 로 다룬다.
      */
     private suspend fun commitSegmentEdit() {
-        mainUndoManagerForCurrent().clear()
+        mainUndoManager.clear()
         _uiState.value = _uiState.value.copy(
             isRangeSelecting = false,
             isSegmentEditMode = false,
@@ -4896,7 +4889,7 @@ class TimelineViewModel constructor(
                 editProjectRepository.updateProject(cleaned.clearSeparation())
             }
             separationGate = TriggerGate.ARMED
-            mainUndoManagerForCurrent().clear()
+            mainUndoManager.clear()
             pushUndoState()
         } catch (e: Exception) {
             handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
@@ -5068,7 +5061,7 @@ class TimelineViewModel constructor(
                     editProjectRepository.updateProject(p.clearSeparation())
                 }
                 separationGate = TriggerGate.ARMED
-                mainUndoManagerForCurrent().clear()
+                mainUndoManager.clear()
                 pushUndoState()
             } catch (e: Exception) {
                 updateSeparation {
