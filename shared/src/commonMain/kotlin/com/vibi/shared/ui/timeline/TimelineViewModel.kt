@@ -4627,27 +4627,17 @@ class TimelineViewModel constructor(
         // entry 에 보존했으므로 ViewModel-level 변수 초기화 — 다음 분리 흐름과 충돌 방지.
         editingDirectiveId = null
         val job = viewModelScope.launch {
-            // 편집 영상이 필요한 경우 BFF 에 audio-only render 잡 1개 보내고 jobId 회수 — multipart
-            // `file` 업로드 절약. 분리는 audio 만 필요하므로 AUDIO kind (5–10x 빠름).
-            val editedRenderJobId = ensureLatestRender(
-                projectId = projectId,
-                kind = com.vibi.shared.domain.usecase.render.RenderKind.AUDIO,
-                onProgress = { p ->
-                    setRenderProgress(p)
-                },
-            ).getOrElse { err ->
-                setRenderProgress(null)
-                handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
-                return@launch
-            }
-            setRenderProgress(null)
+            // 분리는 단일 segment + trim range 만 필요 — BFF /render (전체 타임라인 합성)
+            // 거치는 건 과함. segment 원본 영상 그대로 올리고 trim 은 spec 으로 위임 →
+            // BFF 가 ffmpeg 으로 audio 추출 + cut 후 Perso 호출. 속도/볼륨 편집은 분리된
+            // stem 에 playback/export 단에서 적용.
             val startResult = startAudioSeparation(
                 sourceUri = segment.sourceUri,
                 mediaType = SeparationMediaType.VIDEO,
                 numberOfSpeakers = sep.numberOfSpeakers,
                 trimStartMs = effStart,
                 trimEndMs = effEnd,
-                editedRenderJobId = editedRenderJobId,
+                editedRenderJobId = null,
             )
             val jobId = startResult.getOrElse { err ->
                 handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
