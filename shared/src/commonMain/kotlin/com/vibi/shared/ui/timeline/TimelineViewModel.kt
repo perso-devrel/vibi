@@ -439,6 +439,9 @@ data class TimelineSnapshot(
     val imageClips: List<ImageClip>,
     val textOverlays: List<TextOverlay> = emptyList(),
     val bgmClips: List<BgmClip> = emptyList(),
+    // 영상 range delete 가 applyDirectiveRippleDelete 로 directive 를 split/truncate 하므로
+    // segments 와 함께 ripple 결과도 capture — 누락 시 undo 후 directive 만 영상과 mismatch.
+    val separationDirectives: List<SeparationDirective> = emptyList(),
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
     val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
@@ -1255,6 +1258,7 @@ class TimelineViewModel constructor(
             imageClips = s.imageClips,
             textOverlays = s.textOverlays,
             bgmClips = s.bgmClips,
+            separationDirectives = s.separationDirectives,
             frameWidth = s.frameWidth,
             frameHeight = s.frameHeight,
             backgroundColorHex = s.backgroundColorHex,
@@ -1761,6 +1765,10 @@ class TimelineViewModel constructor(
         textOverlayRepository.addOverlays(snapshot.textOverlays)
         bgmClipRepository.deleteAllByProjectId(projectId)
         bgmClipRepository.addClips(snapshot.bgmClips)
+        separationDirectiveRepository.deleteByProject(projectId)
+        if (snapshot.separationDirectives.isNotEmpty()) {
+            separationDirectiveRepository.addAll(snapshot.separationDirectives)
+        }
         if (snapshot.frameWidth > 0 && snapshot.frameHeight > 0) {
             // Frame is restored directly via the repository (not SetProjectFrameUseCase)
             // because snapshot values already passed validation when first applied;
