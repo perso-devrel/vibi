@@ -33,7 +33,8 @@ import com.vibi.shared.data.local.db.entity.TextOverlayEntity
         SeparationDirectiveEntity::class
     ],
     // v4 — SeparationDirectiveEntity.sourceOffsetMs 추가 (영상 range delete 시 directive split 지원).
-    version = 4,
+    // v5 — BgmClipEntity.sourceTrimStartMs/EndMs 추가 (영상보다 긴 음원의 BgmTrimSheet trim 선택 보존).
+    version = 5,
     exportSchema = true
 )
 @ConstructedBy(VibiDatabaseConstructor::class)

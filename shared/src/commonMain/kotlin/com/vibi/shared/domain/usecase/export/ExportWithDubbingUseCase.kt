@@ -79,6 +79,8 @@ class ExportWithDubbingUseCase constructor(
                 startMs = clip.startMs,
                 volume = clip.volumeScale,
                 speed = clip.speedScale,
+                sourceTrimStartMs = clip.sourceTrimStartMs,
+                sourceTrimEndMs = clip.sourceTrimEndMs,
             )
         }
 

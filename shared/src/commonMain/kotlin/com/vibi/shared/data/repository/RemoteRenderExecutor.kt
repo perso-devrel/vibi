@@ -217,15 +217,23 @@ class RemoteRenderExecutor(
         val segmentImageParts = mutableListOf<BinaryPart>()
         val renderSegments = mutableListOf<RenderSegment>()
 
+        // 같은 source video 를 가리키는 N 개 segment 가 동일 71MB 파일을 N번 read+upload 하지
+        // 않도록 sourceFilePath → key 1대1 매핑. server 는 segments[i].sourceFileKey 로 videoFiles
+        // map 을 lookup 하므로 한 key 를 여러 segment 가 공유해도 정상 동작.
+        val videoKeyByPath = mutableMapOf<String, String>()
+
         // preUploadedInputId 가 있으면 video/audio bytes 는 BFF 캐시에서 재사용 — 여기서 read 도, multipart 도 skip.
         // 단, segment 가 IMAGE 일 때는 캐시 대상이 아니므로 항상 multipart 로 전송 (아래 분기).
         for (seg in sortedSegments) {
             when (seg.type) {
                 SegmentType.VIDEO -> {
-                    val key = "video_${seg.order}"
-                    if (preUploadedInputId == null) {
-                        val bytes = readFileBytes(seg.sourceFilePath)
-                        videoParts += BinaryPart(key, "$key.mp4", bytes, "video/mp4")
+                    val key = videoKeyByPath.getOrPut(seg.sourceFilePath) {
+                        val k = "video_${seg.order}"
+                        if (preUploadedInputId == null) {
+                            val bytes = readFileBytes(seg.sourceFilePath)
+                            videoParts += BinaryPart(k, "$k.mp4", bytes, "video/mp4")
+                        }
+                        k
                     }
                     renderSegments += RenderSegment(
                         sourceFileKey = key,
@@ -302,6 +310,8 @@ class RemoteRenderExecutor(
                 startMs = clip.startMs,
                 volume = clip.volume,
                 speed = clip.speed,
+                sourceTrimStartMs = clip.sourceTrimStartMs,
+                sourceTrimEndMs = clip.sourceTrimEndMs,
             )
         }
 

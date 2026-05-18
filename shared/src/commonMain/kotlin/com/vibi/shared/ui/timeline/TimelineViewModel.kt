@@ -286,6 +286,11 @@ data class TimelineUiState(
     val isAddingBgm: Boolean = false,
     val bgmError: String? = null,
     /**
+     * 음원 선택 시 길이가 영상보다 길어 BgmTrimSheet 로 trim 입력을 받아야 하는 pending 상태.
+     * non-null = 시트 노출. confirm/cancel 시 null 로 클리어.
+     */
+    val bgmTrimRequest: BgmTrimRequest? = null,
+    /**
      * BGM 영역의 lane 개수. 사용자가 하단 drag handle 로 명시적 확장/축소.
      * BGM clip 의 vertical drag 는 0..bgmLaneCount-1 로 clamp — 영역 밖으로 못 옮김.
      * 더 아래 lane 이 필요하면 사용자가 영역을 먼저 늘리고 옮겨야 함. 영속화 X (UI 한정).
@@ -2916,8 +2921,10 @@ class TimelineViewModel constructor(
             val be = bs + bgm.effectiveDurationMs
             when {
                 bs >= start && be <= end -> {
-                    val newEffective = if (newSpeed > 0f) (bgm.sourceDurationMs / newSpeed).toLong()
-                        else bgm.sourceDurationMs
+                    // trim 적용된 effective source 길이 기반으로 새 effective 계산 — 단순 sourceDurationMs
+                    // 쓰면 trim 된 BGM 의 새 speed 후 길이가 잘못 커져 ripple delta 가 어긋남.
+                    val effSource = bgm.effectiveSourceDurationMs
+                    val newEffective = if (newSpeed > 0f) (effSource / newSpeed).toLong() else effSource
                     val itemDelta = newEffective - bgm.effectiveDurationMs
                     bgmClipRepository.updateClip(
                         bgm.copy(
@@ -2960,6 +2967,8 @@ class TimelineViewModel constructor(
                         startMs = bgm.startMs + width,
                         volumeScale = bgm.volumeScale,
                         speedScale = bgm.speedScale,
+                        sourceTrimStartMs = bgm.sourceTrimStartMs,
+                        sourceTrimEndMs = bgm.sourceTrimEndMs,
                         lane = bgm.lane,
                     )
                 )
@@ -3945,13 +3954,32 @@ class TimelineViewModel constructor(
                     )
                     return@launch
                 }
-                val startMs = _uiState.value.playbackPositionMs
+                val state = _uiState.value
+                val startMs = state.playbackPositionMs
+                // 영상보다 길면 사용자에게 구간 선택 시트 — 실제 삽입은 onConfirmBgmTrim 에서.
+                // videoDurationMs == 0 (empty timeline) 인 경우엔 비교 불가라 그냥 통과 — addBgmClip 이
+                // sourceDurationMs > 0 만 require.
+                if (state.videoDurationMs > 0L && info.durationMs > state.videoDurationMs) {
+                    _uiState.update {
+                        it.copy(
+                            isAddingBgm = false,
+                            bgmTrimRequest = BgmTrimRequest(
+                                sourceUri = uri,
+                                sourceDurationMs = info.durationMs,
+                                insertStartMs = startMs,
+                                rangeStartMs = 0L,
+                                rangeEndMs = state.videoDurationMs,
+                            ),
+                        )
+                    }
+                    return@launch
+                }
                 addBgmClip(
                     projectId = projectId,
                     sourceUri = uri,
                     sourceDurationMs = info.durationMs,
                     startMs = startMs,
-                    volumeScale = 1.0f
+                    volumeScale = 1.0f,
                 )
                 _uiState.value = _uiState.value.copy(isAddingBgm = false)
                 pushUndoState()
@@ -3962,6 +3990,56 @@ class TimelineViewModel constructor(
                 )
             }
         }
+    }
+
+    /** BgmTrimSheet 의 시작/끝 핸들 drag 진행 시 호출. 음원 범위 안으로만 clamp — 구간이 영상 길이를
+     *  넘는지 여부는 시트의 "삽입" 버튼 enable 판정에 위임 (한쪽 핸들 끌 때 다른 쪽이 따라가지 않도록). */
+    fun onUpdateBgmTrimRange(rangeStartMs: Long, rangeEndMs: Long) {
+        _uiState.update { state ->
+            val req = state.bgmTrimRequest ?: return@update state
+            val source = req.sourceDurationMs
+            val clampedStart = rangeStartMs.coerceIn(0L, source)
+            val clampedEnd = rangeEndMs.coerceIn(clampedStart, source)
+            state.copy(
+                bgmTrimRequest = req.copy(
+                    rangeStartMs = clampedStart,
+                    rangeEndMs = clampedEnd,
+                )
+            )
+        }
+    }
+
+    /** BgmTrimSheet 의 "삽입" 클릭 시 호출. 선택 구간 ≤ 영상 길이일 때만 진행. */
+    fun onConfirmBgmTrim() {
+        val state = _uiState.value
+        val req = state.bgmTrimRequest ?: return
+        val span = req.rangeEndMs - req.rangeStartMs
+        if (span < MIN_RANGE_MS) return
+        if (state.videoDurationMs > 0L && span > state.videoDurationMs) return
+        viewModelScope.launch {
+            try {
+                addBgmClip(
+                    projectId = projectId,
+                    sourceUri = req.sourceUri,
+                    sourceDurationMs = req.sourceDurationMs,
+                    startMs = req.insertStartMs,
+                    volumeScale = 1.0f,
+                    sourceTrimStartMs = req.rangeStartMs,
+                    sourceTrimEndMs = req.rangeEndMs,
+                )
+                _uiState.update { it.copy(bgmTrimRequest = null) }
+                pushUndoState()
+            } catch (e: IllegalArgumentException) {
+                _uiState.update {
+                    it.copy(bgmTrimRequest = null, bgmError = "BGM을 추가하지 못함")
+                }
+            }
+        }
+    }
+
+    /** BgmTrimSheet 의 "취소" 또는 dismiss. BGM 미삽입. */
+    fun onCancelBgmTrim() {
+        _uiState.update { it.copy(bgmTrimRequest = null) }
     }
 
     fun onSelectBgmClip(clipId: String?) = selectExclusively(SelectionTarget.Bgm, clipId)
@@ -4046,9 +4124,9 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 채팅 전용 — BGM 클립을 timeline range 에 정렬. BgmClip 에 trim 필드가 없어 `speedScale` 로
-     * stretch. UseCase 가 [BgmClip.MIN_SPEED, BgmClip.MAX_SPEED] 로 silent clamp 하므로
-     * out-of-range 일 때 dispatcher 가 Success 반환 후 BGM 이 어긋나는 사고 방지 위해 사전 throw.
+     * 채팅 전용 — BGM 클립을 timeline range 에 정렬. trim 된 sub-range 음원이라면 그 길이가 baseline.
+     * `speedScale` 로 stretch. UseCase 가 [BgmClip.MIN_SPEED, BgmClip.MAX_SPEED] 로 silent clamp
+     * 하므로 out-of-range 일 때 dispatcher 가 Success 반환 후 BGM 이 어긋나는 사고 방지 위해 사전 throw.
      */
     suspend fun applyUpdateBgmRangeFromChat(clipId: String, newStartMs: Long, newEndMs: Long) {
         require(newEndMs > newStartMs) {
@@ -4057,10 +4135,11 @@ class TimelineViewModel constructor(
         val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId }
             ?: throw IllegalArgumentException("BGM 클립을 찾을 수 없어요 (id=$clipId).")
         val desiredDuration = newEndMs - newStartMs
-        val newSpeed = clip.sourceDurationMs.toFloat() / desiredDuration.toFloat()
+        val effSource = clip.effectiveSourceDurationMs.coerceAtLeast(1L)
+        val newSpeed = effSource.toFloat() / desiredDuration.toFloat()
         require(newSpeed in BgmClip.MIN_SPEED..BgmClip.MAX_SPEED) {
             "요청한 길이(${desiredDuration}ms)는 BGM 속도 한계(${BgmClip.MIN_SPEED}~${BgmClip.MAX_SPEED}x)를 " +
-                "벗어나요. 원본 길이 ${clip.sourceDurationMs}ms 기준으로 가능한 범위로 다시 알려주세요."
+                "벗어나요. 음원 길이 ${effSource}ms 기준으로 가능한 범위로 다시 알려주세요."
         }
         updateBgmClip(
             clipId = clipId,

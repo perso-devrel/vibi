@@ -77,24 +77,23 @@ actual fun BgmPlaybackSync(
             val player = players[clip.id] ?: return@forEach
             val speed = clip.speedScale.coerceIn(0.5f, 2.0f)
             val volume = clip.volumeScale.coerceIn(0f, 1f)
-            // globalDurMs 계산은 위와 같은 [0.5, 2.0] clamp 사용 — 과거 0.01 floor 는 손상된
-            // speedScale=0 데이터에서 globalDur 가 100× 부풀어 BGM 이 timeline 끝까지 "in range"
-            // 로 잘못 판정되는 잠재 경로였다. BgmClip.MIN_SPEED=0.5 정상 path 와 일관되게.
-            val globalDurMs = (clip.sourceDurationMs / speed)
+            // trim 적용된 source 길이 (sourceTrimStartMs > 0 또는 sourceTrimEndMs > 0 이면 sub-range).
+            // globalDur 는 그 값에 speed 반영. 정상 path BgmClip.MIN_SPEED=0.5 와 일관된 clamp.
+            val globalDurMs = (clip.effectiveSourceDurationMs / speed)
                 .toLong().coerceAtLeast(1L)
             val inRange = currentMs in clip.startMs until (clip.startMs + globalDurMs)
             if (!inRange || !isPlaying) {
                 if (player.playing) player.pause()
                 if (!inRange) {
-                    // 범위 밖 = 다음 진입 시 처음부터. 0 으로 reset.
-                    player.currentTime = 0.0
+                    // 범위 밖 = 다음 진입 시 trim 시작점부터. seek 는 in-range 진입 시 보정.
+                    player.currentTime = clip.sourceTrimStartMs / 1000.0
                 }
                 return@forEach
             }
-            // In range + playing — 위치/볼륨/속도 sync.
+            // In range + playing — 위치/볼륨/속도 sync. expectedSec 에 sourceTrimStartMs 오프셋 더함.
             player.volume = volume
             player.rate = speed
-            val expectedSec = ((currentMs - clip.startMs) * speed).toDouble() / 1000.0
+            val expectedSec = ((currentMs - clip.startMs) * speed + clip.sourceTrimStartMs).toDouble() / 1000.0
             if (kotlin.math.abs(player.currentTime - expectedSec) > 0.3) {
                 player.currentTime = expectedSec.coerceAtLeast(0.0)
             }

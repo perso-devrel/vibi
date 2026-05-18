@@ -61,6 +61,10 @@ data class RenderBgmClip(
     val volume: Float = 1.0f,
     /** 1.0 = 정상 속도. BFF 의 atempo 필터로 적용 (atempo 권장 범위 0.5..2.0 → chain 으로 0.25..4 표현). */
     val speed: Float = 1.0f,
+    /** 음원 내부 trim 시작 ms. 0 이면 처음부터. */
+    val sourceTrimStartMs: Long = 0L,
+    /** 음원 내부 trim 끝 ms. 0 이면 끝까지. */
+    val sourceTrimEndMs: Long = 0L,
 )
 
 @Serializable

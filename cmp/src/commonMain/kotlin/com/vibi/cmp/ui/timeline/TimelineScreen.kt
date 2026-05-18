@@ -1365,6 +1365,17 @@ fun TimelineScreen(
         )
     }
 
+    // BGM trim 시트 — 영상보다 긴 음원 선택 시 onPickBgmAudio 가 bgmTrimRequest 를 set.
+    state.bgmTrimRequest?.let { req ->
+        BgmTrimSheet(
+            request = req,
+            videoDurationMs = state.videoDurationMs,
+            onUpdateRange = { s, e -> viewModel.onUpdateBgmTrimRange(s, e) },
+            onConfirm = { viewModel.onConfirmBgmTrim() },
+            onCancel = { viewModel.onCancelBgmTrim() },
+        )
+    }
+
     // BGM 클립 액션 sheet — 음원 단계에서 lane 의 막대를 탭했을 때 selectedBgmClipId 가 set 되면 표시.
     // segment edit 중에는 selectedBgmClipId 가 시각 highlight 용으로만 set 되므로 sheet 안 띄움.
     if (showAudioSourcesContent && !state.isSegmentEditMode) {
@@ -2044,8 +2055,9 @@ private fun UnifiedTimelineBar(
                     )
                 }
                 bgmClips.forEach { clip ->
-                    val globalDurMs = ((clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))).toLong()
-                        .coerceAtLeast(1L)
+                    // effectiveDurationMs 는 trim (sourceTrimStart/End) + speed 모두 반영 — 시각 막대 길이를
+                    // BGM 의 실제 timeline 점유와 일치시켜야 사용자가 trim 결과를 즉시 확인 가능.
+                    val globalDurMs = clip.effectiveDurationMs.coerceAtLeast(1L)
                     val isSelected = clip.id == selectedBgmClipId
                     // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
                     // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
@@ -2488,7 +2500,13 @@ private fun ExportOptionsSheet(
                 shape = VibiShape.lg,
                 onClick = onSave,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // Row.fillMaxWidth + Arrangement.Start — OutlinedButton 의 default content slot 이
+                // 중앙 정렬이라 명시적으로 좌측 정렬.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Start,
+                ) {
                     Icon(
                         imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
                         contentDescription = null,
@@ -2503,7 +2521,11 @@ private fun ExportOptionsSheet(
                 shape = VibiShape.lg,
                 onClick = onShare,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Start,
+                ) {
                     Icon(
                         imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
                         contentDescription = null,

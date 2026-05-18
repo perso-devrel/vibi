@@ -57,6 +57,10 @@ data class BgmClipMixInput(
     val volume: Float = 1.0f,
     /** 재생 속도 — BFF 가 atempo 필터로 적용. 1.0 = 정상. */
     val speed: Float = 1.0f,
+    /** 음원 내부 trim 시작 ms. 0 이면 처음부터. */
+    val sourceTrimStartMs: Long = 0L,
+    /** 음원 내부 trim 끝 ms. 0 이면 끝까지. */
+    val sourceTrimEndMs: Long = 0L,
 )
 
 /**
