@@ -115,6 +115,7 @@ private fun buttonStyle(p: CupertinoPalette) = TextStyle(
 actual fun PageScaffold(
     title: String,
     modifier: Modifier,
+    trailing: (@Composable () -> Unit)?,
     content: @Composable () -> Unit
 ) {
     val p = cupertinoPalette()
@@ -123,15 +124,22 @@ actual fun PageScaffold(
             .fillMaxSize()
             .background(p.bg)
     ) {
-        Text(
-            text = title,
-            style = largeTitleStyle(p),
+        // Large Title — 우측에 trailing slot (e.g. 유저 아바타) 을 두기 위해 Row 로 감싼다.
+        androidx.compose.foundation.layout.Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 20.dp)
-                .padding(top = 24.dp, bottom = 8.dp)
-        )
+                .padding(top = 24.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                style = largeTitleStyle(p),
+                modifier = Modifier.weight(1f),
+            )
+            if (trailing != null) trailing()
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

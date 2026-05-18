@@ -39,12 +39,18 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
+import com.vibi.cmp.ui.account.UserAvatarButton
+import com.vibi.cmp.ui.account.UserMenuSheet
 import com.vibi.cmp.ui.cupertino.BodyText
 import com.vibi.cmp.ui.cupertino.PageScaffold
 import com.vibi.cmp.ui.cupertino.SecondaryText
 import com.vibi.cmp.ui.cupertino.Section
 import com.vibi.cmp.ui.cupertino.SectionRow
 import com.vibi.shared.domain.model.ValidationResult
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.vibi.shared.ui.account.UserMenuViewModel
 import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.formatRelative
 import com.vibi.shared.platform.formatTimestamp
@@ -56,9 +62,12 @@ import org.koin.compose.viewmodel.koinViewModel
 fun InputScreen(
     onNavigateToTimeline: (projectId: String) -> Unit,
     onSignedOut: () -> Unit,
-    viewModel: InputViewModel = koinViewModel()
+    viewModel: InputViewModel = koinViewModel(),
+    userMenuViewModel: UserMenuViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val userMenuState by userMenuViewModel.uiState.collectAsState()
+    var menuOpen by remember { mutableStateOf(false) }
 
     // 화면 재진입 시 이전 비디오/검증/언어 선택 리셋. drafts ("이어서 작업") 카드는
     // EditProjectRepository.observeAllProjects() 가 영속 상태에서 직접 읽어 노출.
@@ -76,7 +85,15 @@ fun InputScreen(
 
     val pickLauncher = rememberMediaPickerLauncher { uri -> viewModel.onVideoPicked(uri) }
 
-    PageScaffold(title = "VIBI") {
+    PageScaffold(
+        title = "VIBI",
+        trailing = {
+            UserAvatarButton(
+                user = userMenuState.user,
+                onClick = { menuOpen = true },
+            )
+        }
+    ) {
       Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -84,10 +101,16 @@ fun InputScreen(
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
         ) {
+            Spacer(Modifier.height(4.dp))
+            GreetingRow(
+                name = userMenuState.user?.name,
+                credits = userMenuState.credits,
+            )
+
             // Hero CTA — 화면에 들어오자마자 가장 큰 element 가 "갤러리에서 영상 선택".
             // 카드 전체가 클릭 가능. selectedVideo 없으면 강조 그라디언트 + 큰 갤러리 글리프 + CTA 텍스트,
             // 있으면 같은 카드가 "다른 영상 선택" 으로 변환되며 작은 메타 표시.
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
             val isFirstPick = state.selectedVideo == null
             Box(
                 modifier = Modifier
@@ -233,25 +256,18 @@ fun InputScreen(
 
             Spacer(Modifier.height(24.dp))
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "로그아웃",
-                style = TextStyle(
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { viewModel.onSignOut() }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            )
-        }
       }
+    }
+
+    if (menuOpen) {
+        UserMenuSheet(
+            onDismiss = { menuOpen = false },
+            onSignedOut = {
+                menuOpen = false
+                onSignedOut()
+            },
+            viewModel = userMenuViewModel,
+        )
     }
 }
 
@@ -366,6 +382,56 @@ private fun DraftCard(
                     fontSize = 12.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun GreetingRow(name: String?, credits: Int) {
+    val safeName = name?.trim()?.takeIf { it.isNotBlank() }
+    val title = if (safeName != null) "안녕하세요, $safeName 님" else "오늘 어떤 영상 만들어볼까요?"
+    val sub = if (safeName != null) "오늘도 깔끔한 음원만 남겨보세요" else "VIBI 가 소음만 지워드릴게요"
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = TextStyle(
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = sub,
+                style = TextStyle(
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color(0x1F767680))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        ) {
+            Text(
+                text = "✦",
+                style = TextStyle(fontSize = 12.sp, color = Color(0xFF0A84FF))
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "$credits",
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
             )
         }

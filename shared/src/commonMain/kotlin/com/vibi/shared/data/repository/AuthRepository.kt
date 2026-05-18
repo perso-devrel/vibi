@@ -32,14 +32,14 @@ class AuthRepository(
         val idToken = googleSignInClient.signIn().getOrThrow()
         val resp = bffApi.exchangeGoogleIdToken(idToken)
         finalizeSession(resp)
-        resp.user.toDomain()
+        resp.user.toDomain().also { tokenStore.saveUser(it) }
     }
 
     suspend fun signInWithApple(): Result<AuthUser> = runCatching {
         val payload = appleSignInClient.signIn().getOrThrow()
         val resp = bffApi.exchangeAppleIdToken(payload.idToken, payload.fullName)
         finalizeSession(resp)
-        resp.user.toDomain()
+        resp.user.toDomain().also { tokenStore.saveUser(it) }
     }
 
     fun hasValidSession(): Boolean = tokenStore.getValidToken() != null
@@ -59,6 +59,21 @@ class AuthRepository(
         userSession.reset()
         runCatching { googleSignInClient.signOut() }
         runCatching { appleSignInClient.signOut() }
+    }
+
+    /**
+     * 회원탈퇴 — BFF `DELETE /auth/account` 호출 + 로컬 토큰/세션 정리.
+     *
+     * 호출자는 로컬 user-scoped row 정리 (EditProject 등) 를 별도로 진행한다 ([UserMenuViewModel]
+     * 의 deleteAccount 흐름). BFF 호출이 401/네트워크 실패해도 로컬 정리는 계속 진행되어야
+     * 다음 부팅 때 stale 세션으로 튕기지 않는다 — 그래서 finally 블록에서 signOut 호출.
+     */
+    suspend fun deleteAccount(): Result<Unit> = runCatching {
+        try {
+            bffApi.deleteAccount()
+        } finally {
+            signOut()
+        }
     }
 
     private fun finalizeSession(resp: AuthResponseDto) {

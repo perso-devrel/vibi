@@ -26,8 +26,12 @@ import com.vibi.shared.data.remote.dto.SubtitleRegenerateSpec
 import com.vibi.shared.data.remote.dto.SubtitleSpec
 import com.vibi.shared.data.remote.dto.SubtitleStatusResponse
 import com.vibi.shared.data.remote.dto.TestdataSeparationFolderDto
+import com.vibi.shared.data.remote.dto.CreditBalanceResponse
+import com.vibi.shared.data.remote.dto.CreditPurchaseRequest
+import com.vibi.shared.data.remote.dto.CreditPurchaseResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
@@ -74,6 +78,25 @@ class BffApi(
         client.post("api/v2/auth/apple") {
             contentType(ContentType.Application.Json)
             setBody(AppleAuthRequestDto(idToken, fullName))
+        }.body()
+
+    /** 인증된 본인 영구 삭제 — App Store 가이드라인 5.1.1(v). */
+    suspend fun deleteAccount() {
+        client.delete("api/v2/auth/account")
+    }
+
+    /** 현재 사용자의 크레딧 잔액. row 가 없으면 0. */
+    suspend fun getCreditBalance(): CreditBalanceResponse =
+        client.get("api/v2/credits").body()
+
+    /**
+     * IAP 영수증 가산. (platform, transactionId) UNIQUE 로 BFF 가 중복 호출 방어 —
+     * 모바일은 StoreKit / Play Billing 콜백 후 안전하게 재시도 가능.
+     */
+    suspend fun purchaseCredits(request: CreditPurchaseRequest): CreditPurchaseResponse =
+        client.post("api/v2/credits/purchase") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
         }.body()
 
     /** 지원 타깃 언어 목록 — Perso 가 지원하는 언어를 BFF 가 프록시. */

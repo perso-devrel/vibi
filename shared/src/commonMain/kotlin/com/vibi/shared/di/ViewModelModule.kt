@@ -1,5 +1,6 @@
 package com.vibi.shared.di
 
+import com.vibi.shared.ui.account.UserMenuViewModel
 import com.vibi.shared.ui.auth.LoginViewModel
 import com.vibi.shared.ui.chat.ChatViewModel
 import com.vibi.shared.ui.input.InputViewModel
@@ -74,4 +75,13 @@ val viewModelModule = module {
     }
     factory { ChatViewModel(chatRepository = get()) }
     factory { LoginViewModel(authRepository = get()) }
+    factory {
+        UserMenuViewModel(
+            authRepository = get(),
+            tokenStore = get(),
+            creditStore = get(),
+            userSession = get(),
+            bffApi = get(),
+        )
+    }
 }

@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 actual fun PageScaffold(
     title: String,
     modifier: Modifier,
+    trailing: (@Composable () -> Unit)?,
     content: @Composable () -> Unit
 ) {
     Column(
@@ -37,7 +38,17 @@ actual fun PageScaffold(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = title, style = MaterialTheme.typography.headlineSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.weight(1f),
+            )
+            if (trailing != null) trailing()
+        }
         content()
     }
 }
