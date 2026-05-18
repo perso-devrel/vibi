@@ -32,28 +32,36 @@ private class AndroidStemMixerHandle(
     /** key = "groupId/stemId" — multi-directive 지원. */
     private val players = mutableMapOf<String, ExoPlayer>()
     private val groupOfPlayer = mutableMapOf<String, String>()
+    /** stemId → 적용된 마지막 volume. load() 로 새 player 생성 시 적용. */
+    private val pendingVolumes = mutableMapOf<String, Float>()
+    /** groupId → 마지막 seek 위치(ms). load() 직후 새 player 가 올바른 offset 에서 시작. */
+    private val pendingSeekByGroup = mutableMapOf<String, Long>()
     private var activeGroupId: String? = null
     private var playing = false
 
     private fun key(groupId: String, stemId: String) = "$groupId/$stemId"
 
     override fun load(sources: List<StemMixerSource>) {
+        // 기존 player release 하고 새로 생성하되, playing / activeGroupId / pendingVolumes /
+        // pendingSeekByGroup 는 보존. 화면 재진입 시 LaunchedEffect 발화 순서가 보장되지 않아
+        // setActiveGroup/play/setVolume/seekTo 가 load 보다 먼저 호출돼도 새 player 가 즉시
+        // 올바른 상태에 맞춰 재생되도록.
         players.values.forEach { it.release() }
         players.clear()
         groupOfPlayer.clear()
-        playing = false
-        activeGroupId = null
         sources.forEach { src ->
             val p = playerFactory().apply {
                 setMediaItem(MediaItem.fromUri(src.audioUrl))
                 prepare()
                 playWhenReady = false
-                volume = 1f
+                volume = pendingVolumes[src.stemId] ?: 1f
             }
             val k = key(src.groupId, src.stemId)
             players[k] = p
             groupOfPlayer[k] = src.groupId
+            pendingSeekByGroup[src.groupId]?.let { p.seekTo(it) }
         }
+        applyActiveState()
     }
 
     override fun setActiveGroup(groupId: String?) {
@@ -71,6 +79,7 @@ private class AndroidStemMixerHandle(
 
     override fun setVolume(stemId: String, volume: Float) {
         val v = volume.coerceIn(0f, 2f)
+        pendingVolumes[stemId] = v
         players.entries
             .filter { (k, _) -> k.endsWith("/$stemId") }
             .forEach { (_, p) -> p.volume = v }
@@ -91,6 +100,7 @@ private class AndroidStemMixerHandle(
     override fun seekTo(positionMs: Long) {
         val pos = positionMs.coerceAtLeast(0L)
         val active = activeGroupId ?: return
+        pendingSeekByGroup[active] = pos
         players.forEach { (k, p) ->
             if (groupOfPlayer[k] == active) p.seekTo(pos)
         }
@@ -100,6 +110,8 @@ private class AndroidStemMixerHandle(
         players.values.forEach { it.release() }
         players.clear()
         groupOfPlayer.clear()
+        pendingVolumes.clear()
+        pendingSeekByGroup.clear()
         playing = false
         activeGroupId = null
     }

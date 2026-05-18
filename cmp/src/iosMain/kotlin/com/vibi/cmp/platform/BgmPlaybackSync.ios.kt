@@ -77,7 +77,10 @@ actual fun BgmPlaybackSync(
             val player = players[clip.id] ?: return@forEach
             val speed = clip.speedScale.coerceIn(0.5f, 2.0f)
             val volume = clip.volumeScale.coerceIn(0f, 1f)
-            val globalDurMs = (clip.sourceDurationMs / clip.speedScale.coerceAtLeast(0.01f))
+            // globalDurMs 계산은 위와 같은 [0.5, 2.0] clamp 사용 — 과거 0.01 floor 는 손상된
+            // speedScale=0 데이터에서 globalDur 가 100× 부풀어 BGM 이 timeline 끝까지 "in range"
+            // 로 잘못 판정되는 잠재 경로였다. BgmClip.MIN_SPEED=0.5 정상 path 와 일관되게.
+            val globalDurMs = (clip.sourceDurationMs / speed)
                 .toLong().coerceAtLeast(1L)
             val inRange = currentMs in clip.startMs until (clip.startMs + globalDurMs)
             if (!inRange || !isPlaying) {

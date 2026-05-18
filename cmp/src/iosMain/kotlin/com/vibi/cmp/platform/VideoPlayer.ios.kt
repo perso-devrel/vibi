@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.UIKitView
+import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.resolveStoredUriToFileUrl
 import com.vibi.shared.platform.storedUriFileExists
 import kotlinx.cinterop.CValue
@@ -67,6 +68,10 @@ import platform.UIKit.UIApplicationWillResignActiveNotification
 import platform.UIKit.UIView
 import platform.darwin.NSObjectProtocol
 import kotlin.native.ObjCName
+
+/** AVPlayer.seekToTime 가 completion 콜백 없이 async 완료해 그 사이 폴링이 pre-seek currentTime 을
+ *  보고하는 race 차단용 봉인 윈도우. 500ms 는 시뮬레이터·실기기 평균 seek latency 대비 안전 마진. */
+private const val SEEK_GUARD_MS = 500L
 
 /**
  * Two-mode 미리보기:
@@ -221,6 +226,13 @@ private fun SingleItemVideoPlayer(
     val onEndedState = rememberUpdatedState(onEnded)
     val onPositionChangedState = rememberUpdatedState(onPositionChanged)
 
+    // AVPlayer.seekToTime() 은 completion 콜백 없이 async 완료. 폴링이 그 사이에 pre-seek
+    // currentTime() 을 읽어 ViewModel state 를 stale 값으로 덮어쓰면, 다음 recompose 의 seekToMs
+    // 가 그 stale 값이 되어 user scrub / 프로그래밍 seek (selectSegmentInEdit 등) 이 잠시
+    // "원복" 되는 race (Race 1+2). seekToTime 호출 직후 [SEEK_GUARD_MS] 동안 폴링 보고를 skip
+    // — AVPlayer 가 seek 적용을 끝낼 시간을 보장. DisposableEffect 의 endObserver 도 같은 가드 사용.
+    var seekGuardUntilMs by remember { mutableStateOf(0L) }
+
     DisposableEffect(player) {
         val bgObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter.addObserverForName(
             name = UIApplicationWillResignActiveNotification,
@@ -234,13 +246,16 @@ private fun SingleItemVideoPlayer(
             queue = null,
             usingBlock = { _ ->
                 // 폴링이 currentTime(=endTime) 을 재보고해서 ViewModel state 가 0 → endMs 로
-                // 덮이는 race 차단. player 를 trimStart 로 되돌린 뒤 onEnded 콜.
+                // 덮이는 race 차단. player 를 trimStart 로 되돌리고 seek 적용 윈도우 동안 폴링도 봉인.
+                seekGuardUntilMs = currentTimeMillis() + SEEK_GUARD_MS
                 player.seekToTime(
                     CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
                 )
                 onEndedState.value()
             }
         )
+        // 초기 seek 도 동일 가드 — polling 첫 tick 이 pre-seek 0 위치를 보고할 위험 차단.
+        seekGuardUntilMs = currentTimeMillis() + SEEK_GUARD_MS
         player.seekToTime(
             CMTimeMakeWithSeconds(item.trimStartMs / 1000.0, preferredTimescale = 1000)
         )
@@ -267,6 +282,7 @@ private fun SingleItemVideoPlayer(
         val targetLocalSec = (seekToMs * speed) / 1000.0 + item.trimStartMs / 1000.0
         val curSec = CMTimeGetSeconds(player.currentTime())
         if (!curSec.isNaN() && kotlin.math.abs(curSec - targetLocalSec) <= 0.5) return@LaunchedEffect
+        seekGuardUntilMs = currentTimeMillis() + SEEK_GUARD_MS
         player.seekToTime(CMTimeMakeWithSeconds(targetLocalSec, preferredTimescale = 1000))
     }
 
@@ -275,6 +291,11 @@ private fun SingleItemVideoPlayer(
         val trimStartSec = item.trimStartMs / 1000.0
         var lastReportedMs = -1L
         while (true) {
+            // seek 진행 중이면 폴링 보고 skip — 짧은 sleep 으로 가드 만료 빠르게 폴.
+            if (currentTimeMillis() < seekGuardUntilMs) {
+                delay(50)
+                continue
+            }
             val sec = CMTimeGetSeconds(player.currentTime())
             if (!sec.isNaN()) {
                 val globalMs = (((sec - trimStartSec) / speed) * 1000.0).toLong().coerceAtLeast(0L)
@@ -329,6 +350,10 @@ private fun MultiSegmentVideoPlayer(
     val onEndedState = rememberUpdatedState(onEnded)
     val onPositionChangedState = rememberUpdatedState(onPositionChanged)
 
+    // seek guard — SingleItemVideoPlayer 동일 race 대응. polling 이 pre-seek currentTime() 을
+    // 읽어 state 를 stale 값으로 덮는 것 차단. DisposableEffect endObserver 도 사용.
+    var seekGuardUntilMs by remember { mutableStateOf(0L) }
+
     // Player 는 async-built composition 이 준비될 때까지 null. 빌드 완료 시 state 업데이트 →
     // UIKitView.update 가 layer.player 갈아끼움. tracks/duration 의 lazy load 를 await 해서
     // composition 이 0-길이로 만들어지는 결함 차단.
@@ -356,7 +381,8 @@ private fun MultiSegmentVideoPlayer(
             `object` = null,
             queue = null,
             usingBlock = { _ ->
-                // 폴링 race 차단 — 0 으로 직접 되돌린 뒤 onEnded.
+                // 폴링 race 차단 — 0 으로 직접 되돌리되 seek async 완료까지 guard 윈도우 봉인.
+                seekGuardUntilMs = currentTimeMillis() + SEEK_GUARD_MS
                 p.seekToTime(CMTimeMakeWithSeconds(0.0, preferredTimescale = 1000))
                 onEndedState.value()
             }
@@ -384,6 +410,7 @@ private fun MultiSegmentVideoPlayer(
         val curSec = CMTimeGetSeconds(p.currentTime())
         val targetSec = seekToMs / 1000.0
         if (!curSec.isNaN() && kotlin.math.abs(curSec - targetSec) <= 0.5) return@LaunchedEffect
+        seekGuardUntilMs = currentTimeMillis() + SEEK_GUARD_MS
         p.seekToTime(CMTimeMakeWithSeconds(targetSec, preferredTimescale = 1000))
     }
 
@@ -392,6 +419,10 @@ private fun MultiSegmentVideoPlayer(
         var lastVolume = Float.NaN
         var lastReportedMs = -1L
         while (true) {
+            if (currentTimeMillis() < seekGuardUntilMs) {
+                delay(50)
+                continue
+            }
             val sec = CMTimeGetSeconds(p.currentTime())
             if (!sec.isNaN()) {
                 val globalMs = (sec * 1000.0).toLong()

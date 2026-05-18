@@ -375,7 +375,7 @@ fun TimelineScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFFEDEBE9))) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -770,6 +770,10 @@ fun TimelineScreen(
                 // segment edit 모드에서만 BGM 탭 허용 — 탭 시 그 BGM 의 timeline bounds 로 range 스냅해
                 // 위 EditActionsPanel 로 volume/speed/duplicate/delete 적용. 시각 highlight 도 함께 부여.
                 bgmTapEnabled = state.isSegmentEditMode,
+                // segment edit (영상 다듬기) 모드에선 BGM 위치/lane drag + lane 수 조절 pill 모두 잠금.
+                // 영상 편집 중 BGM 이 같이 따라 움직이면 사용자 의도와 어긋나는 사고가 잦아, 다듬기
+                // 활성 동안엔 BGM 트랙은 read-only (탭으로 BGM range 편집 진입은 그대로 허용).
+                bgmDragEnabled = !state.isSegmentEditMode,
                 onBgmSelectClip = viewModel::onSelectBgmForRangeEdit,
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
                 onBgmUpdateLane = viewModel::onUpdateBgmLane,
@@ -1205,6 +1209,19 @@ fun TimelineScreen(
         }
     }
 
+    // 하단 A/B 미리듣기 바 가시성 — FAB 위치 계산이 이 플래그에 의존하므로 FAB 보다 먼저 계산.
+    val abBarVisible = unifiedScroll &&
+        state.separationDirectives.isNotEmpty() &&
+        !state.isSegmentEditMode &&
+        !state.localizationOpen &&
+        !state.showDetailEdit &&
+        !state.showAudioSeparationSheet &&
+        !state.showSubtitleSheet &&
+        !state.showScriptReviewSheet &&
+        !state.showAppendSheet &&
+        !state.showFrameSheet &&
+        !state.showTextOverlaySheet
+
     // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
     // 자막/더빙 단계에서는 노출 안 함. unified 모드(stepper 숨김) 에선 단계 구분 없음 — localizationOpen
     // 같은 다른 가시성 가드가 이미 자막/더빙 패널 열린 시간 동안 FAB 를 가린다.
@@ -1221,11 +1238,13 @@ fun TimelineScreen(
         !state.showTextOverlaySheet &&
         !chatSheetVisible
     if (chatFabVisible) {
+        // AB 바 노출 시 FAB 가 가리지 않도록 위로 들어올림. AB 바 높이 = chip(xxl 40dp) + 내부 padding(xxs*2 8dp) + 외부 padding(xxs*2 8dp) ≈ 56dp.
+        val fabBottomPadding = if (abBarVisible) VibiSpacing.md + VibiSpacing.xxl + VibiSpacing.base else VibiSpacing.md
         BadgedBox(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
-                .padding(VibiSpacing.md),
+                .padding(start = VibiSpacing.md, end = VibiSpacing.md, top = VibiSpacing.md, bottom = fabBottomPadding),
             badge = {
                 if (chatState.hasUnreadMessages) {
                     // AI 메시지 도착 신호 — 기본 Material3 Badge 의 6dp dot 은 너무 작아 멀리서 안 보임.
@@ -1250,18 +1269,8 @@ fun TimelineScreen(
     }
 
     // 하단 고정 A/B 미리듣기 바 — directive 가 1 개 이상이고 다른 패널 안 떠 있을 때만 노출.
-    // ChatFab 위가 아닌 화면 하단(navigationBarsPadding 영역 위) 고정.
-    val abBarVisible = unifiedScroll &&
-        state.separationDirectives.isNotEmpty() &&
-        !state.isSegmentEditMode &&
-        !state.localizationOpen &&
-        !state.showDetailEdit &&
-        !state.showAudioSeparationSheet &&
-        !state.showSubtitleSheet &&
-        !state.showScriptReviewSheet &&
-        !state.showAppendSheet &&
-        !state.showFrameSheet &&
-        !state.showTextOverlaySheet
+    // ChatFab 위가 아닌 화면 하단(navigationBarsPadding 영역 위) 고정. abBarVisible 은 FAB 위치
+    // 계산을 위해 위에서 미리 선언.
     if (abBarVisible) {
         Box(
             modifier = Modifier
@@ -1636,6 +1645,9 @@ private fun UnifiedTimelineBar(
     bgmLaneCount: Int = 1,
     selectedBgmClipId: String? = null,
     bgmTapEnabled: Boolean = true,
+    /** false 면 BGM clip 의 위치/lane drag + lane 수 조절 pill 까지 disable. 탭(선택)은 분리 — `bgmTapEnabled` 가 담당.
+     *  segment edit (영상 다듬기) 모드에서 BGM 트랙을 read-only 로 잠그기 위함. */
+    bgmDragEnabled: Boolean = true,
     onBgmSelectClip: (String) -> Unit = {},
     onBgmUpdateStart: (String, Long) -> Unit = { _, _ -> },
     onBgmUpdateLane: (String, Int) -> Unit = { _, _ -> },
@@ -1663,7 +1675,8 @@ private fun UnifiedTimelineBar(
     } else 0.dp
     val bgmRowStrideDp = bgmRowHeight + bgmRowGap
     val bgmRowStridePx = with(density) { bgmRowStrideDp.toPx() }
-    val laneHandleHitHeight = if (showBgmRegion) 22.dp else 0.dp
+    // pill 미렌더 시 hit zone 도 0 으로 — 빈 22dp 공간이 timeline 하단에 dead 영역으로 남는 것 방지.
+    val laneHandleHitHeight = if (showBgmRegion && bgmDragEnabled) 22.dp else 0.dp
     val laneHandleVisualHeight = 6.dp
     val playheadVisualBottom = playbackRegionHeight + bgmRegionHeight
     val totalHeight = playheadVisualBottom + laneHandleHitHeight
@@ -2074,7 +2087,10 @@ private fun UnifiedTimelineBar(
                                     if (bgmTapEnabled) onBgmSelectClip(clip.id)
                                 })
                             }
-                            .pointerInput(clip.id, totalMs, laneWidthPx, bgmRowStridePx) {
+                            .pointerInput(clip.id, totalMs, laneWidthPx, bgmRowStridePx, bgmDragEnabled) {
+                                // segment edit 모드에선 drag 자체를 미장착 — pointerInput key 에 포함해
+                                // 모드 진입/이탈 시 detector 재등록.
+                                if (!bgmDragEnabled) return@pointerInput
                                 // detectDragGestures 로 단일 제스처에서 dx/dy 를 모두 받음.
                                 // dy → lane 변경, dx → startMs 변경. 각각 별도 accumulator.
                                 detectDragGestures(
@@ -2182,7 +2198,8 @@ private fun UnifiedTimelineBar(
         }
 
         // === BGM lane 수 조절 drag pill — 컴포넌트 최하단. dy / rowStride 단위 step ===
-        if (showBgmRegion) {
+        // bgmDragEnabled=false (segment edit 모드) 면 pill 자체 미렌더 → 시각 + 인터랙션 동시 잠금.
+        if (showBgmRegion && bgmDragEnabled) {
             val maxOccupiedLane = bgmClips.maxOfOrNull { it.lane } ?: -1
             val canShrink = bgmLaneCount > maxOf(1, maxOccupiedLane + 1)
             val currentLaneCount by rememberUpdatedState(bgmLaneCount)
@@ -2464,42 +2481,36 @@ private fun ExportOptionsSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
-            verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
         ) {
-            Text("내보내기", color = tokens.onBackgroundPrimary, style = typo.titleSm)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = VibiShape.lg,
+                onClick = onSave,
             ) {
-                OutlinedButton(
-                    modifier = Modifier.weight(1f).height(56.dp),
-                    shape = VibiShape.lg,
-                    onClick = onSave,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
-                            contentDescription = null,
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                        Spacer(Modifier.width(VibiSpacing.xs))
-                        Text("저장", style = typo.bodySm)
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Save,
+                        contentDescription = null,
+                        tint = tokens.onBackgroundPrimary,
+                    )
+                    Spacer(Modifier.width(VibiSpacing.xs))
+                    Text("저장", style = typo.bodySm)
                 }
-                OutlinedButton(
-                    modifier = Modifier.weight(1f).height(56.dp),
-                    shape = VibiShape.lg,
-                    onClick = onShare,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
-                            contentDescription = null,
-                            tint = tokens.onBackgroundPrimary,
-                        )
-                        Spacer(Modifier.width(VibiSpacing.xs))
-                        Text("공유", style = typo.bodySm)
-                    }
+            }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = VibiShape.lg,
+                onClick = onShare,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Share,
+                        contentDescription = null,
+                        tint = tokens.onBackgroundPrimary,
+                    )
+                    Spacer(Modifier.width(VibiSpacing.xs))
+                    Text("공유", style = typo.bodySm)
                 }
             }
             Spacer(Modifier.height(VibiSpacing.sm))

@@ -43,6 +43,8 @@ private class IosStemMixerHandle(
     private val groupOfPlayer = mutableMapOf<String, String>()
     /** stemId → 적용된 마지막 volume. 새 player 생성 시 적용. */
     private val pendingVolumes = mutableMapOf<String, Float>()
+    /** groupId → 마지막 seek 위치(ms). 새 player 가 download 후 올바른 offset 에서 시작. */
+    private val pendingSeekByGroup = mutableMapOf<String, Long>()
     /** 이미 prepareToPlay() 호출된 player key. inactive group 은 미준비 상태로 유지. */
     private val preparedKeys = mutableSetOf<String>()
     private var activeGroupId: String? = null
@@ -126,6 +128,10 @@ private class IosStemMixerHandle(
                 groupOfPlayer[k] = p.groupId
                 urlByKey[k] = p.audioUrl
                 tempPathByKey[k] = p.tempPath
+                // download 완료 전에 seekTo 가 호출됐다면 그 위치에서 시작.
+                pendingSeekByGroup[p.groupId]?.let { posMs ->
+                    player.currentTime = posMs.coerceAtLeast(0L) / 1000.0
+                }
             }
             applyActiveState()
         }
@@ -191,6 +197,7 @@ private class IosStemMixerHandle(
     override fun seekTo(positionMs: Long) {
         val seconds = positionMs.coerceAtLeast(0L) / 1000.0
         val active = activeGroupId ?: return
+        pendingSeekByGroup[active] = positionMs.coerceAtLeast(0L)
         players.forEach { (k, p) ->
             if (groupOfPlayer[k] == active) p.currentTime = seconds
         }
@@ -206,6 +213,7 @@ private class IosStemMixerHandle(
         groupOfPlayer.clear()
         urlByKey.clear()
         preparedKeys.clear()
+        pendingSeekByGroup.clear()
         // 모든 임시 파일 회수.
         tempPathByKey.values.forEach { deleteCachedAudio(it) }
         tempPathByKey.clear()

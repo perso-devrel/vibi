@@ -797,32 +797,38 @@ class TimelineViewModel constructor(
      * 단계에서 추가. 화면 재진입 시 lane 은 0 으로 리셋된다.
      */
     fun onUpdateBgmLane(clipId: String, newLane: Int) {
-        val maxLane = (_uiState.value.bgmLaneCount - 1).coerceAtLeast(0)
-        val lane = newLane.coerceIn(0, maxLane)
-        bgmClipLaneOverrides[clipId] = lane
-        val current = _uiState.value
-        val updated = current.bgmClips.map { c ->
-            if (c.id == clipId && c.lane != lane) c.copy(lane = lane) else c
+        // atomic CAS — observeBgmClips emit 와 동시 시점에 lane override 만 박는 race 차단.
+        // bgmClipLaneOverrides 는 in-memory override 라 update 람다 안에서 max lane 재계산.
+        _uiState.update { current ->
+            val maxLane = (current.bgmLaneCount - 1).coerceAtLeast(0)
+            val lane = newLane.coerceIn(0, maxLane)
+            bgmClipLaneOverrides[clipId] = lane
+            val updated = current.bgmClips.map { c ->
+                if (c.id == clipId && c.lane != lane) c.copy(lane = lane) else c
+            }
+            current.copy(bgmClips = updated)
         }
-        _uiState.value = current.copy(bgmClips = updated)
     }
 
     /** BGM 영역 lane 개수 직접 set. drag handle 이 부드럽게 여러 step 한 번에 적용. */
     fun onSetBgmLaneCount(count: Int) {
-        val current = _uiState.value
-        val nextCount = count.coerceIn(1, 8)
-        // 마지막 lane 들 안에 clip 이 있으면 그 lane 까지는 유지 (축소 보류).
-        val maxOccupiedLane = current.bgmClips.maxOfOrNull { it.lane } ?: -1
-        val safeCount = nextCount.coerceAtLeast(maxOccupiedLane + 1)
-        if (safeCount == current.bgmLaneCount) return
-        _uiState.value = current.copy(bgmLaneCount = safeCount)
+        _uiState.update { current ->
+            val nextCount = count.coerceIn(1, 8)
+            // 마지막 lane 들 안에 clip 이 있으면 그 lane 까지는 유지 (축소 보류).
+            val maxOccupiedLane = current.bgmClips.maxOfOrNull { it.lane } ?: -1
+            val safeCount = nextCount.coerceAtLeast(maxOccupiedLane + 1)
+            if (safeCount == current.bgmLaneCount) current
+            else current.copy(bgmLaneCount = safeCount)
+        }
     }
 
 
     private fun observeSeparationDirectives() {
         viewModelScope.launch {
             separationDirectiveRepository.observe(projectId).collect { directives ->
-                _uiState.value = _uiState.value.copy(separationDirectives = directives)
+                // atomic CAS — 다른 observer / mutation 핸들러와 race 시 stale state read-modify-write
+                // 방지 (loadSegments / observeBgmClips / observeProject / observeClips 와 동일 패턴).
+                _uiState.update { it.copy(separationDirectives = directives) }
             }
         }
     }
@@ -1135,7 +1141,9 @@ class TimelineViewModel constructor(
     private fun observeTextOverlays() {
         viewModelScope.launch {
             textOverlayRepository.observeOverlays(projectId).collect { overlays ->
-                _uiState.value = _uiState.value.copy(textOverlays = overlays)
+                // atomic CAS — 다른 observer / mutation 핸들러와 race 시 stale state read-modify-write
+                // 차단 (다른 observe* 들과 동일 패턴).
+                _uiState.update { it.copy(textOverlays = overlays) }
             }
         }
     }
@@ -1145,24 +1153,29 @@ class TimelineViewModel constructor(
             segmentRepository.observeByProjectId(projectId).collect { segments ->
                 val first = segments.firstOrNull()
                 val total = segments.sumOf { it.effectiveDurationMs }
-                val currentSelectedId = _uiState.value.selectedSegmentId
-                // Only keep an existing selection if it still references a real
-                // segment. No fallback to `first?.id` — the screen should open
-                // with nothing selected so the inline edit panel stays hidden
-                // until the user actually taps a segment.
-                val selectedId = currentSelectedId?.takeIf { id -> segments.any { it.id == id } }
-                val selected = segments.firstOrNull { it.id == selectedId }
-                val (globalTrimStart, globalTrimEnd) = selectedSegmentGlobalTrim(segments, selected)
-                _uiState.value = _uiState.value.copy(
-                    segments = segments,
-                    selectedSegmentId = selectedId,
-                    videoUri = first?.sourceUri.orEmpty(),
-                    videoDurationMs = total,
-                    videoWidth = first?.width ?: 0,
-                    videoHeight = first?.height ?: 0,
-                    trimStartMs = globalTrimStart,
-                    trimEndMs = globalTrimEnd
-                )
+                // _uiState.update {} (atomic CAS) — 같은 mutation 시 splitSegment 와 updateSegmentVolume
+                // 두 transaction commit 이 Room invalidation 으로 별개 emit 을 만든다. 사이에 사용자가
+                // 다른 segment 를 탭해 click 핸들러의 `_uiState.value = state.copy(...)` 가 stale
+                // segments 를 read-modify-write 로 다시 박아 넣으면, 의도한 NEW2 가 NEW1 (split only,
+                // volume 미반영) 로 영구 되돌려진 채 굳는 race (영상편집 + 볼륨 Apply 후 다른 곳 클릭하면
+                // 파형이 원복되던 버그). atomic CAS 로 다른 launch 의 비-atomic write 와 인터리브 시에도
+                // 같은 transaction 결과로 수렴하게.
+                _uiState.update { current ->
+                    val selectedId = current.selectedSegmentId
+                        ?.takeIf { id -> segments.any { it.id == id } }
+                    val selected = segments.firstOrNull { it.id == selectedId }
+                    val (globalTrimStart, globalTrimEnd) = selectedSegmentGlobalTrim(segments, selected)
+                    current.copy(
+                        segments = segments,
+                        selectedSegmentId = selectedId,
+                        videoUri = first?.sourceUri.orEmpty(),
+                        videoDurationMs = total,
+                        videoWidth = first?.width ?: 0,
+                        videoHeight = first?.height ?: 0,
+                        trimStartMs = globalTrimStart,
+                        trimEndMs = globalTrimEnd,
+                    )
+                }
             }
         }
     }
@@ -2270,20 +2283,23 @@ class TimelineViewModel constructor(
      * 시스템(편집 후 자동 reselect) 용 path 는 [selectSegmentInEditInternal] 직접 호출 — 토글 로직 우회.
      */
     fun onSelectSegmentInEdit(segmentId: String) {
-        val state = _uiState.value
-        if (!state.isSegmentEditMode) return
-        // 영상 strip 탭 → editTargets 를 Video 로 복귀 (BGM 모드였다면 자동 해제). selectSegmentInEditInternal
-        // 의 state.copy 와 합쳐서 한 번에 갱신되도록 selectSegmentInEditInternal 내부에서 처리.
-        if (state.selectedSegmentId == segmentId &&
-            state.pendingRangeEndMs > state.pendingRangeStartMs
+        val snapshot = _uiState.value
+        if (!snapshot.isSegmentEditMode) return
+        // 같은 segment 재탭이면서 range 가 선택돼 있으면 deselect 토글.
+        if (snapshot.selectedSegmentId == segmentId &&
+            snapshot.pendingRangeEndMs > snapshot.pendingRangeStartMs
         ) {
-            _uiState.value = state.copy(
-                selectedSegmentId = null,
-                rangeTargetSegmentId = null,
-                pendingRangeStartMs = 0L,
-                pendingRangeEndMs = 0L,
-                editTargets = setOf(EditTarget.Video),
-            )
+            // atomic CAS — Room observe Flow 가 intermediate state 를 emit 하는 윈도우에 click 핸들러의
+            // 비-atomic write 가 stale segments 를 박아 넣어 영상편집 결과가 원복되던 race 차단.
+            _uiState.update {
+                it.copy(
+                    selectedSegmentId = null,
+                    rangeTargetSegmentId = null,
+                    pendingRangeStartMs = 0L,
+                    pendingRangeEndMs = 0L,
+                    editTargets = setOf(EditTarget.Video),
+                )
+            }
             return
         }
         selectSegmentInEditInternal(segmentId)
@@ -2294,23 +2310,28 @@ class TimelineViewModel constructor(
      * 사용자 탭 동작과 분리해 race 가 deselect 로 빠지지 않게 한다.
      */
     private fun selectSegmentInEditInternal(segmentId: String) {
-        val state = _uiState.value
-        if (!state.isSegmentEditMode) return
-        val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
-        if (seg.type != SegmentType.VIDEO) return
-        val segStart = segmentStartOffsetMs(state.segments, seg.id)
-        val segEnd = segStart + seg.effectiveDurationMs
-        _uiState.value = state.copy(
-            rangeTargetSegmentId = seg.id,
-            selectedSegmentId = seg.id,
-            pendingRangeStartMs = segStart,
-            pendingRangeEndMs = segEnd,
-            pendingRangeVolume = seg.volumeScale,
-            pendingRangeSpeed = seg.speedScale,
-            playbackPositionMs = segStart,
-            // 영상 segment 탭 → editTargets 를 Video 로 (BGM 모드였다면 자동 해제).
-            editTargets = setOf(EditTarget.Video),
-        )
+        // atomic CAS — Room observe Flow intermediate emit 와 인터리브 되어도 항상 최신 segments 로
+        // segStart/segEnd 를 계산해 stale snapshot 으로 _uiState 를 덮어쓰지 않게. 영상편집 + Apply
+        // 직후 selectSegmentInEdit 가 stale `_uiState.value.segments` 를 read-modify-write 하면서
+        // refresh 결과를 박살내던 race 차단.
+        _uiState.update { state ->
+            if (!state.isSegmentEditMode) return@update state
+            val seg = state.segments.firstOrNull { it.id == segmentId } ?: return@update state
+            if (seg.type != SegmentType.VIDEO) return@update state
+            val segStart = segmentStartOffsetMs(state.segments, seg.id)
+            val segEnd = segStart + seg.effectiveDurationMs
+            state.copy(
+                rangeTargetSegmentId = seg.id,
+                selectedSegmentId = seg.id,
+                pendingRangeStartMs = segStart,
+                pendingRangeEndMs = segEnd,
+                pendingRangeVolume = seg.volumeScale,
+                pendingRangeSpeed = seg.speedScale,
+                playbackPositionMs = segStart,
+                // 영상 segment 탭 → editTargets 를 Video 로 (BGM 모드였다면 자동 해제).
+                editTargets = setOf(EditTarget.Video),
+            )
+        }
     }
 
     /**
@@ -2318,14 +2339,16 @@ class TimelineViewModel constructor(
      * 사용자가 다른 segment/free interval 을 탭하면 다시 selection 생성.
      */
     fun onClearRangeSelection() {
-        val state = _uiState.value
-        if (!state.isRangeSelecting) return
-        _uiState.value = state.copy(
-            selectedSegmentId = null,
-            rangeTargetSegmentId = null,
-            pendingRangeStartMs = 0L,
-            pendingRangeEndMs = 0L,
-        )
+        // atomic CAS — loadSegments emit 와 인터리브 시 stale segments 박힘 race 차단.
+        _uiState.update { state ->
+            if (!state.isRangeSelecting) return@update state
+            state.copy(
+                selectedSegmentId = null,
+                rangeTargetSegmentId = null,
+                pendingRangeStartMs = 0L,
+                pendingRangeEndMs = 0L,
+            )
+        }
     }
 
     fun onCancelSegmentEditMode() {
