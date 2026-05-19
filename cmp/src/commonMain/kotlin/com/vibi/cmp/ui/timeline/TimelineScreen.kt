@@ -55,6 +55,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
@@ -882,7 +883,7 @@ fun TimelineScreen(
             // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
             if (showAudioSourcesContent) {
                 val sepLabel = when (state.separationStatus) {
-                    AutoJobStatus.FAILED -> "❌ 다시 시도"
+                    AutoJobStatus.FAILED -> "다시 시도"
                     else -> "음원 분리"
                 }
                 // 녹음/파일선택/미리듣기 는 AudioInsertSheet 가 흡수 — 본 scope 에선 메뉴만 띄움.
@@ -904,61 +905,62 @@ fun TimelineScreen(
                         onCancel = { viewModel.onFinishSegmentEdit() },
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-                ) {
-                    OutlinedButton(
-                        // RUNNING 시에도 enable — 사용자가 진행 중 잡 외에 다른 구간 분리를 동시에 시작할 수 있어야 함.
-                        enabled = firstSegId != null && !state.isSegmentEditMode,
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        shape = VibiShape.lg,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
-                        onClick = {
-                            val segId = firstSegId ?: return@OutlinedButton
-                            when (state.separationStatus) {
-                                AutoJobStatus.FAILED -> {
-                                    viewModel.onClearSeparation()
-                                    viewModel.onEnterRangeMode(segId)
-                                }
-                                else -> viewModel.onEnterRangeMode(segId)
+                // 음원 분리 — IconLabelCard 패턴 (영상 다듬기 카드와 동일). 설명 텍스트는 의도적으로 생략.
+                com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
+                    label = sepLabel,
+                    description = null,
+                    enabled = firstSegId != null && !state.isSegmentEditMode,
+                    onClick = {
+                        val segId = firstSegId ?: return@IconLabelCard
+                        when (state.separationStatus) {
+                            AutoJobStatus.FAILED -> {
+                                viewModel.onClearSeparation()
+                                viewModel.onEnterRangeMode(segId)
                             }
+                            else -> viewModel.onEnterRangeMode(segId)
                         }
-                    ) { Text(sepLabel, style = typo.bodySm) }
-                    // Box wrap — DropdownMenu (audioMenuOpen) 가 buttom 부모 박스를 anchor 로
-                    // 위치 계산. 음원분리 버튼처럼 OutlinedButton 에 weight 만 걸면 메뉴 위치가 어긋남.
-                    Box(modifier = Modifier.weight(1f)) {
-                        OutlinedButton(
-                            enabled = !state.isAddingBgm && !state.isSegmentEditMode,
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
-                            shape = VibiShape.lg,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.base, vertical = 0.dp),
-                            onClick = { audioMenuOpen = true },
-                        ) {
-                            Text(
-                                text = if (state.isAddingBgm) "⏳ 추가 중" else "음원 삽입",
-                                style = typo.bodySm,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = audioMenuOpen,
-                            onDismissRequest = { audioMenuOpen = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("파일 업로드") },
-                                onClick = {
-                                    audioMenuOpen = false
-                                    audioInsertMode = AudioInsertMode.Picker
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("즉시 녹음") },
-                                onClick = {
-                                    audioMenuOpen = false
-                                    audioInsertMode = AudioInsertMode.Recording
-                                },
-                            )
-                        }
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.GraphicEq,
+                        contentDescription = null,
+                        tint = tokens.onBackgroundPrimary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                // 음원 삽입 — IconLabelCard + DropdownMenu (Box anchor). 설명 텍스트는 의도적으로 생략.
+                Box {
+                    com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
+                        label = if (state.isAddingBgm) "추가 중..." else "음원 삽입",
+                        description = null,
+                        enabled = !state.isAddingBgm && !state.isSegmentEditMode,
+                        onClick = { audioMenuOpen = true },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = tokens.onBackgroundPrimary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = audioMenuOpen,
+                        onDismissRequest = { audioMenuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("파일 업로드") },
+                            onClick = {
+                                audioMenuOpen = false
+                                audioInsertMode = AudioInsertMode.Picker
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("즉시 녹음") },
+                            onClick = {
+                                audioMenuOpen = false
+                                audioInsertMode = AudioInsertMode.Recording
+                            },
+                        )
                     }
                 }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
