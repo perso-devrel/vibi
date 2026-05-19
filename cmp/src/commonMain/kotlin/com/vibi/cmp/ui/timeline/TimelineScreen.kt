@@ -1212,19 +1212,6 @@ fun TimelineScreen(
         }
     }
 
-    // 하단 A/B 미리듣기 바 가시성 — FAB 위치 계산이 이 플래그에 의존하므로 FAB 보다 먼저 계산.
-    // directive 유무와 무관하게 항상 노출 — 사용자가 분리 전에도 토글 affordance 를 인지하도록.
-    val abBarVisible = unifiedScroll &&
-        !state.isSegmentEditMode &&
-        !state.localizationOpen &&
-        !state.showDetailEdit &&
-        !state.showAudioSeparationSheet &&
-        !state.showSubtitleSheet &&
-        !state.showScriptReviewSheet &&
-        !state.showAppendSheet &&
-        !state.showFrameSheet &&
-        !state.showTextOverlaySheet
-
     // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
     // 자막/더빙 단계에서는 노출 안 함. unified 모드(stepper 숨김) 에선 단계 구분 없음 — localizationOpen
     // 같은 다른 가시성 가드가 이미 자막/더빙 패널 열린 시간 동안 FAB 를 가린다.
@@ -1241,9 +1228,7 @@ fun TimelineScreen(
         !state.showTextOverlaySheet &&
         !chatSheetVisible
     if (chatFabVisible) {
-        // AB 바 노출 시 FAB 가 가리지 않도록 위로 들어올림. AB 바 높이 = chip(xxl 40dp) + 내부 padding(xxs*2 8dp) + 외부 padding(xxs*2 8dp) ≈ 56dp.
-        // AB 바 위 여유 간격은 xs(8dp) — 이전 md(20dp) 보다 12dp 줄여 FAB 가 화면 하단에 더 가깝게.
-        val fabBottomPadding = if (abBarVisible) VibiSpacing.xs + VibiSpacing.xxl + VibiSpacing.base else VibiSpacing.md
+        val fabBottomPadding = VibiSpacing.md
         BadgedBox(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -1272,22 +1257,9 @@ fun TimelineScreen(
         }
     }
 
-    // 하단 고정 A/B 미리듣기 바 — directive 가 1 개 이상이고 다른 패널 안 떠 있을 때만 노출.
-    // ChatFab 위가 아닌 화면 하단(navigationBarsPadding 영역 위) 고정. abBarVisible 은 FAB 위치
-    // 계산을 위해 위에서 미리 선언.
-    if (abBarVisible) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .navigationBarsPadding(),
-        ) {
-            com.vibi.cmp.ui.timeline.sounddeck.ABPreviewBar(
-                mode = state.previewMode,
-                onToggle = { viewModel.onTogglePreviewMode() },
-            )
-        }
-    }
+    // A/B (원본/내믹스) 미리듣기 바는 UI 에서 일단 제거 — 추후 재추가 예정. VM 의 [state.previewMode] +
+    // [TimelineViewModel.onTogglePreviewMode] + [sounddeck/ABPreviewBar.kt] composable 은 그대로 두어
+    // 다시 띄울 때 한 줄 Box 호출만 복구하면 됨.
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — 하단 ~48% peek. 위쪽 타임라인은 그대로 노출.
     // 삽입 확정 시 onPickBgmAudio 호출 — 영상보다 길면 BgmTrimSheet 가 자동 chain.
