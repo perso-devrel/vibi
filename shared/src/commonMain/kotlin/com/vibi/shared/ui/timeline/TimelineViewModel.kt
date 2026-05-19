@@ -2352,14 +2352,27 @@ class TimelineViewModel constructor(
      */
     fun onClearRangeSelection() {
         // atomic CAS — loadSegments emit 와 인터리브 시 stale segments 박힘 race 차단.
+        // segment edit 모드 중이면 range 해제 = 편집 의미 상실 → 모드 자체 종료해 하단바도 함께 닫힘.
+        // 음원분리 range mode (isSegmentEditMode=false) 는 사용자가 새 구간 다시 잡을 수 있도록 모드 유지.
         _uiState.update { state ->
             if (!state.isRangeSelecting) return@update state
-            state.copy(
-                selectedSegmentId = null,
-                rangeTargetSegmentId = null,
-                pendingRangeStartMs = 0L,
-                pendingRangeEndMs = 0L,
-            )
+            if (state.isSegmentEditMode) {
+                state.copy(
+                    selectedSegmentId = null,
+                    rangeTargetSegmentId = null,
+                    pendingRangeStartMs = 0L,
+                    pendingRangeEndMs = 0L,
+                    isSegmentEditMode = false,
+                    isRangeSelecting = false,
+                )
+            } else {
+                state.copy(
+                    selectedSegmentId = null,
+                    rangeTargetSegmentId = null,
+                    pendingRangeStartMs = 0L,
+                    pendingRangeEndMs = 0L,
+                )
+            }
         }
     }
 

@@ -2865,7 +2865,12 @@ private sealed interface BottomActionTarget {
 }
 
 private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): BottomActionTarget {
-    if (isSegmentEditMode) return BottomActionTarget.Video
+    if (isSegmentEditMode) {
+        // range 가 비면 편집 의미 없음 — 바 숨김. (VM 의 onClearRangeSelection 이 모드 자체도 종료하지만
+        // 다른 경로로 빈 상태가 들어와도 동일 동작 보장.)
+        return if (pendingRangeEndMs > pendingRangeStartMs) BottomActionTarget.Video
+        else BottomActionTarget.None
+    }
     if (isLocalizationBusy()) return BottomActionTarget.None
     val id = selectedBgmClipId ?: return BottomActionTarget.None
     val clip = bgmClips.firstOrNull { it.id == id } ?: return BottomActionTarget.None
@@ -2905,7 +2910,7 @@ private fun BoxScope.TimelineActionBottomBar(
             when (target) {
                 is BottomActionTarget.None -> Unit
                 is BottomActionTarget.Video -> com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
-                    title = "구간 편집",
+                    title = "",
                     volume = state.pendingRangeVolume,
                     speed = state.pendingRangeSpeed,
                     onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
@@ -2915,12 +2920,12 @@ private fun BoxScope.TimelineActionBottomBar(
                     secondaryActionLabel = "복제",
                     onSecondaryAction = { viewModel.onDuplicateRange() },
                     onDelete = { viewModel.onDeleteRange() },
-                    onCancel = { viewModel.onFinishSegmentEdit() },
+                    onCancel = null,
                 )
                 is BottomActionTarget.Bgm -> {
                     val clip = target.clip
                     com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
-                        title = "BGM 편집",
+                        title = "",
                         volume = clip.volumeScale,
                         speed = clip.speedScale,
                         onVolumeChange = { viewModel.onUpdateBgmVolume(clip.id, it) },
@@ -2930,7 +2935,7 @@ private fun BoxScope.TimelineActionBottomBar(
                         secondaryActionLabel = "배경음 제거",
                         onSecondaryAction = { viewModel.onStartBgmSeparation(clip.id) },
                         onDelete = { viewModel.onDeleteBgmClip(clip.id) },
-                        onCancel = { viewModel.onSelectBgmClip(null) },
+                        onCancel = null,
                     )
                 }
             }
