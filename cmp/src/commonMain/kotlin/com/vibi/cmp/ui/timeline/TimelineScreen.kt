@@ -2205,39 +2205,6 @@ private fun UnifiedTimelineBar(
                 )
             }
 
-            // Layer 3 — 재생 헤드 drag hit zone — top playback region 안쪽에만. 시각 line 은 BGM 까지 관통.
-            // 클램프 제거: hit zone 은 frac 위치 정확히 중심에 두고 좌우 끝에서 hit zone 일부가 바 밖으로
-            // overflow 해도 OK (시각 marker line 은 항상 frac 위치 = 영상 길이와 정확히 일치).
-            if (totalMs > 0L) {
-                val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
-                val hitWidth = TimelineBarSpec.PlaybackHitWidth
-                val visualX = totalWidthDp * frac - hitWidth / 2
-                val currentPosMs by rememberUpdatedState(playbackPositionMs)
-                var basePosMs by remember { mutableStateOf(0L) }
-                var accumPx by remember { mutableStateOf(0f) }
-                Box(
-                    modifier = Modifier
-                        .offset(x = visualX)
-                        .width(hitWidth)
-                        .fillMaxHeight()
-                        .pointerInput(totalWidthPx, totalMs) {
-                            detectHorizontalDragGestures(
-                                onDragStart = {
-                                    basePosMs = currentPosMs
-                                    accumPx = 0f
-                                },
-                                onHorizontalDrag = { _, dragAmount ->
-                                    accumPx += dragAmount
-                                    if (totalWidthPx > 0f && totalMs > 0L) {
-                                        val deltaMs = (accumPx / totalWidthPx) * totalMs
-                                        val newMs = (basePosMs + deltaMs).toLong().coerceIn(0L, totalMs)
-                                        onScrub(newMs)
-                                    }
-                                }
-                            )
-                        }
-                )
-            }
         }
 
         // === BGM region — top playback region 바로 아래. 같은 x 좌표계로 lane 막대 렌더 ===
@@ -2584,6 +2551,41 @@ private fun UnifiedTimelineBar(
                     .width(TimelineBarSpec.GripWidth)
                     .height(markerHeight)
                     .background(markerColor)
+            )
+        }
+
+        // 재생 헤드 drag hit zone — playback + BGM region 전체 높이를 커버. BGM 위에서도 scrub 가능.
+        // 이전엔 playback Box 안에만 있어 BGM 레인 위에선 잡히지 않았다 (사용자 보고).
+        // 마지막 child 로 두어 z-order 최상단, 그래야 BGM clip drag 와 겹쳐도 column 안에선 scrub 가 우선.
+        if (totalMs > 0L) {
+            val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+            val hitWidth = TimelineBarSpec.PlaybackHitWidth
+            val visualX = totalWidthDp * frac - hitWidth / 2
+            val currentPosMs by rememberUpdatedState(playbackPositionMs)
+            var basePosMs by remember { mutableStateOf(0L) }
+            var accumPx by remember { mutableStateOf(0f) }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = visualX)
+                    .width(hitWidth)
+                    .height(totalHeight)
+                    .pointerInput(totalWidthPx, totalMs) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                basePosMs = currentPosMs
+                                accumPx = 0f
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                accumPx += dragAmount
+                                if (totalWidthPx > 0f && totalMs > 0L) {
+                                    val deltaMs = (accumPx / totalWidthPx) * totalMs
+                                    val newMs = (basePosMs + deltaMs).toLong().coerceIn(0L, totalMs)
+                                    onScrub(newMs)
+                                }
+                            }
+                        )
+                    }
             )
         }
 
