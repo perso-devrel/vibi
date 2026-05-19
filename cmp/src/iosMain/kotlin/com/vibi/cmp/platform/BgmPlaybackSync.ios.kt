@@ -25,21 +25,32 @@ actual fun BgmPlaybackSync(
 ) {
     // clip.id → AVAudioPlayer. clip 추가/제거 시 새로 만들거나 정리.
     val players = remember { mutableMapOf<String, AVAudioPlayer>() }
-    // AVAudioSession 은 process-wide singleton — 매 sync 에 setCategory/setActive 호출은
-    // 무의미한 system call. 첫 진입 시 1회만 (BooleanArray 로 mutable 캡처).
-    val sessionConfigured = remember { booleanArrayOf(false) }
 
     DisposableEffect(Unit) {
+        // 첫 진입 시 1회 category 활성화. AudioRecorder 가 사이 .playAndRecord 로 바꿔놓을 수 있어
+        // clips 변경마다 (= 녹음/파일 삽입 직후) 아래 effect 에서 또 재적용.
+        runCatching {
+            val session = AVAudioSession.sharedInstance()
+            session.setCategory(AVAudioSessionCategoryPlayback, null)
+            session.setActive(true, null)
+        }
         onDispose {
             players.values.forEach { it.stop() }
             players.clear()
         }
     }
 
-    // clips 변경 → 매핑 sync. 새 clip 은 만들고, 사라진 clip 은 stop+release.
+    // clips 변경 → 매핑 sync + session category 재적용. AudioRecorder 직후 category 가
+    // .playAndRecord 상태로 남아 있으면 playback 이 earpiece (상단 작은 스피커) 로 라우팅돼
+    // 녹음본이 작게 들리는 사고. 클립 추가 시점에 .playback 으로 복귀.
     // 키는 (id, sourceUri) Set — clips 리스트 인스턴스 자체가 새로 만들어져도 내용 동일이면 재시작 X.
     val clipsKey = remember(clips) { clips.map { it.id to it.sourceUri }.toSet() }
     LaunchedEffect(clipsKey) {
+        runCatching {
+            val session = AVAudioSession.sharedInstance()
+            session.setCategory(AVAudioSessionCategoryPlayback, null)
+            session.setActive(true, null)
+        }
         val active = clips.associateBy { it.id }
         // 사라진 clip 정리.
         players.keys.filter { it !in active }.forEach { id ->
@@ -65,14 +76,6 @@ actual fun BgmPlaybackSync(
     // 재생 중 + 매 currentMs 갱신 시 sync. clip 의 글로벌 [start, start+globalDur) 범위 안이면
     // 재생 + 위치 정렬 (drift > 0.3s 시), 범위 밖이면 정지+0 으로 seek.
     LaunchedEffect(isPlaying, currentMs, clips) {
-        if (!sessionConfigured[0]) {
-            runCatching {
-                val session = AVAudioSession.sharedInstance()
-                session.setCategory(AVAudioSessionCategoryPlayback, null)
-                session.setActive(true, null)
-            }
-            sessionConfigured[0] = true
-        }
         clips.forEach { clip ->
             val player = players[clip.id] ?: return@forEach
             val speed = clip.speedScale.coerceIn(0.5f, 2.0f)
