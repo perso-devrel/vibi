@@ -1895,10 +1895,9 @@ private fun UnifiedTimelineBar(
 
     // BGM region metric — clips 가 있을 때만 렌더. 없으면 전체 높이 = playbackRegionHeight (기존과 동일).
     val showBgmRegion = showBgm && bgmClips.isNotEmpty() && totalMs > 0L
-    // CapCut 의 오디오 트랙처럼 블록 안에 파형/라벨/트림 핸들이 들어갈 공간 확보. 기존 10dp 는 단색 막대만
-    // 들어가는 사이즈라 사용자가 "뭐가 어디 들어가 있는지" 가 안 보였다. 48dp 는 9sp 라벨 + 24dp 파형이
-    // 위/아래로 겹치지 않게 분리될 최소 높이.
-    val bgmRowHeight = 48.dp
+    // BGM 클립 블록 높이 — 상단 영상 파형 strip (WaveformHeight) 과 일치시켜 두 트랙이 두께로
+    // 위계 차이 없이 보이도록 통일. 라벨(11sp) + 미니 파형은 40dp 안에서 alpha 분리로 충분히 가독.
+    val bgmRowHeight = TimelineBarSpec.WaveformHeight
     val bgmRowGap = 4.dp
     val bgmRowCount = bgmDisplayLaneCount.coerceAtLeast(1)
     val bgmRegionHeight = if (showBgmRegion) {
