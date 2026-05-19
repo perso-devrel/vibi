@@ -464,13 +464,18 @@ fun TimelineScreen(
     com.vibi.cmp.platform.LockLandscape(enabled = fullscreenOpen)
 
     Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
+    // 하단바 노출 중일 때 Column 마지막 콘텐츠가 가려지지 않도록 bottom padding 예약.
+    val bottomBarVisible = state.isSegmentEditMode ||
+        (state.selectedBgmClipId != null && !state.isLocalizationBusy())
+    val bottomReserve = if (bottomBarVisible) 160.dp else 0.dp
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(VibiSpacing.base),
+            .padding(VibiSpacing.base)
+            .padding(bottom = bottomReserve),
         verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
     ) {
         // 헤더: 뒤로 + 단계 타이틀 + 공유/저장. 백그라운드 잡 진행 중이면 저장 disabled.
@@ -831,6 +836,12 @@ fun TimelineScreen(
                     ?.durationMs ?: state.videoDurationMs,
                 processingSeparations = processingOverlays,
                 onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
+                onWaveformTapInNeutral = {
+                    val segId = state.segments.firstOrNull {
+                        it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+                    }?.id
+                    if (segId != null) viewModel.onEnterSegmentEditMode(segId)
+                },
                 // directive 탭 시 AudioSeparationSheet 띄우지 않음 — 편집은 SoundDeck 의 stem 카드에서 처리.
                 onDirectiveTap = {},
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
@@ -935,23 +946,7 @@ fun TimelineScreen(
                 }
                 // 녹음/파일선택/미리듣기 는 AudioInsertSheet 가 흡수 — 본 scope 에선 메뉴만 띄움.
                 var audioMenuOpen by remember { mutableStateOf(false) }
-                // 편집 토글 — segment edit 모드 내내 표시. range 미선택 상태 (start==end) 면 apply 류는
-                // VM 가드에서 no-op 처리되고 onCancel 만 활성. 사용자가 토글 사라짐 → 다시 진입 반복하지 않도록.
-                if (state.isSegmentEditMode) {
-                    com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
-                        title = "구간 편집",
-                        volume = state.pendingRangeVolume,
-                        speed = state.pendingRangeSpeed,
-                        onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
-                        onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
-                        onApplyVolume = { viewModel.onApplyRangeVolume(it) },
-                        onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
-                        secondaryActionLabel = "복제",
-                        onSecondaryAction = { viewModel.onDuplicateRange() },
-                        onDelete = { viewModel.onDeleteRange() },
-                        onCancel = { viewModel.onFinishSegmentEdit() },
-                    )
-                }
+                // 영상 다듬기 / BGM 선택 편집 액션은 화면 하단의 통합 하단바로 이동 — 본 scope inline 폐기.
                 // 음원 분리 — IconLabelCard 패턴 (영상 다듬기 카드와 동일). 설명 텍스트는 의도적으로 생략.
                 com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
                     label = sepLabel,
@@ -1449,6 +1444,14 @@ fun TimelineScreen(
         }
     }
 
+    // 통합 하단바 — 영상 다듬기 모드면 영상 range 액션, BGM 선택 상태면 BGM 액션. 그 외엔 미렌더.
+    // AudioInsertSheet 가 열리면 sheet 가 본 bar 위로 겹쳐 자동 가림 (sheet 선언이 뒤라 z-order 최상단).
+    TimelineActionBottomBar(
+        state = state,
+        viewModel = viewModel,
+        modifier = Modifier.align(Alignment.BottomCenter),
+    )
+
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — 하단 ~48% peek. 위쪽 타임라인은 그대로 노출.
     // 삽입 확정 시 onPickBgmAudio 호출 — 영상보다 길면 BgmTrimSheet 가 자동 chain.
     AudioInsertSheet(
@@ -1846,6 +1849,8 @@ private fun UnifiedTimelineBar(
     /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
     processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
     onSegmentTap: (String) -> Unit = {},
+    /** Neutral (range/segment edit 모드 아님) 상태에서 영상 파형 탭 — BGM 클립 탭과 같은 의미로 영상 다듬기 진입. */
+    onWaveformTapInNeutral: () -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
     onRangeStartChange: (Long) -> Unit = {},
@@ -1966,6 +1971,11 @@ private fun UnifiedTimelineBar(
                 }
                 onFreeIntervalTap(freeStart, freeEnd)
             })
+        }
+    } else if (totalMs > 0L) {
+        // Neutral 상태 — 영상 파형 탭 시 영상 다듬기 진입 (BGM 클립 탭과 같은 진입 의미).
+        Modifier.pointerInput(totalMs) {
+            detectTapGestures(onTap = { onWaveformTapInNeutral() })
         }
     } else Modifier
 
@@ -2845,6 +2855,77 @@ private data class DirectiveScaleOverlay(
     val includeOriginal: Boolean = true,
     val sourceOffsetMs: Long = 0L,
 )
+/**
+ * 통합 하단 액션바 — 영상 다듬기 모드면 영상 range 편집 액션, BGM 선택 상태면 BGM 편집 액션을
+ * 같은 [EditActionsPanel] 슬롯으로 렌더. 둘 다 아니면 미렌더 (0 height). 사용자가 timeline 위에서
+ * 영상/BGM 을 탭해 진입 → 하단바로 thumb 도달 거리에서 조작.
+ */
+@Composable
+private fun BoxScope.TimelineActionBottomBar(
+    state: com.vibi.shared.ui.timeline.TimelineUiState,
+    viewModel: com.vibi.shared.ui.timeline.TimelineViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = LocalVibiColors.current
+    // 우선순위: 영상 다듬기 > BGM 선택. (segment edit 중 BGM 선택은 range-edit path 라 segment 가 win.)
+    val showVideoEdit = state.isSegmentEditMode
+    val selectedBgm = if (!showVideoEdit) {
+        state.bgmClips.firstOrNull { it.id == state.selectedBgmClipId }
+            ?.takeIf { !state.isLocalizationBusy() }
+    } else null
+    val visible = showVideoEdit || selectedBgm != null
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = androidx.compose.animation.slideInVertically(
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
+        ) { it },
+        exit = androidx.compose.animation.slideOutVertically(
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = 160),
+        ) { it },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(tokens.backgroundPrimary)
+                .navigationBarsPadding()
+                .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
+        ) {
+            when {
+                showVideoEdit -> com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
+                    title = "구간 편집",
+                    volume = state.pendingRangeVolume,
+                    speed = state.pendingRangeSpeed,
+                    onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                    onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                    onApplyVolume = { viewModel.onApplyRangeVolume(it) },
+                    onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
+                    secondaryActionLabel = "복제",
+                    onSecondaryAction = { viewModel.onDuplicateRange() },
+                    onDelete = { viewModel.onDeleteRange() },
+                    onCancel = { viewModel.onFinishSegmentEdit() },
+                )
+                selectedBgm != null -> {
+                    val clipId = selectedBgm.id
+                    com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
+                        title = "BGM 편집",
+                        volume = selectedBgm.volumeScale,
+                        speed = selectedBgm.speedScale,
+                        onVolumeChange = { viewModel.onUpdateBgmVolume(clipId, it) },
+                        onSpeedChange = { /* commit only — preview 없음 */ },
+                        onApplyVolume = { viewModel.onUpdateBgmVolume(clipId, it) },
+                        onApplySpeed = { viewModel.onApplyBgmClipSpeed(clipId, it) },
+                        secondaryActionLabel = "배경음 제거",
+                        onSecondaryAction = { viewModel.onStartBgmSeparation(clipId) },
+                        onDelete = { viewModel.onDeleteBgmClip(clipId) },
+                        onCancel = { viewModel.onSelectBgmClip(null) },
+                    )
+                }
+            }
+        }
+    }
+}
+
 /**
  * CapCut 식 시간 눈금자 — 줌 레벨에 따라 nice-interval (0.5/1/2/5/10/30/60/...) 로 major tick + 라벨,
  * 그 사이를 5분할한 minor tick. 가로 스크롤 콘텐츠의 폭 ([contentWidthDp]) 안에서 좌표 계산.

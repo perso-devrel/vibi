@@ -78,10 +78,13 @@ fun SoundCard(
         else -> 1f
     }
 
+    // BGM 은 timeline 클립 탭 → 하단바로 편집 — 카드 long-press expand 폐기.
+    // stem 카드는 inline 볼륨 슬라이더가 long-press 로 펼쳐지는 패턴 유지.
+    val canLongPressExpand = model.kind != SoundCardKind.BGM
     val gestureModifier = modifier.combinedClickable(
         enabled = !disabled,
         onClick = onToggle,
-        onLongClick = { expanded = !expanded },
+        onLongClick = if (canLongPressExpand) ({ expanded = !expanded }) else null,
     )
 
     VibiPanelCard(modifier = gestureModifier) {
