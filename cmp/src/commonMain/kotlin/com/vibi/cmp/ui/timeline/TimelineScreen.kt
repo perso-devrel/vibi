@@ -12,6 +12,8 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -96,6 +98,7 @@ import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -1741,6 +1744,37 @@ private object TimelineBarSpec {
     const val MinRangeGapMs = 100L
     /** BGM lane 수 상한 — drag pill 로 늘릴 수 있는 lane 개수 max. */
     const val MaxBgmLaneCount = 8
+    val ChevronThumbWidth = 10.dp
+    val ChevronIconSize = 14.dp
+    const val MinZoom = 1f
+    const val MaxZoom = 10f
+}
+
+/** 좌/우 트림 (음원분리 range + BGM 클립) 공용 chevron thumb. */
+@Composable
+private fun ChevronThumb(
+    side: BgmTrimSide,
+    height: androidx.compose.ui.unit.Dp,
+    handleColor: Color,
+    gripColor: Color,
+) {
+    Box(
+        modifier = Modifier
+            .width(TimelineBarSpec.ChevronThumbWidth)
+            .height(height)
+            .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
+            .background(handleColor),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Icon(
+            imageVector = if (side == BgmTrimSide.Start)
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft
+            else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = if (side == BgmTrimSide.Start) "왼쪽 트림" else "오른쪽 트림",
+            tint = gripColor,
+            modifier = Modifier.size(TimelineBarSpec.ChevronIconSize),
+        )
+    }
 }
 
 /**
@@ -1910,12 +1944,9 @@ private fun UnifiedTimelineBar(
         }
     } else Modifier
 
-    // CapCut 식 두손가락 zoom — content 폭을 viewport*zoom 으로 늘리고 horizontalScroll 로 pan.
-    // 내부 ms↔px 수식은 그대로 — totalWidthDp/Px 가 contentWidth 를 가리키므로 자연 스케일.
+    // content 폭을 viewport*zoom 으로 늘리고 horizontalScroll 로 pan — 내부 ms↔px 수식은 그대로 동작.
     val scrollState = rememberScrollState()
-    var zoom by remember(totalMs) { mutableStateOf(1f) }
-    val minZoom = 1f
-    val maxZoom = 10f
+    var zoom by remember(totalMs) { mutableFloatStateOf(1f) }
 
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
@@ -1934,41 +1965,41 @@ private fun UnifiedTimelineBar(
                 .height(totalHeight)
                 .horizontalScroll(scrollState)
                 .pointerInput(totalMs) {
-                    // 2-finger 만 pinch + pan. 1-finger 는 무시(inner handlers 가 처리).
+                    // 2-finger 만 처리 — 1-finger 는 consume 하지 않아 inner range/playhead/BGM drag
+                    // 핸들러가 그대로 받음. detectTransformGestures 는 1-finger pan 도 잡아 충돌.
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         var prevCentroid: Offset? = null
                         var prevSpan = 0f
                         while (true) {
                             val event = awaitPointerEvent()
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.size < 2) {
+                            val activeCount = event.changes.count { it.pressed }
+                            if (activeCount < 2) {
                                 prevCentroid = null
                                 prevSpan = 0f
-                                if (pressed.isEmpty()) break
+                                if (activeCount == 0) break
                                 continue
                             }
-                            val centroid = pressed.fold(Offset.Zero) { a, c -> a + c.position } /
-                                pressed.size.toFloat()
-                            val span = pressed.fold(0f) { a, c ->
-                                a + (c.position - centroid).getDistance()
-                            } / pressed.size
+                            val centroid = event.calculateCentroid(useCurrent = true)
+                            val span = event.calculateCentroidSize(useCurrent = true)
                             val pc = prevCentroid
                             val ps = prevSpan
                             if (pc != null && ps > 0f && span > 0f) {
-                                val zoomFactor = span / ps
-                                val newZoom = (zoom * zoomFactor).coerceIn(minZoom, maxZoom)
+                                val newZoom = (zoom * span / ps)
+                                    .coerceIn(TimelineBarSpec.MinZoom, TimelineBarSpec.MaxZoom)
                                 val actualFactor = newZoom / zoom
                                 val panDx = centroid.x - pc.x
-                                // focal point = centroid. 줌 후에도 centroid 위치 유지 + pan 적용.
                                 val oldScroll = scrollState.value.toFloat()
                                 val maxScroll = (viewportWidthPx * newZoom - viewportWidthPx)
                                     .coerceAtLeast(0f)
                                 val targetScroll = (actualFactor * (oldScroll + centroid.x) -
                                     centroid.x - panDx).coerceIn(0f, maxScroll)
+                                val delta = targetScroll - oldScroll
                                 zoom = newZoom
-                                scrollState.dispatchRawDelta(targetScroll - oldScroll)
-                                pressed.forEach { it.consume() }
+                                if (kotlin.math.abs(delta) > 0.5f) {
+                                    scrollState.dispatchRawDelta(delta)
+                                }
+                                event.changes.forEach { it.consume() }
                             }
                             prevCentroid = centroid
                             prevSpan = span
@@ -2148,7 +2179,7 @@ private fun UnifiedTimelineBar(
                     handleColor = accent,
                     gripColor = markerColor,
                     gripHeight = rangeFillHeight,
-                    chevron = RangeHandleChevron.Start,
+                    chevron = BgmTrimSide.Start,
                     totalWidthPx = totalWidthPx,
                     totalMs = totalMs,
                     baseMsProvider = { currentRangeStart },
@@ -2164,7 +2195,7 @@ private fun UnifiedTimelineBar(
                     handleColor = accent,
                     gripColor = markerColor,
                     gripHeight = rangeFillHeight,
-                    chevron = RangeHandleChevron.End,
+                    chevron = BgmTrimSide.End,
                     totalWidthPx = totalWidthPx,
                     totalMs = totalMs,
                     baseMsProvider = { currentRangeEnd },
@@ -2556,8 +2587,8 @@ private fun UnifiedTimelineBar(
         }
 
         // BGM lane 수동 조절 pill 은 폐기됨 — lane 은 선택 시 자동 pack 으로 결정.
-        }  // close inner content Box (zoom-scaled width)
-        }  // close horizontalScroll wrapper Box
+        }
+        }
     }
 }
 
@@ -2917,7 +2948,7 @@ private fun RangeHandle(
      * Start/End 면 CapCut 스타일 chevron 막대 (BgmTrimHandle 와 동일 시각) — 음원분리 range 가 파형 높이를
      * 가득 채우면서 트림 핸들도 같은 언어로 보이도록.
      */
-    chevron: RangeHandleChevron? = null,
+    chevron: BgmTrimSide? = null,
 ) {
     // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
@@ -2947,25 +2978,12 @@ private fun RangeHandle(
         contentAlignment = Alignment.Center
     ) {
         if (chevron != null) {
-            // CapCut/BgmTrimHandle 와 동일 — 두꺼운 단색 막대 + 안쪽으로 향하는 chevron 화살표. range 가
-            // 파형 전체를 감싸는 상황에서 트림 의도를 BGM 편집과 같은 시각으로 통일.
-            Box(
-                modifier = Modifier
-                    .width(10.dp)
-                    .height(gripHeight)
-                    .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
-                    .background(handleColor),
-                contentAlignment = Alignment.Center,
-            ) {
-                androidx.compose.material3.Icon(
-                    imageVector = if (chevron == RangeHandleChevron.Start)
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft
-                    else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (chevron == RangeHandleChevron.Start) "왼쪽 트림" else "오른쪽 트림",
-                    tint = gripColor,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
+            ChevronThumb(
+                side = chevron,
+                height = gripHeight,
+                handleColor = handleColor,
+                gripColor = gripColor,
+            )
         } else {
             // 기존 시각 — 얇은 막대 두 개. hit zone 은 fillMaxHeight 유지.
             Box(
@@ -2984,8 +3002,6 @@ private fun RangeHandle(
         }
     }
 }
-
-private enum class RangeHandleChevron { Start, End }
 
 /**
  * BGM clip 블록 내부에 trim 적용된 source 파형 구간을 mini bar 로 그림. peaks 는 sourceUri 전체에
@@ -3235,27 +3251,7 @@ private fun BgmTrimHandle(
             },
         contentAlignment = visualAlignment,
     ) {
-        // CapCut 스타일 thumb — 두꺼운 단색 막대가 클립 엣지를 가운데로 가로지른다 (절반 안쪽, 절반 바깥).
-        // 안쪽에 화살표 chevron 으로 "여기를 끌어 트림" 방향을 명시. 기존 RangeHandle 의 가는 막대 +
-        // grip 선 조합은 timeline range 선택용이라 의미가 달랐고, 트림 핸들과 동거 시 시각 위계가 모호했다.
-        // 좁은 클립 path 에선 hit zone 이 본체 밖으로 통째 빠지므로 호출부가 visualAlignment 를 inner
-        // edge 로 넘겨 chevron 이 본체 엣지에 그대로 붙어 보이게 함.
-        Box(
-            modifier = Modifier
-                .width(10.dp)
-                .height(height)
-                .clip(RoundedCornerShape(TimelineBarSpec.HandleCornerRadius))
-                .background(handleColor),
-            contentAlignment = Alignment.Center,
-        ) {
-            androidx.compose.material3.Icon(
-                imageVector = if (side == BgmTrimSide.Start) Icons.AutoMirrored.Filled.KeyboardArrowLeft
-                else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = if (side == BgmTrimSide.Start) "왼쪽 트림" else "오른쪽 트림",
-                tint = gripColor,
-                modifier = Modifier.size(14.dp),
-            )
-        }
+        ChevronThumb(side = side, height = height, handleColor = handleColor, gripColor = gripColor)
     }
 }
 

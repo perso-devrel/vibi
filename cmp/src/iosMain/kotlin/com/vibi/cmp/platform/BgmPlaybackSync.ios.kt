@@ -23,34 +23,21 @@ actual fun BgmPlaybackSync(
     isPlaying: Boolean,
     currentMs: Long,
 ) {
-    // clip.id → AVAudioPlayer. clip 추가/제거 시 새로 만들거나 정리.
     val players = remember { mutableMapOf<String, AVAudioPlayer>() }
 
     DisposableEffect(Unit) {
-        // 첫 진입 시 1회 category 활성화. AudioRecorder 가 사이 .playAndRecord 로 바꿔놓을 수 있어
-        // clips 변경마다 (= 녹음/파일 삽입 직후) 아래 effect 에서 또 재적용.
-        runCatching {
-            val session = AVAudioSession.sharedInstance()
-            session.setCategory(AVAudioSessionCategoryPlayback, null)
-            session.setActive(true, null)
-        }
+        ensurePlaybackSession()
         onDispose {
             players.values.forEach { it.stop() }
             players.clear()
         }
     }
 
-    // clips 변경 → 매핑 sync + session category 재적용. AudioRecorder 직후 category 가
-    // .playAndRecord 상태로 남아 있으면 playback 이 earpiece (상단 작은 스피커) 로 라우팅돼
-    // 녹음본이 작게 들리는 사고. 클립 추가 시점에 .playback 으로 복귀.
-    // 키는 (id, sourceUri) Set — clips 리스트 인스턴스 자체가 새로 만들어져도 내용 동일이면 재시작 X.
+    // clips 변경 마다 category 재적용 — AudioRecorder 가 .playAndRecord 로 바꿔놓으면 이후 playback
+    // 이 earpiece 로 라우팅돼 녹음본이 작게 들리는 사고.
     val clipsKey = remember(clips) { clips.map { it.id to it.sourceUri }.toSet() }
     LaunchedEffect(clipsKey) {
-        runCatching {
-            val session = AVAudioSession.sharedInstance()
-            session.setCategory(AVAudioSessionCategoryPlayback, null)
-            session.setActive(true, null)
-        }
+        ensurePlaybackSession()
         val active = clips.associateBy { it.id }
         // 사라진 clip 정리.
         players.keys.filter { it !in active }.forEach { id ->
@@ -102,5 +89,14 @@ actual fun BgmPlaybackSync(
             }
             if (!player.playing) player.play()
         }
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun ensurePlaybackSession() {
+    runCatching {
+        val session = AVAudioSession.sharedInstance()
+        session.setCategory(AVAudioSessionCategoryPlayback, null)
+        session.setActive(true, null)
     }
 }
