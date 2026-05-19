@@ -1744,7 +1744,7 @@ private object TimelineBarSpec {
      * 드러나게. 56dp playback region 안에 centered 라 위/아래로 ~8dp 여유가 남아 range 핸들 grip
      * (gripHeight = ContentHeight) 이 파형 위에 겹쳐도 답답해 보이지 않는다.
      */
-    val WaveformHeight = 40.dp
+    val WaveformHeight = 45.dp
     val HandleHitWidth = VibiSpacing.xl
     val HandleVisualWidth = VibiSpacing.xs
     val GripWidth = 3.dp
@@ -1895,9 +1895,8 @@ private fun UnifiedTimelineBar(
 
     // BGM region metric — clips 가 있을 때만 렌더. 없으면 전체 높이 = playbackRegionHeight (기존과 동일).
     val showBgmRegion = showBgm && bgmClips.isNotEmpty() && totalMs > 0L
-    // BGM 클립 블록 높이 — 상단 영상 파형 strip (WaveformHeight) 과 일치시켜 두 트랙이 두께로
-    // 위계 차이 없이 보이도록 통일. 라벨(11sp) + 미니 파형은 40dp 안에서 alpha 분리로 충분히 가독.
-    val bgmRowHeight = TimelineBarSpec.WaveformHeight
+    // BGM 클립 블록 높이 — 영상 파형 strip (45dp) 보다 살짝 얇게 (38dp) 두 트랙 위계 표현.
+    val bgmRowHeight = 38.dp
     val bgmRowGap = 4.dp
     val bgmRowCount = bgmDisplayLaneCount.coerceAtLeast(1)
     val bgmRegionHeight = if (showBgmRegion) {
