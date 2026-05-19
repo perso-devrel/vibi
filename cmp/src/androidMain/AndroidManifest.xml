@@ -21,7 +21,8 @@
         android:name=".VibiApplication"
         android:label="vibi"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Vibi">
+        android:theme="@style/Theme.Vibi"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true">
