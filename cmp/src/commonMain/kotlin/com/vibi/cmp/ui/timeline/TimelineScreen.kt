@@ -192,6 +192,10 @@ fun TimelineScreen(
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. 드롭다운 두 항목이 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
 
+    // SoundDeck 의 분리 구간 펼침 상태 — UnifiedTimelineBar 파형의 화자별 색 표시와 같은 진실 공유.
+    // 펼치면 화자 색, 닫히면 단일 highlight.
+    var expandedSeparationIds by remember { mutableStateOf(emptySet<String>()) }
+
     // 저장 완료 → InputScreen 복귀. ViewModel 의 _navigateBackHome SharedFlow 가 1회성 신호.
     LaunchedEffect(viewModel) {
         viewModel.navigateBackHome.collect { onSaved() }
@@ -815,6 +819,7 @@ fun TimelineScreen(
                 directiveColor = tokens.timelineBarDirective,
                 videoPeaks = videoPeaks,
                 stemPeaksByUrl = stemPeaks,
+                expandedDirectiveIds = expandedSeparationIds,
                 primarySourceUri = state.videoUri,
                 primarySourceDurationMs = state.segments.firstOrNull { it.sourceUri == state.videoUri }
                     ?.durationMs ?: state.videoDurationMs,
@@ -1015,6 +1020,12 @@ fun TimelineScreen(
                     com.vibi.cmp.ui.timeline.sounddeck.SoundDeck(
                         groups = deckGroups,
                         disabled = deckDisabled,
+                        expandedSeparationIds = expandedSeparationIds,
+                        onToggleSeparationExpanded = { id ->
+                            expandedSeparationIds = if (id in expandedSeparationIds)
+                                expandedSeparationIds - id
+                            else expandedSeparationIds + id
+                        },
                         onToggleStem = { directiveId, stemId, selected ->
                             viewModel.onSetStemSelectionForDirective(directiveId, stemId, selected)
                         },
@@ -1814,6 +1825,8 @@ private fun UnifiedTimelineBar(
     videoPeaks: List<Float> = emptyList(),
     /** stem audioUrl → 추출된 peaks. directive 영역에서 source peaks 대신 사용해 각 stem 의 실제 파형 노출. */
     stemPeaksByUrl: Map<String, List<Float>> = emptyMap(),
+    /** SoundDeck 에서 펼친 directive id 집합 — 펼친 구간만 화자별 색, 닫힘은 단일 highlight. */
+    expandedDirectiveIds: Set<String> = emptySet(),
     /** Peak 가 추출된 source URI — segment.sourceUri 가 일치하는 segment 만 peak lookup. 다른 source 영역은 0. */
     primarySourceUri: String = "",
     /** Peak source 의 raw duration (ms). segment trim/speed 역매핑에 사용. */
@@ -2042,6 +2055,7 @@ private fun UnifiedTimelineBar(
                         defaultBarColor = markerColor.copy(alpha = 0.45f),
                         highlightBarColor = accent,
                         trackBg = trackColor.copy(alpha = 0.55f),
+                        expandedDirectiveIds = expandedDirectiveIds,
                         modifier = Modifier
                             .align(Alignment.Center)
                             .fillMaxWidth()
@@ -2646,13 +2660,15 @@ private fun TimelineWaveformBackground(
     defaultBarColor: Color,
     highlightBarColor: Color,
     trackBg: Color,
+    /** 펼친 directive id 집합 — 이 안에 든 directive 만 화자별 stem 색, 나머지는 highlight 단일 색. */
+    expandedDirectiveIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
     // directive 별 effective scale + stem 기여도. directive 영역의 bar 높이는 선택된 모든 stem 의 peak 를
     // volume 으로 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) — 화자+배경 둘 다 켜면 mix shape 이 보임.
     // muteOriginalSegmentAudio=false 면 source peak 도 추가 항으로 합산.
     val tokens = LocalVibiColors.current
-    val directiveOverlays = remember(directives, stemPeaksByUrl, tokens) {
+    val directiveOverlays = remember(directives, stemPeaksByUrl, tokens, expandedDirectiveIds) {
         // 같은 stem audio URL 을 공유하는 모든 piece (split 결과) 중 (sourceOffset + duration) 의 max
         // 를 stem audio 전체 길이로 추정. waveform peak idx 매핑이 piece 길이가 아니라 stem 전체 길이
         // 기준이어야 split 뒷 piece (sourceOffset > 0) 가 stem 의 올바른 구간을 보여줌.
@@ -2678,7 +2694,10 @@ private fun TimelineWaveformBackground(
                     peaks = peaks,
                     volume = sel.volume,
                     totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
-                    color = SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor),
+                    // directive 가 펼친 상태면 화자별 색, 닫힘이면 단일 highlight (드러나지 않음).
+                    color = if (d.id in expandedDirectiveIds)
+                        SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor)
+                    else highlightBarColor,
                 )
             }
             DirectiveScaleOverlay(

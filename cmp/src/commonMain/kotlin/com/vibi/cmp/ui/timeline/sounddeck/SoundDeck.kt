@@ -51,6 +51,8 @@ import com.vibi.cmp.ui.components.VibiPanelCard
 fun SoundDeck(
     groups: List<SoundDeckGroup>,
     disabled: Boolean,
+    expandedSeparationIds: Set<String>,
+    onToggleSeparationExpanded: (String) -> Unit,
     onToggleStem: (directiveId: String, stemId: String, selected: Boolean) -> Unit,
     onUpdateStemVolume: (directiveId: String, stemId: String, volume: Float) -> Unit,
     onUpdateBgmVolume: (clipId: String, volume: Float) -> Unit,
@@ -152,6 +154,8 @@ fun SoundDeck(
                         group = group,
                         disabled = disabled,
                         previewingKey = previewingKey,
+                        expanded = group.directiveId in expandedSeparationIds,
+                        onToggleExpanded = { onToggleSeparationExpanded(group.directiveId) },
                         callbacksFor = ::cardCallbacks,
                     )
                     is SoundDeckGroup.Bgm -> Column(
@@ -221,19 +225,20 @@ private fun SoundCardRow(
 }
 
 /**
- * 분리 구간 한 개를 collapsible "+" 블럭으로. 기본 접힘 — 헤더 탭으로 펼침/접힘.
- * `rememberSaveable` 로 group key 별 상태 보존 — 회전·재진입에도 펼침 상태 유지.
+ * 분리 구간 한 개를 collapsible "+" 블럭으로. 펼침 상태는 호출부가 hoist —
+ * 타임라인 파형의 화자별 색 표시와 같은 진실을 공유.
  */
 @Composable
 private fun CollapsibleSeparationCard(
     group: SoundDeckGroup.Separation,
     disabled: Boolean,
     previewingKey: String?,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
     callbacksFor: (SoundCardModel) -> SoundCardCallbacks,
 ) {
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
-    var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
     val rangeText = formatSectionRange(group.rangeStartMs, group.rangeEndMs)
 
     VibiPanelCard {
@@ -241,7 +246,7 @@ private fun CollapsibleSeparationCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !disabled) { expanded = !expanded },
+                    .clickable(enabled = !disabled) { onToggleExpanded() },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
