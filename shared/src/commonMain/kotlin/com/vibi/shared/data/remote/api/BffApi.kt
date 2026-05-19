@@ -26,6 +26,7 @@ import com.vibi.shared.data.remote.dto.SubtitleRegenerateSpec
 import com.vibi.shared.data.remote.dto.SubtitleSpec
 import com.vibi.shared.data.remote.dto.SubtitleStatusResponse
 import com.vibi.shared.data.remote.dto.TestdataSeparationFolderDto
+import com.vibi.shared.data.remote.dto.AdminGrantRequest
 import com.vibi.shared.data.remote.dto.CreditBalanceResponse
 import com.vibi.shared.data.remote.dto.CreditPurchaseRequest
 import com.vibi.shared.data.remote.dto.CreditPurchaseResponse
@@ -95,6 +96,16 @@ class BffApi(
      */
     suspend fun purchaseCredits(request: CreditPurchaseRequest): CreditPurchaseResponse =
         client.post("api/v2/credits/purchase") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }.body()
+
+    /**
+     * 관리자 무료 충전. admin role 이 아니면 BFF 가 403 으로 거부. 매 호출마다 BFF 가 새
+     * txId 생성하므로 모바일은 idempotency 신경 안 써도 됨.
+     */
+    suspend fun adminGrantCredits(request: AdminGrantRequest): CreditPurchaseResponse =
+        client.post("api/v2/credits/admin-grant") {
             contentType(ContentType.Application.Json)
             setBody(request)
         }.body()

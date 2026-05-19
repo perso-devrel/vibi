@@ -37,3 +37,12 @@ data class CreditPurchaseResponse(
     val balance: Int,
     val transactionId: String,
 )
+
+/**
+ * POST /api/v2/credits/admin-grant 요청. admin role 만 호출 가능. body 는 productId 만 —
+ * txId 는 서버가 생성해 매 호출마다 새 grant 로 처리. 응답은 [CreditPurchaseResponse] 공유.
+ */
+@Serializable
+data class AdminGrantRequest(
+    val productId: String,
+)

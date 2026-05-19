@@ -6,6 +6,7 @@ import com.vibi.shared.data.local.AuthTokenStore
 import com.vibi.shared.data.local.CreditStore
 import com.vibi.shared.data.local.UserSession
 import com.vibi.shared.data.remote.api.BffApi
+import com.vibi.shared.data.remote.dto.AdminGrantRequest
 import com.vibi.shared.data.remote.dto.CreditPurchaseRequest
 import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.domain.model.AuthUser
@@ -18,8 +19,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 
 /**
  * 홈화면 우상단 유저 메뉴를 위한 ViewModel.
@@ -103,22 +102,14 @@ class UserMenuViewModel(
     }
 
     /**
-     * 관리자 무료 충전. 매 호출마다 새 txId 라 BFF 가 새 grant 로 처리 — 관리자가 같은 상품을
-     * 반복 탭하면 매번 가산되는 동작이 의도.
-     *
-     * **출시 전 TODO**: BFF 가 진짜 receipt 검증 도입 시 `"admin-grant"` synthetic receipt 가
-     * 거부됨. 그 시점에 BFF `POST /credits/admin-grant` (requireAdmin) 추가 + 본 함수가 그쪽으로 분기.
+     * 관리자 무료 충전. 매 호출마다 BFF 가 새 txId (admin-<UUID>) 를 생성하므로 같은 상품을
+     * 반복 탭하면 매번 가산되는 동작이 의도. BFF 가 `requireAdmin` 으로 role 검사 — 모바일이
+     * 우회 시도해도 403.
      */
-    @OptIn(ExperimentalUuidApi::class)
     suspend fun adminGrantCredits(product: CreditProduct): Result<Unit> {
         check(uiState.value.isAdmin) { "adminGrantCredits called by non-admin user" }
-        val req = CreditPurchaseRequest(
-            productId = product.productId,
-            platform = IapPlatform.APPLE.wireName,
-            receipt = "admin-grant",
-            transactionId = "admin-${product.productId}-${Uuid.random()}",
-        )
-        return runCatching { bffApi.purchaseCredits(req) }
+        val req = AdminGrantRequest(productId = product.productId)
+        return runCatching { bffApi.adminGrantCredits(req) }
             .onSuccess { resp -> creditStore.setBalance(userSession.current(), resp.balance) }
             .onFailure { refreshBalance() }
             .map { Unit }
