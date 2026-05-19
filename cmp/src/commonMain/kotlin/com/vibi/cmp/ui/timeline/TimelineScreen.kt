@@ -1760,6 +1760,12 @@ private object TimelineBarSpec {
     val ChevronIconSize = 14.dp
     const val MinZoom = 1f
     const val MaxZoom = 10f
+    /** 상단 시간 눈금자 (CapCut 스타일) 높이 — major tick + 라벨 1줄. */
+    val RulerHeight = 20.dp
+    /** 라벨 사이 최소 시각 간격 — nice-interval snap 의 px 기준 (dp). */
+    val RulerLabelTargetSpacing = 80.dp
+    val RulerMajorTickHeight = 6.dp
+    val RulerMinorTickHeight = 3.dp
 }
 
 /** 좌/우 트림 (음원분리 range + BGM 클립) 공용 chevron thumb. */
@@ -1875,6 +1881,7 @@ private fun UnifiedTimelineBar(
     val currentRangeStart by rememberUpdatedState(rangeStartMs)
     val currentRangeEnd by rememberUpdatedState(rangeEndMs)
 
+    val rulerHeight = TimelineBarSpec.RulerHeight
     val playbackRegionHeight = TimelineBarSpec.BarHeight
     val contentHeight = TimelineBarSpec.ContentHeight
     val handleHitWidth = TimelineBarSpec.HandleHitWidth
@@ -1892,7 +1899,7 @@ private fun UnifiedTimelineBar(
         bgmRowHeight * bgmRowCount + bgmRowGap * (bgmRowCount - 1).coerceAtLeast(0)
     } else 0.dp
     val bgmRowStrideDp = bgmRowHeight + bgmRowGap
-    val playheadVisualBottom = playbackRegionHeight + bgmRegionHeight
+    val playheadVisualBottom = rulerHeight + playbackRegionHeight + bgmRegionHeight
     val totalHeight = playheadVisualBottom
 
     // range 모드 (영상편집 + 음원분리) 양쪽 다 parent tap detector 단일화. segment 자체에 clickable
@@ -2030,10 +2037,24 @@ private fun UnifiedTimelineBar(
         val totalWidthDp = contentWidthDp
         val totalWidthPx = contentWidthPx
 
+        // === 상단 시간 눈금자 (CapCut 스타일) — 줌 레벨에 따라 nice-interval 라벨 + minor tick ===
+        TimelineRuler(
+            totalMs = totalMs,
+            contentWidthDp = contentWidthDp,
+            contentWidthPx = contentWidthPx,
+            tickColor = markerColor.copy(alpha = 0.45f),
+            labelColor = tokens.mutedText,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .height(rulerHeight),
+        )
+
         // === 상단 playback region — 기존 단일 바 56dp 의 모든 시각/제스처가 여기 안에서 동작 ===
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .offset(y = rulerHeight)
                 .fillMaxWidth()
                 .height(playbackRegionHeight)
                 .then(rangeTapModifier),
@@ -2214,7 +2235,7 @@ private fun UnifiedTimelineBar(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(y = playbackRegionHeight)
+                    .offset(y = rulerHeight + playbackRegionHeight)
                     .fillMaxWidth()
                     .height(bgmRegionHeight),
             ) {
@@ -2536,14 +2557,14 @@ private fun UnifiedTimelineBar(
             }
         }
 
-        // === 재생 헤드 시각 line — top + BGM region 관통. drag 안 받음 ===
-        // marker visual 길이 = (playback + BGM) - 16dp (위/아래 8dp inset). BGM 없을 때는 기존 동작 동일.
+        // === 재생 헤드 시각 line — ruler 아래부터 시작해 BGM 까지 관통. drag 안 받음 ===
+        // marker visual 은 ruler 영역 (라벨/tick) 과 겹치지 않게 y 오프셋에 rulerHeight 추가.
         if (totalMs > 0L) {
             val frac = (playbackPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
             val visualX = totalWidthDp * frac - TimelineBarSpec.GripWidth / 2
-            val topInset = TimelineBarSpec.PlaybackMarkerVerticalInset / 2
-            val markerHeight = (playheadVisualBottom - TimelineBarSpec.PlaybackMarkerVerticalInset)
-                .coerceAtLeast(0.dp)
+            val topInset = rulerHeight + TimelineBarSpec.PlaybackMarkerVerticalInset / 2
+            val markerHeight = (playbackRegionHeight + bgmRegionHeight -
+                TimelineBarSpec.PlaybackMarkerVerticalInset).coerceAtLeast(0.dp)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -2830,6 +2851,81 @@ private data class DirectiveScaleOverlay(
     val includeOriginal: Boolean = true,
     val sourceOffsetMs: Long = 0L,
 )
+/**
+ * CapCut 식 시간 눈금자 — 줌 레벨에 따라 nice-interval (0.5/1/2/5/10/30/60/...) 로 major tick + 라벨,
+ * 그 사이를 5분할한 minor tick. 가로 스크롤 콘텐츠의 폭 ([contentWidthDp]) 안에서 좌표 계산.
+ */
+@Composable
+private fun BoxScope.TimelineRuler(
+    totalMs: Long,
+    contentWidthDp: androidx.compose.ui.unit.Dp,
+    contentWidthPx: Float,
+    tickColor: Color,
+    labelColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    if (totalMs <= 0L || contentWidthPx <= 0f) {
+        Box(modifier = modifier)
+        return
+    }
+    val density = LocalDensity.current
+    val targetPx = with(density) { TimelineBarSpec.RulerLabelTargetSpacing.toPx() }
+    val pxPerSec = contentWidthPx / (totalMs / 1000.0).toFloat()
+    val desiredSec = (targetPx / pxPerSec).toDouble()
+    val niceIntervals = listOf(0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0)
+    val majorIntervalSec = niceIntervals.firstOrNull { it >= desiredSec } ?: niceIntervals.last()
+    val majorIntervalMs = (majorIntervalSec * 1000).toLong().coerceAtLeast(1L)
+    val minorIntervalMs = (majorIntervalMs / 5).coerceAtLeast(1L)
+    val majorTickPx = with(density) { TimelineBarSpec.RulerMajorTickHeight.toPx() }
+    val minorTickPx = with(density) { TimelineBarSpec.RulerMinorTickHeight.toPx() }
+    val tickStrokePx = with(density) { 1.dp.toPx() }
+
+    Box(modifier = modifier) {
+        androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
+            val w = size.width
+            if (w <= 0f) return@Canvas
+            // minor ticks 먼저 — 옅은 색.
+            var ms = 0L
+            while (ms <= totalMs) {
+                val x = (ms.toFloat() / totalMs) * w
+                drawRect(
+                    color = tickColor.copy(alpha = 0.5f),
+                    topLeft = Offset(x - tickStrokePx / 2f, 0f),
+                    size = Size(tickStrokePx, minorTickPx),
+                )
+                ms += minorIntervalMs
+            }
+            // major ticks — minor 위에 덮어 그리기.
+            ms = 0L
+            while (ms <= totalMs) {
+                val x = (ms.toFloat() / totalMs) * w
+                drawRect(
+                    color = tickColor,
+                    topLeft = Offset(x - tickStrokePx / 2f, 0f),
+                    size = Size(tickStrokePx, majorTickPx),
+                )
+                ms += majorIntervalMs
+            }
+        }
+        // 라벨 — major tick 위치마다 Text. 마지막 (ms == totalMs) 은 우측 overflow 방지 위해 생략.
+        var labelMs = 0L
+        while (labelMs < totalMs) {
+            val frac = labelMs.toFloat() / totalMs
+            val xDp = contentWidthDp * frac
+            Text(
+                text = formatRulerLabel(labelMs, majorIntervalSec),
+                color = labelColor,
+                fontSize = 9.sp,
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .offset(x = xDp + 2.dp),
+            )
+            labelMs += majorIntervalMs
+        }
+    }
+}
+
 /**
  * 파형 strip 폭만큼 채우는 fill + 상/하 accent border. 음원분리 진행 overlay 와 구간 선택 fill 가
  * 같은 시각 위계를 공유하도록 정렬·border inset 식을 한 곳에 모은다. [fillModifier] 로 fill Box 에
@@ -3388,6 +3484,16 @@ private fun formatMmSs(ms: Long): String {
     val m = totalSec / 60
     val s = totalSec % 60
     return "$m:${s.toString().padStart(2, '0')}"
+}
+
+/**
+ * 눈금자 라벨 — interval 이 1초 이상이면 정수 초의 [formatMmSs]. 0.5초 단위 라벨이면 ".5" 접미.
+ */
+private fun formatRulerLabel(ms: Long, intervalSec: Double): String {
+    val base = formatMmSs(ms)
+    if (intervalSec >= 1.0) return base
+    val hasHalf = ((ms % 1000) / 100) >= 5
+    return if (hasHalf) "$base.5" else base
 }
 
 private fun parseArgbHexColor(hex: String): Color {
