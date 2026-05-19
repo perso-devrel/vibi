@@ -49,13 +49,13 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
@@ -92,6 +92,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -410,7 +411,49 @@ fun TimelineScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFFEDEBE9))) {
+    // playerItems 를 hoist — 인라인 프리뷰 + 전체화면 Dialog 양쪽에서 공유. previewMuxUri 가 있으면
+    // BFF mux 결과 단일 item, 아니면 segments 를 playlist 로 변환.
+    val previewMuxUri = state.previewLangCode?.let { state.dubbedVideoPaths[it] }
+    val videoSegs = state.segments.filter {
+        it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+    }
+    val playerItems: List<com.vibi.cmp.platform.VideoPlayerItem> = if (state.videoUri.isEmpty()) {
+        emptyList()
+    } else if (previewMuxUri != null) {
+        listOf(
+            com.vibi.cmp.platform.VideoPlayerItem(
+                sourceUri = previewMuxUri,
+                trimStartMs = 0L,
+                trimEndMs = 0L,
+                speedScale = 1f,
+                volumeScale = 1f,
+            )
+        )
+    } else {
+        videoSegs.map { seg ->
+            com.vibi.cmp.platform.VideoPlayerItem(
+                sourceUri = seg.sourceUri,
+                trimStartMs = seg.trimStartMs,
+                trimEndMs = seg.effectiveTrimEndMs,
+                speedScale = seg.speedScale,
+                volumeScale = if (state.runtimeVideoMutedForDirective) 0f else seg.volumeScale,
+            )
+        }
+    }
+    // BGM 재생 sync — 인라인/풀스크린 무관하게 1회만. 두 군데서 호출하면 audio engine 충돌.
+    if (state.videoUri.isNotEmpty()) {
+        com.vibi.cmp.platform.BgmPlaybackSync(
+            clips = if (state.isSegmentEditMode) emptyList() else state.bgmClips,
+            isPlaying = state.isPlaying,
+            currentMs = state.playbackPositionMs,
+        )
+    }
+    // 전체화면 토글 — 인라인 프리뷰는 fullscreen 시 검은 박스로 비워두고 Dialog 가 단일 player 소유.
+    var fullscreenOpen by remember { mutableStateOf(false) }
+    // 가로 회전 허용 — Android 는 force-rotate, iOS 는 plist + AppDelegate flag flip (수동 회전).
+    com.vibi.cmp.platform.LockLandscape(enabled = fullscreenOpen)
+
+    Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -574,7 +617,7 @@ fun TimelineScreen(
             }
         }
 
-        // 비디오 프리뷰
+        // 비디오 프리뷰 (inline)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -583,65 +626,19 @@ fun TimelineScreen(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            if (state.videoUri.isNotEmpty()) {
-                // 미리보기 언어 선택 시 BFF 가 mux 한 단일 mp4 (전체 timeline 더빙 결과) 사용.
-                // BFF AutoDubService 는 영상 전체를 한 번에 더빙해 timeline 전체용 결과 1 개를 반환 →
-                // split 으로 segment 가 여러개여도 미리보기는 단일 player item 으로 collapse.
-                // (이전: 첫 segment 만 swap → 후반부 원본 사운드로 재생되던 결함)
-                val previewMuxUri = state.previewLangCode?.let { state.dubbedVideoPaths[it] }
-                val videoSegs = state.segments.filter {
-                    it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
-                }
-                val playerItems = if (previewMuxUri != null) {
-                    listOf(
-                        com.vibi.cmp.platform.VideoPlayerItem(
-                            sourceUri = previewMuxUri,
-                            trimStartMs = 0L,
-                            trimEndMs = 0L,
-                            speedScale = 1f,
-                            volumeScale = 1f,
-                        )
-                    )
-                } else {
-                    // segments 를 VideoPlayerItem playlist 로 변환 — multi-segment / 복제 / 삭제 결과
-                    // 모두 미리보기에 즉시 반영. trim/speed/volume per-item 적용.
-                    videoSegs.map { seg ->
-                        com.vibi.cmp.platform.VideoPlayerItem(
-                            sourceUri = seg.sourceUri,
-                            trimStartMs = seg.trimStartMs,
-                            // iOS 는 trimEndMs=0 일 때 asset.duration 을 동기 읽기 → lazy load
-                            // 로 0/indefinite 반환 시 composition 0-길이 → 검정. caller 에서
-                            // effectiveTrimEndMs (durationMs fallback) 으로 항상 실값 전달.
-                            trimEndMs = seg.effectiveTrimEndMs,
-                            speedScale = seg.speedScale,
-                            // directive range 안에서 stem 재생 중이면 원본 audio mute — segment.volumeScale 은
-                            // 사용자 설정값 보존하고 player 에만 일시 0 적용. 파형 amplitude 는 영향 없음.
-                            volumeScale = if (state.runtimeVideoMutedForDirective) 0f else seg.volumeScale,
-                        )
-                    }
-                }
-                // BgmClip 들을 video 재생에 sync — clip startMs 부터 자동 재생, video pause/seek 시 같이.
-                // 영상편집 모드에선 사용자가 video 자체에 집중하므로 BGM mix-in 차단 (빈 리스트 전달
-                // → 기존 player 정리됨).
-                com.vibi.cmp.platform.BgmPlaybackSync(
-                    clips = if (state.isSegmentEditMode) emptyList() else state.bgmClips,
-                    isPlaying = state.isPlaying,
-                    currentMs = state.playbackPositionMs,
-                )
+            if (state.videoUri.isNotEmpty() && !fullscreenOpen) {
                 VideoPlayer(
                     items = playerItems,
                     isPlaying = state.isPlaying,
                     seekToMs = state.playbackPositionMs.takeIf { state.videoDurationMs > 0 },
                     onPositionChanged = { ms -> viewModel.onUpdatePlaybackPosition(ms) },
-                    // 영상 끝 도달 → ① 재생/멈춤 버튼을 ▶ 로 (isPlaying=false) ② 위치를 0 으로 reset
-                    // 해서 사용자가 다시 ▶ 누르면 처음부터 재생.
                     onEnded = {
                         if (state.isPlaying) viewModel.onTogglePlayback()
                         viewModel.onUpdatePlaybackPosition(0L)
                     },
                     modifier = Modifier.fillMaxSize()
                 )
-            } else {
+            } else if (state.videoUri.isEmpty()) {
                 // 영상 Box bg 가 항상 검정이므로 라이트 모드에서도 흰색 텍스트 유지.
                 Text("비디오 없음", color = Color.White)
             }
@@ -684,16 +681,34 @@ fun TimelineScreen(
             // 영상편집 진입은 SoundDeck 의 "영상 다듬기" 카드(EditEntryCard)로 일원화.
         }
 
-        // Transport row: play/pause + 시간 표시
+        // Transport row — 좌: 전체화면 / 중앙: 재생 정지 / 우: undo·redo. 세 영역을 Box 의 align 으로
+        // 절대 배치해 중앙 버튼이 화면 너비와 무관하게 정확히 가운데 위치. 버튼 크기는 36dp 균일.
         if (state.videoUri.isNotEmpty()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.sm)
-            ) {
+            val btnSize = 36.dp
+            val iconSize = 18.dp
+            Box(modifier = Modifier.fillMaxWidth().height(btnSize)) {
+                // Left — 전체화면 진입.
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .align(Alignment.CenterStart)
+                        .size(btnSize)
+                        .clip(CircleShape)
+                        .background(tokens.chipBg)
+                        .clickable { fullscreenOpen = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Fullscreen,
+                        contentDescription = "전체화면",
+                        tint = tokens.onBackgroundPrimary,
+                        modifier = Modifier.size(iconSize),
+                    )
+                }
+                // Center — 재생/정지.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(btnSize)
                         .clip(CircleShape)
                         .background(tokens.onBackgroundPrimary)
                         .clickable { viewModel.onTogglePlayback() },
@@ -703,45 +718,45 @@ fun TimelineScreen(
                         imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (state.isPlaying) "일시정지" else "재생",
                         tint = tokens.backgroundPrimary,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(iconSize),
                     )
                 }
-                Text(
-                    "${state.playbackPositionMs / 1000}s / ${state.videoDurationMs / 1000}s",
-                    color = tokens.onBackgroundPrimary,
-                    style = typo.bodyMd,
-                    modifier = Modifier.weight(1f)
-                )
-                // Undo / Redo — 작은 아이콘만, transport row 우측에 inline
-                Box(
-                    modifier = Modifier
-                        .size(VibiSpacing.xxl)
-                        .clip(CircleShape)
-                        .background(if (state.canUndo) tokens.chipBg else tokens.chipBgDisabled)
-                        .clickable(enabled = state.canUndo) { viewModel.onUndo() },
-                    contentAlignment = Alignment.Center
+                // Right — undo / redo.
+                Row(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "실행 취소",
-                        tint = if (state.canUndo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
-                        modifier = Modifier.size(VibiSpacing.md)
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(VibiSpacing.xxl)
-                        .clip(CircleShape)
-                        .background(if (state.canRedo) tokens.chipBg else tokens.chipBgDisabled)
-                        .clickable(enabled = state.canRedo) { viewModel.onRedo() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "다시 실행",
-                        tint = if (state.canRedo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
-                        modifier = Modifier.size(VibiSpacing.md)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(btnSize)
+                            .clip(CircleShape)
+                            .background(if (state.canUndo) tokens.chipBg else tokens.chipBgDisabled)
+                            .clickable(enabled = state.canUndo) { viewModel.onUndo() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = "실행 취소",
+                            tint = if (state.canUndo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
+                            modifier = Modifier.size(iconSize),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(btnSize)
+                            .clip(CircleShape)
+                            .background(if (state.canRedo) tokens.chipBg else tokens.chipBgDisabled)
+                            .clickable(enabled = state.canRedo) { viewModel.onRedo() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Redo,
+                            contentDescription = "다시 실행",
+                            tint = if (state.canRedo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
+                            modifier = Modifier.size(iconSize),
+                        )
+                    }
                 }
             }
         }
@@ -937,7 +952,7 @@ fun TimelineScreen(
                         onClick = { audioMenuOpen = true },
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Add,
+                            imageVector = Icons.Filled.MusicNote,
                             contentDescription = null,
                             tint = tokens.onBackgroundPrimary,
                             modifier = Modifier.size(16.dp),
@@ -1262,6 +1277,139 @@ fun TimelineScreen(
     // A/B (원본/내믹스) 미리듣기 바는 UI 에서 일단 제거 — 추후 재추가 예정. VM 의 [state.previewMode] +
     // [TimelineViewModel.onTogglePreviewMode] + [sounddeck/ABPreviewBar.kt] composable 은 그대로 두어
     // 다시 띄울 때 한 줄 Box 호출만 복구하면 됨.
+
+    // 전체화면 overlay — Dialog 대신 일반 Box overlay 로 (iOS Dialog 는 sheet 스타일 modal 이라
+    // 배경이 비치고 시스템 bar 영역이 채워지지 않음). 본 Box 는 outer Box(=fillMaxSize) 의 마지막
+    // child 라 자연스럽게 최상단 z-order. BgmPlaybackSync 는 상단에서 1회만 호출하므로 중복 없음.
+    if (fullscreenOpen && playerItems.isNotEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(tokens.backgroundPrimary),
+        ) {
+            // 영상 본체 — 전체 화면 letterbox. 영상이 채우지 못한 영역은 Box 의 캔버스 색이 보임.
+            VideoPlayer(
+                items = playerItems,
+                isPlaying = state.isPlaying,
+                seekToMs = state.playbackPositionMs.takeIf { state.videoDurationMs > 0 },
+                onPositionChanged = { ms -> viewModel.onUpdatePlaybackPosition(ms) },
+                onEnded = {
+                    if (state.isPlaying) viewModel.onTogglePlayback()
+                    viewModel.onUpdatePlaybackPosition(0L)
+                },
+                modifier = Modifier.fillMaxSize().align(Alignment.Center),
+            )
+            // 상단 행 — 좌: back / 중앙: 원본·내믹스 토글 / 우: spacer. chrome 색은 모두 tokens 페어링.
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = VibiSpacing.sm, vertical = VibiSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable { fullscreenOpen = false },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "전체화면 닫기",
+                        tint = tokens.onBackgroundPrimary,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                // 원본·내믹스 segmented control — VM 의 [state.previewMode] 가 source of truth.
+                // 초기값은 [TimelineUiState.previewMode] 기본인 PreviewMode.MIX (= 내믹스). 2-모드라
+                // binary flip 으로 충분. 색은 tokens 페어링 — 양 테마 모두 contrast 보장.
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(tokens.onBackgroundPrimary.copy(alpha = 0.10f))
+                        .padding(2.dp),
+                ) {
+                    listOf(
+                        com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL to "원본",
+                        com.vibi.shared.ui.timeline.PreviewMode.MIX to "내믹스",
+                    ).forEach { (mode, label) ->
+                        val selected = state.previewMode == mode
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(if (selected) tokens.onBackgroundPrimary else Color.Transparent)
+                                .clickable(enabled = !selected) {
+                                    if (!selected) viewModel.onTogglePreviewMode()
+                                }
+                                .padding(horizontal = VibiSpacing.sm, vertical = 6.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                label,
+                                color = if (selected) tokens.backgroundPrimary else tokens.onBackgroundPrimary,
+                                style = typo.bodySm,
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                // 우측 spacer — back 버튼과 같은 너비로 토글이 정확히 중앙 위치.
+                Box(modifier = Modifier.size(40.dp))
+            }
+            // 하단 transport — 재생/정지 + 현재시각 + 시킹 슬라이더 + 총길이.
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable { viewModel.onTogglePlayback() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (state.isPlaying) "일시정지" else "재생",
+                        tint = tokens.onBackgroundPrimary,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+                Text(
+                    text = formatMmSs(state.playbackPositionMs),
+                    color = tokens.onBackgroundPrimary,
+                    style = typo.bodySm,
+                )
+                Slider(
+                    value = state.playbackPositionMs.toFloat().coerceIn(
+                        0f,
+                        state.videoDurationMs.toFloat().coerceAtLeast(1f),
+                    ),
+                    valueRange = 0f..state.videoDurationMs.toFloat().coerceAtLeast(1f),
+                    onValueChange = { v -> viewModel.onUpdatePlaybackPosition(v.toLong()) },
+                    colors = SliderDefaults.colors(
+                        thumbColor = tokens.onBackgroundPrimary,
+                        activeTrackColor = tokens.onBackgroundPrimary,
+                        inactiveTrackColor = tokens.onBackgroundPrimary.copy(alpha = 0.3f),
+                    ),
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = formatMmSs(state.videoDurationMs),
+                    color = tokens.onBackgroundPrimary,
+                    style = typo.bodySm,
+                )
+            }
+        }
+    }
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — 하단 ~48% peek. 위쪽 타임라인은 그대로 노출.
     // 삽입 확정 시 onPickBgmAudio 호출 — 영상보다 길면 BgmTrimSheet 가 자동 chain.
@@ -1658,6 +1806,7 @@ private fun UnifiedTimelineBar(
     bgmRangeMode: Boolean = false,
 ) {
     val density = LocalDensity.current
+    val tokens = LocalVibiColors.current
     val currentRangeStart by rememberUpdatedState(rangeStartMs)
     val currentRangeEnd by rememberUpdatedState(rangeEndMs)
 
@@ -2076,9 +2225,13 @@ private fun UnifiedTimelineBar(
                     val widthDp = (laneWidthDp * widthFrac).coerceAtLeast(6.dp)
                     val isMuted = clip.volumeScale <= 0f
                     val isRecording = isBgmRecording(clip)
-                    // 트랙 종류별 색 구분 — CapCut 패턴. 녹음은 따뜻한 코랄, 파일은 brand accent.
-                    // alpha 0.55 로 통일해 파형/라벨 contrast 동일하게 유지.
-                    val clipBaseColor = if (isRecording) Color(0xFFE57373) else accent
+                    // 트랙 종류별 색 구분. 녹음 = atmosphere peach (양 테마 동일 톤, 항상 밝은 색),
+                    // 파일 = brand accent (light→dark ink / dark→white).
+                    val clipBaseColor = if (isRecording) tokens.gradientPeach else accent
+                    // 블록 내 콘텐츠(라벨/아이콘/파형) 색 — 블록 배경과 페어링해 양 테마 모두 contrast 유지.
+                    // 녹음 블록(항상 밝은 peach) 위에는 항상 어두운 잉크. 파일 블록(accent = 잉크/흰색
+                    // 자동 invert) 위에는 backgroundPrimary 가 자동 반대 색을 잡아준다.
+                    val clipContentColor = if (isRecording) Color(0xFF0C0A09) else tokens.backgroundPrimary
                     // selection border 는 bgmRangeMode 일 땐 미적용 — range overlay 핸들과 시각 충돌 방지.
                     val showSelectionBorder = isSelected && !bgmRangeMode
                     Box(
@@ -2146,7 +2299,7 @@ private fun UnifiedTimelineBar(
                                 peaks = peaks,
                                 trimStartFrac = (effTrimStart.toFloat() / clip.sourceDurationMs).coerceIn(0f, 1f),
                                 trimEndFrac = (effTrimEnd.toFloat() / clip.sourceDurationMs).coerceIn(0f, 1f),
-                                color = Color.White.copy(alpha = 0.40f),
+                                color = clipContentColor.copy(alpha = 0.40f),
                                 modifier = Modifier.matchParentSize(),
                             )
                         }
@@ -2164,12 +2317,12 @@ private fun UnifiedTimelineBar(
                                 androidx.compose.material3.Icon(
                                     imageVector = if (isRecording) Icons.Filled.Mic else Icons.Filled.MusicNote,
                                     contentDescription = null,
-                                    tint = Color.White,
+                                    tint = clipContentColor,
                                     modifier = Modifier.size(12.dp),
                                 )
                                 Text(
                                     text = bgmClipLabelText(clip),
-                                    color = Color.White,
+                                    color = clipContentColor,
                                     style = androidx.compose.ui.text.TextStyle(
                                         fontSize = 11.sp,
                                         lineHeight = 13.sp,
@@ -3010,6 +3163,14 @@ private fun StepTransitionWarningDialog(
 }
 
 /** ARGB hex (#AARRGGBB or #RRGGBB) → Compose Color. 잘못된 입력은 white fallback. */
+/** 전체화면 transport 의 시각 표시 — "M:SS" 또는 "MM:SS" 포맷. */
+private fun formatMmSs(ms: Long): String {
+    val totalSec = (ms / 1000).coerceAtLeast(0)
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "$m:${s.toString().padStart(2, '0')}"
+}
+
 private fun parseArgbHexColor(hex: String): Color {
     val cleaned = hex.removePrefix("#")
     val v = runCatching { cleaned.toLong(16) }.getOrNull() ?: return Color.White

@@ -54,6 +54,8 @@ targets:
           UIColorName: ""
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         # UIScene lifecycle 채택 — iOS 가 곧 강제. AppDelegate 는 앱 단위,
         # SceneDelegate 는 window/URL 단위로 분리.
         UIApplicationSceneManifest:
