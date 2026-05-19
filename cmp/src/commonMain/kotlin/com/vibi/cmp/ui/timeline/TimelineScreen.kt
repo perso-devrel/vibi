@@ -78,6 +78,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material3.DropdownMenu
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.SpeakerPalette
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.platform.StemMixerSource
@@ -2092,29 +2093,14 @@ private fun UnifiedTimelineBar(
                     val pEnd = (p.endMs.toFloat() / totalMs).coerceIn(0f, 1f)
                     val pStartDp = totalWidthDp * pStart
                     val pWidthDp = totalWidthDp * (pEnd - pStart).coerceAtLeast(0f)
-                    Box(
-                        modifier = Modifier
-                            .offset(x = pStartDp)
-                            .width(pWidthDp)
-                            .height(procFillHeight)
-                            .align(Alignment.CenterStart)
-                            .background(accent.copy(alpha = 0.18f))
-                    )
-                    Box(
-                        modifier = Modifier
-                            .offset(x = pStartDp, y = procBorderInsetY)
-                            .width(pWidthDp)
-                            .height(TimelineBarSpec.RangeBorderThickness)
-                            .align(Alignment.TopStart)
-                            .background(accent.copy(alpha = 0.7f))
-                    )
-                    Box(
-                        modifier = Modifier
-                            .offset(x = pStartDp, y = -procBorderInsetY)
-                            .width(pWidthDp)
-                            .height(TimelineBarSpec.RangeBorderThickness)
-                            .align(Alignment.BottomStart)
-                            .background(accent.copy(alpha = 0.7f))
+                    RangeFillStrip(
+                        startDp = pStartDp,
+                        widthDp = pWidthDp,
+                        height = procFillHeight,
+                        playbackRegionHeight = playbackRegionHeight,
+                        accent = accent,
+                        fillAlpha = 0.18f,
+                        borderAlpha = 0.7f,
                     )
                     val progress = (p.progress.coerceIn(0, 100)) / 100f
                     if (progress > 0f) {
@@ -2144,47 +2130,28 @@ private fun UnifiedTimelineBar(
 
                 var fillBaseStartMs by remember { mutableStateOf(0L) }
                 var fillAccumPx by remember { mutableStateOf(0f) }
-                Box(
-                    modifier = Modifier
-                        .offset(x = rangeStartDp)
-                        .width(rangeWidthDp)
-                        .height(rangeFillHeight)
-                        .align(Alignment.CenterStart)
-                        .background(accent.copy(alpha = 0.32f))
-                        .pointerInput(totalWidthPx, totalMs) {
-                            detectHorizontalDragGestures(
-                                onDragStart = {
-                                    fillBaseStartMs = currentRangeStart
-                                    fillAccumPx = 0f
-                                },
-                                onHorizontalDrag = { _, dragAmount ->
-                                    fillAccumPx += dragAmount
-                                    if (totalWidthPx > 0f && totalMs > 0L) {
-                                        val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
-                                        onTranslateRange((fillBaseStartMs + deltaMs).toLong())
-                                    }
+                RangeFillStrip(
+                    startDp = rangeStartDp,
+                    widthDp = rangeWidthDp,
+                    height = rangeFillHeight,
+                    playbackRegionHeight = playbackRegionHeight,
+                    accent = accent,
+                    fillAlpha = 0.32f,
+                    fillModifier = Modifier.pointerInput(totalWidthPx, totalMs) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                fillBaseStartMs = currentRangeStart
+                                fillAccumPx = 0f
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                fillAccumPx += dragAmount
+                                if (totalWidthPx > 0f && totalMs > 0L) {
+                                    val deltaMs = (fillAccumPx / totalWidthPx) * totalMs
+                                    onTranslateRange((fillBaseStartMs + deltaMs).toLong())
                                 }
-                            )
-                        }
-                )
-                // 파형 strip 의 상/하 엣지에 정렬되는 accent border — 선택 영역을 박스처럼 감싸 BGM 선택의
-                // border 시각과 통일.
-                val rangeBorderInsetY = (playbackRegionHeight - rangeFillHeight) / 2
-                Box(
-                    modifier = Modifier
-                        .offset(x = rangeStartDp, y = rangeBorderInsetY)
-                        .width(rangeWidthDp)
-                        .height(TimelineBarSpec.RangeBorderThickness)
-                        .align(Alignment.TopStart)
-                        .background(accent)
-                )
-                Box(
-                    modifier = Modifier
-                        .offset(x = rangeStartDp, y = -rangeBorderInsetY)
-                        .width(rangeWidthDp)
-                        .height(TimelineBarSpec.RangeBorderThickness)
-                        .align(Alignment.BottomStart)
-                        .background(accent)
+                            }
+                        )
+                    },
                 )
 
                 // 좌/우 chevron 핸들 — BGM 트림 핸들과 동일 디자인. hit zone 은 파형 높이만큼만.
@@ -2711,7 +2678,7 @@ private fun TimelineWaveformBackground(
                     peaks = peaks,
                     volume = sel.volume,
                     totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
-                    color = stemBarColor(sel.stemId, tokens, fallback = highlightBarColor),
+                    color = SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor),
                 )
             }
             DirectiveScaleOverlay(
@@ -2843,21 +2810,47 @@ private data class DirectiveScaleOverlay(
     val sourceOffsetMs: Long = 0L,
 )
 /**
- * 음원분리 stem 의 시각 색. SoundDeck chip ([com.vibi.cmp.theme.SpeakerPalette]) 과 동일 매핑 —
- * 같은 화자가 데크와 타임라인에서 같은 색으로 인지된다.
+ * 파형 strip 폭만큼 채우는 fill + 상/하 accent border. 음원분리 진행 overlay 와 구간 선택 fill 가
+ * 같은 시각 위계를 공유하도록 정렬·border inset 식을 한 곳에 모은다. [fillModifier] 로 fill Box 에
+ * gesture/interaction 부착 (구간 선택은 drag 평행 이동, 진행 overlay 는 정적).
  */
-private fun stemBarColor(
-    stemId: String,
-    tokens: com.vibi.cmp.theme.VibiColors,
-    fallback: Color,
-): Color = when (com.vibi.shared.domain.model.Stem.kindFromId(stemId)) {
-    com.vibi.shared.domain.model.StemKind.SPEAKER ->
-        com.vibi.cmp.theme.SpeakerPalette.colorFor(
-            com.vibi.shared.domain.model.Stem.speakerIndexFromId(stemId),
-            tokens,
-        )
-    com.vibi.shared.domain.model.StemKind.BACKGROUND -> tokens.mutedText
-    else -> fallback
+@Composable
+private fun BoxScope.RangeFillStrip(
+    startDp: androidx.compose.ui.unit.Dp,
+    widthDp: androidx.compose.ui.unit.Dp,
+    height: androidx.compose.ui.unit.Dp,
+    playbackRegionHeight: androidx.compose.ui.unit.Dp,
+    accent: Color,
+    fillAlpha: Float,
+    borderAlpha: Float = 1f,
+    fillModifier: Modifier = Modifier,
+) {
+    val borderInsetY = (playbackRegionHeight - height) / 2
+    Box(
+        modifier = Modifier
+            .offset(x = startDp)
+            .width(widthDp)
+            .height(height)
+            .align(Alignment.CenterStart)
+            .background(accent.copy(alpha = fillAlpha))
+            .then(fillModifier)
+    )
+    Box(
+        modifier = Modifier
+            .offset(x = startDp, y = borderInsetY)
+            .width(widthDp)
+            .height(TimelineBarSpec.RangeBorderThickness)
+            .align(Alignment.TopStart)
+            .background(accent.copy(alpha = borderAlpha))
+    )
+    Box(
+        modifier = Modifier
+            .offset(x = startDp, y = -borderInsetY)
+            .width(widthDp)
+            .height(TimelineBarSpec.RangeBorderThickness)
+            .align(Alignment.BottomStart)
+            .background(accent.copy(alpha = borderAlpha))
+    )
 }
 
 private data class StemPeakContribution(

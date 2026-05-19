@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
+import com.vibi.cmp.theme.SpeakerPalette
 import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.cmp.ui.components.VibiPanelCard
 
@@ -89,8 +90,7 @@ fun SoundCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val chipColor = when (model.kind) {
-                    SoundCardKind.SPEAKER ->
-                        com.vibi.cmp.theme.SpeakerPalette.colorFor(model.speakerIndex, tokens)
+                    SoundCardKind.SPEAKER -> SpeakerPalette.colorFor(model.speakerIndex, tokens)
                     SoundCardKind.VOICE_ALL -> tokens.accent
                     SoundCardKind.BACKGROUND -> tokens.mutedText
                     SoundCardKind.BGM -> tokens.accent.copy(alpha = 0.7f)
