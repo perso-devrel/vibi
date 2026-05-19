@@ -842,7 +842,14 @@ fun TimelineScreen(
                 bgmPeaksByUri = bgmPeaks,
                 // segment edit 모드에서도 BGM 표시 — range-edit (volume/speed/duplicate/delete) 가
                 // applyBgmRange* 헬퍼로 BGM 까지 적용하므로 사용자가 lane 을 보면서 편집 가능.
-                showBgm = showAudioSourcesContent,
+                // 음원분리 흐름 전체에서는 BGM 레인 숨김 — 영상 트랙만 노출해 화자/배경음 stem 선택에 집중.
+                //   - 구간 선택 단계: isRangeSelecting && !isSegmentEditMode (음원분리 IconLabelCard
+                //     → onEnterRangeMode 진입).
+                //   - sheet/processing 단계: showAudioSeparationSheet (BGM 분리 path 는 range mode
+                //     없이 곧장 sheet 만 열리므로 별도 가드 필요).
+                showBgm = showAudioSourcesContent &&
+                    !state.showAudioSeparationSheet &&
+                    !(state.isRangeSelecting && !state.isSegmentEditMode),
                 // BGM 타깃 모드 — editTargets 에 Bgm 포함 시 영상 strip 의 range overlay 숨기고 BGM lane
                 // 에 동일 디자인의 range fill 노출. 영상/BGM 동시 선택 막아 사용자 의도가 분명한 트랙에만 apply.
                 bgmRangeMode = state.editTargets.hasBgm(),
