@@ -28,6 +28,13 @@ import platform.Foundation.NSNumber
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
+import kotlin.math.pow
+
+/**
+ * `WaveformExtractor.ios.kt` 의 `scaleForDisplay` 가 RMS 를 이 값으로 나눠 표시용 0..1 로 정규화.
+ * live recorder 도 같은 ref 를 써야 post-recording WaveformPlayBar 와 막대 높이가 일치.
+ */
+private const val WAVEFORM_DISPLAY_REF = 0.4f
 
 /**
  * iOS: AVAudioRecorder + AVAudioSession (.playAndRecord). m4a (AAC) 로 cacheDir 저장.
@@ -52,11 +59,16 @@ actual fun rememberAudioRecorder(
                 val rec = recorder ?: return 0f
                 if (!recording) return 0f
                 rec.updateMeters()
-                // peakPower 는 dB (음수). -60dB → 0, 0dB → 1 로 매핑.
-                val db = rec.peakPowerForChannel(0u)
+                // averagePower (RMS 근사, dB) → linear → extractAudioPeaks 의 scaleForDisplay 와
+                // 동일한 ref(0.4) 로 정규화. 이렇게 해야 같은 WaveformPlayBar 에 들어가도 막대 분포
+                // 가 post-recording 파형과 동일.
+                //   - peakPower 는 transient 라 voice 도 ~0.7-0.9 로 saturate → 막대 too tall.
+                //   - averagePower 는 RMS 와 같은 평균 에너지 척도 → bucket RMS 와 분포 매치.
+                val db = rec.averagePowerForChannel(0u)
                 if (db.isNaN()) return 0f
-                val clamped = db.coerceIn(-60f, 0f)
-                return ((clamped + 60f) / 60f).coerceIn(0f, 1f)
+                val clampedDb = db.coerceIn(-60f, 0f)
+                val linear = 10f.pow(clampedDb / 20f)
+                return (linear / WAVEFORM_DISPLAY_REF).coerceIn(0f, 1f)
             }
 
             override fun start() {

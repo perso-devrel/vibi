@@ -17,6 +17,15 @@ import com.vibi.shared.platform.currentTimeMillis
 import java.io.File
 
 /**
+ * WaveformExtractor.scaleForDisplay 와 동일 ref. live recorder amplitude 를 같은 ref 로 정규화해야
+ * post-recording WaveformPlayBar 와 막대 분포가 일치.
+ */
+private const val WAVEFORM_DISPLAY_REF = 0.4f
+
+/** peak amplitude → RMS 근사. 일반 voice 의 peak/RMS 비. */
+private const val PEAK_TO_RMS = 3f
+
+/**
  * Android: MediaRecorder + RECORD_AUDIO 권한. AAC m4a 로 cacheDir 에 저장.
  */
 @Composable
@@ -59,10 +68,15 @@ actual fun rememberAudioRecorder(
             override val currentLevel: Float get() {
                 val rec = recorder ?: return 0f
                 if (!recording) return 0f
+                // maxAmplitude 는 16-bit PCM peak (0..32767) — 직전 호출 이후의 max.
                 val amp = runCatching { rec.maxAmplitude }.getOrDefault(0)
                 if (amp <= 0) return 0f
-                val norm = (kotlin.math.log10(amp.toFloat()) - 1.5f) / 3.0f
-                return norm.coerceIn(0f, 1f)
+                // peak → linear (0..1). 일반 음성 peak 는 RMS 의 ~3x 라 PEAK_TO_RMS 로 보정 후
+                // WaveformExtractor.scaleForDisplay 와 동일한 ref(0.4) 로 정규화 → 같은 분포.
+                // (iOS extractAudioPeaks 와 표시 ref 를 통일.)
+                val linearPeak = amp.toFloat() / 32767f
+                val approxRms = linearPeak / PEAK_TO_RMS
+                return (approxRms / WAVEFORM_DISPLAY_REF).coerceIn(0f, 1f)
             }
 
             override fun start() {

@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,9 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -60,8 +56,6 @@ import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
-import kotlin.math.max
-import kotlin.math.sqrt
 import kotlin.time.TimeSource
 import kotlinx.coroutines.delay
 
@@ -367,81 +361,24 @@ private fun RecordingBody(
             fontWeight = FontWeight.Light,
             fontFamily = FontFamily.Monospace,
         )
-        LiveLevelBars(
-            levels = levels,
-            barColor = SheetTextPrimary,
-            guideColor = VoiceMemoRed,
-            trackBg = Color.Transparent,
+        // 녹음 끝난 후 PreviewBody 의 파형과 완전히 동일한 시각 — 같은 컴포저블, 같은 색상 override.
+        // peaks = 라이브 amplitude 버퍼. duration/progress 모두 0 이라 playhead 안 그림.
+        // levels 가 비어있을 때 (buffer 가 아직 비어있을 때) WaveformPlayBar 가 fallback progress bar
+        // 를 그리는 걸 막기 위해 최소 1 sample 의 0f 를 보장.
+        val safeLevels = if (levels.isEmpty()) listOf(0f) else levels
+        WaveformPlayBar(
+            peaks = safeLevels,
+            progressMs = 0L,
+            durationMs = 0L,
+            isPlaying = false,
+            barColorOverride = SheetTextPrimary.copy(alpha = 0.5f),
+            playedColorOverride = SheetTextPrimary,
+            playheadColorOverride = VoiceMemoRed,
+            trackBgOverride = Color.Transparent,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(140.dp),
         )
-    }
-}
-
-/**
- * 녹음 중 amplitude rolling buffer 시각화 — iPhone Voice Memos 식.
- *
- * - **가운데 빨간 세로 가이드라인** 이 "현재 시점 (playhead)".
- * - 새 amplitude sample 은 가이드라인 바로 좌측 (가장 최신) 에 들어가고, 매 tick 마다
- *   기존 막대들이 한 칸씩 더 왼쪽으로 시프트. 좌측 끝에 이르면 사라짐.
- * - **우측 절반은 비어 있음** — 아직 녹음 안 된 미래 영역.
- * - 좌측 끝 alpha 0.2 → 가운데 alpha 1.0 으로 선형 fade — 시간이 흐를수록 흐려지는 envelope.
- * - 단일 색 ([barColor]). raw amplitude → 막대 높이 (sqrt 보정 없음).
- */
-@Composable
-private fun LiveLevelBars(
-    levels: List<Float>,
-    barColor: Color,
-    guideColor: Color,
-    trackBg: Color,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(trackBg),
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val barPx = 3.dp.toPx()
-            val gapPx = 2.dp.toPx()
-            val slotPx = barPx + gapPx
-            val centerX = size.width / 2f
-            // 좌측 영역에만 amplitude 막대가 그려짐 — 우측은 미래라 비어 있음.
-            val maxBarsLeft = (centerX / slotPx).toInt().coerceAtLeast(1)
-            val visible = when {
-                levels.isEmpty() -> emptyList()
-                levels.size >= maxBarsLeft -> levels.subList(levels.size - maxBarsLeft, levels.size)
-                else -> List(maxBarsLeft - levels.size) { 0f } + levels
-            }
-            val cy = size.height / 2f
-            val maxHalfHeight = size.height / 2f - 4f
-            val minHalfHeight = 1.dp.toPx()
-            val cornerR = CornerRadius(barPx / 2f, barPx / 2f)
-            val total = visible.size.coerceAtLeast(1)
-            for (i in visible.indices) {
-                val level = visible[i].coerceIn(0f, 1f)
-                val h = max(minHalfHeight, level * maxHalfHeight)
-                // i=total-1 (최신) 막대가 가이드라인 바로 좌측에 위치. 좌측으로 갈수록 더 과거.
-                val offsetFromCenter = (total - 1 - i) * slotPx
-                val x = centerX - offsetFromCenter - barPx - gapPx
-                // alpha fade — 좌측 끝(i=0) 흐림 → 가운데 직전(i=total-1) 진함.
-                val fade = 0.2f + 0.8f * (i.toFloat() / (total - 1).coerceAtLeast(1))
-                drawRoundRect(
-                    color = barColor.copy(alpha = barColor.alpha * fade),
-                    topLeft = Offset(x, cy - h),
-                    size = Size(barPx, h * 2f),
-                    cornerRadius = cornerR,
-                )
-            }
-            // 가운데 세로 가이드라인 — "현재 시점".
-            val guideWidthPx = 2.dp.toPx()
-            drawRect(
-                color = guideColor,
-                topLeft = Offset(centerX - guideWidthPx / 2f, 0f),
-                size = Size(guideWidthPx, size.height),
-            )
-        }
     }
 }
 
@@ -606,5 +543,5 @@ private fun formatElapsed(ms: Long): String {
 /** ~45% 의 화면 영역은 타임라인을 그대로 노출 — peek 모드. 큰 시간 + 큰 파형 + 큰 정지 버튼 호흡감. */
 private const val SHEET_HEIGHT_FRACTION = 0.55f
 
-/** 50ms 폴링 * 240 = 12초 윈도우. 더 길면 좌측 슬롯이 점차 sliding out. */
+/** 50ms 폴링 * 240 = 12초 윈도우. WaveformPlayBar 가 이 버퍼를 canvas 폭으로 리샘플. */
 private const val LIVE_BUFFER_CAP = 240
