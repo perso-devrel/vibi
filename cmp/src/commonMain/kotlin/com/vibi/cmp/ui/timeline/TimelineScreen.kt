@@ -865,9 +865,17 @@ fun TimelineScreen(
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                 ) {
                     if (!state.isSegmentEditMode) {
+                        // 탭 후 VM state 가 isRangeSelecting=false 로 emit 되어 row 가 사라지기 전까지
+                        // 사용자가 다시 탭하면 같은 구간이 중복 큐잉됨. 첫 탭 즉시 disable 로 가드.
+                        var submitting by remember(state.pendingRangeStartMs, state.pendingRangeEndMs) {
+                            mutableStateOf(false)
+                        }
                         Button(
                             modifier = Modifier.weight(1f),
+                            enabled = !submitting,
                             onClick = {
+                                if (submitting) return@Button
+                                submitting = true
                                 val segId = state.segments.firstOrNull()?.id ?: return@Button
                                 viewModel.onCancelRangeMode()
                                 // 시트 안 띄우고 바로 분리 시작 — Perso 가 화자 자동 감지라 추가 입력 불필요.
