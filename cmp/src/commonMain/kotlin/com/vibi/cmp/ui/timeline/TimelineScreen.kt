@@ -10,6 +10,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -1908,15 +1910,80 @@ private fun UnifiedTimelineBar(
         }
     } else Modifier
 
+    // CapCut 식 두손가락 zoom — content 폭을 viewport*zoom 으로 늘리고 horizontalScroll 로 pan.
+    // 내부 ms↔px 수식은 그대로 — totalWidthDp/Px 가 contentWidth 를 가리키므로 자연 스케일.
+    val scrollState = rememberScrollState()
+    var zoom by remember(totalMs) { mutableStateOf(1f) }
+    val minZoom = 1f
+    val maxZoom = 10f
+
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .height(totalHeight)
             .clip(RoundedCornerShape(6.dp))
-            .background(trackColor.copy(alpha = 0.45f))
     ) {
-        val totalWidthDp = maxWidth
-        val totalWidthPx = with(density) { totalWidthDp.toPx() }
+        val viewportWidthDp = maxWidth
+        val viewportWidthPx = with(density) { viewportWidthDp.toPx() }
+        val contentWidthDp = viewportWidthDp * zoom
+        val contentWidthPx = viewportWidthPx * zoom
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(totalHeight)
+                .horizontalScroll(scrollState)
+                .pointerInput(totalMs) {
+                    // 2-finger 만 pinch + pan. 1-finger 는 무시(inner handlers 가 처리).
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var prevCentroid: Offset? = null
+                        var prevSpan = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.size < 2) {
+                                prevCentroid = null
+                                prevSpan = 0f
+                                if (pressed.isEmpty()) break
+                                continue
+                            }
+                            val centroid = pressed.fold(Offset.Zero) { a, c -> a + c.position } /
+                                pressed.size.toFloat()
+                            val span = pressed.fold(0f) { a, c ->
+                                a + (c.position - centroid).getDistance()
+                            } / pressed.size
+                            val pc = prevCentroid
+                            val ps = prevSpan
+                            if (pc != null && ps > 0f && span > 0f) {
+                                val zoomFactor = span / ps
+                                val newZoom = (zoom * zoomFactor).coerceIn(minZoom, maxZoom)
+                                val actualFactor = newZoom / zoom
+                                val panDx = centroid.x - pc.x
+                                // focal point = centroid. 줌 후에도 centroid 위치 유지 + pan 적용.
+                                val oldScroll = scrollState.value.toFloat()
+                                val maxScroll = (viewportWidthPx * newZoom - viewportWidthPx)
+                                    .coerceAtLeast(0f)
+                                val targetScroll = (actualFactor * (oldScroll + centroid.x) -
+                                    centroid.x - panDx).coerceIn(0f, maxScroll)
+                                zoom = newZoom
+                                scrollState.dispatchRawDelta(targetScroll - oldScroll)
+                                pressed.forEach { it.consume() }
+                            }
+                            prevCentroid = centroid
+                            prevSpan = span
+                        }
+                    }
+                }
+        ) {
+        Box(
+            modifier = Modifier
+                .width(contentWidthDp)
+                .height(totalHeight)
+                .background(trackColor.copy(alpha = 0.45f))
+        ) {
+        val totalWidthDp = contentWidthDp
+        val totalWidthPx = contentWidthPx
 
         // === 상단 playback region — 기존 단일 바 56dp 의 모든 시각/제스처가 여기 안에서 동작 ===
         Box(
@@ -2489,6 +2556,8 @@ private fun UnifiedTimelineBar(
         }
 
         // BGM lane 수동 조절 pill 은 폐기됨 — lane 은 선택 시 자동 pack 으로 결정.
+        }  // close inner content Box (zoom-scaled width)
+        }  // close horizontalScroll wrapper Box
     }
 }
 
