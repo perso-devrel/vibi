@@ -464,10 +464,8 @@ fun TimelineScreen(
     com.vibi.cmp.platform.LockLandscape(enabled = fullscreenOpen)
 
     Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
-    // 하단바 노출 중일 때 Column 마지막 콘텐츠가 가려지지 않도록 bottom padding 예약.
-    val bottomBarVisible = state.isSegmentEditMode ||
-        (state.selectedBgmClipId != null && !state.isLocalizationBusy())
-    val bottomReserve = if (bottomBarVisible) 160.dp else 0.dp
+    val bottomTarget = state.bottomActionTarget()
+    val bottomReserve = if (bottomTarget !is BottomActionTarget.None) BottomBarReserveDp else 0.dp
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1444,9 +1442,10 @@ fun TimelineScreen(
         }
     }
 
-    // 통합 하단바 — 영상 다듬기 모드면 영상 range 액션, BGM 선택 상태면 BGM 액션. 그 외엔 미렌더.
+    // 통합 하단바 — bottomTarget 가 None 이 아니면 슬라이드업.
     // AudioInsertSheet 가 열리면 sheet 가 본 bar 위로 겹쳐 자동 가림 (sheet 선언이 뒤라 z-order 최상단).
     TimelineActionBottomBar(
+        target = bottomTarget,
         state = state,
         viewModel = viewModel,
         modifier = Modifier.align(Alignment.BottomCenter),
@@ -2855,27 +2854,39 @@ private data class DirectiveScaleOverlay(
     val includeOriginal: Boolean = true,
     val sourceOffsetMs: Long = 0L,
 )
+/** 하단바 노출 시 Column 마지막 콘텐츠가 가려지지 않도록 예약하는 padding 높이. */
+private val BottomBarReserveDp = 160.dp
+
+/** 현재 하단 액션바의 표시 대상 — 단일 진실. TimelineScreen 의 padding 계산 + 바 내부 분기 양쪽 공유. */
+private sealed interface BottomActionTarget {
+    data object None : BottomActionTarget
+    data object Video : BottomActionTarget
+    data class Bgm(val clip: com.vibi.shared.domain.model.BgmClip) : BottomActionTarget
+}
+
+private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): BottomActionTarget {
+    if (isSegmentEditMode) return BottomActionTarget.Video
+    if (isLocalizationBusy()) return BottomActionTarget.None
+    val id = selectedBgmClipId ?: return BottomActionTarget.None
+    val clip = bgmClips.firstOrNull { it.id == id } ?: return BottomActionTarget.None
+    return BottomActionTarget.Bgm(clip)
+}
+
 /**
  * 통합 하단 액션바 — 영상 다듬기 모드면 영상 range 편집 액션, BGM 선택 상태면 BGM 편집 액션을
- * 같은 [EditActionsPanel] 슬롯으로 렌더. 둘 다 아니면 미렌더 (0 height). 사용자가 timeline 위에서
- * 영상/BGM 을 탭해 진입 → 하단바로 thumb 도달 거리에서 조작.
+ * 같은 [EditActionsPanel] 슬롯으로 렌더. 둘 다 아니면 미렌더. 사용자가 timeline 위에서 영상/BGM 을
+ * 탭해 진입 → 하단바로 thumb 도달 거리에서 조작.
  */
 @Composable
 private fun BoxScope.TimelineActionBottomBar(
+    target: BottomActionTarget,
     state: com.vibi.shared.ui.timeline.TimelineUiState,
     viewModel: com.vibi.shared.ui.timeline.TimelineViewModel,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
-    // 우선순위: 영상 다듬기 > BGM 선택. (segment edit 중 BGM 선택은 range-edit path 라 segment 가 win.)
-    val showVideoEdit = state.isSegmentEditMode
-    val selectedBgm = if (!showVideoEdit) {
-        state.bgmClips.firstOrNull { it.id == state.selectedBgmClipId }
-            ?.takeIf { !state.isLocalizationBusy() }
-    } else null
-    val visible = showVideoEdit || selectedBgm != null
     androidx.compose.animation.AnimatedVisibility(
-        visible = visible,
+        visible = target !is BottomActionTarget.None,
         modifier = modifier,
         enter = androidx.compose.animation.slideInVertically(
             animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
@@ -2891,8 +2902,9 @@ private fun BoxScope.TimelineActionBottomBar(
                 .navigationBarsPadding()
                 .padding(horizontal = VibiSpacing.base, vertical = VibiSpacing.sm),
         ) {
-            when {
-                showVideoEdit -> com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
+            when (target) {
+                is BottomActionTarget.None -> Unit
+                is BottomActionTarget.Video -> com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
                     title = "구간 편집",
                     volume = state.pendingRangeVolume,
                     speed = state.pendingRangeSpeed,
@@ -2905,19 +2917,19 @@ private fun BoxScope.TimelineActionBottomBar(
                     onDelete = { viewModel.onDeleteRange() },
                     onCancel = { viewModel.onFinishSegmentEdit() },
                 )
-                selectedBgm != null -> {
-                    val clipId = selectedBgm.id
+                is BottomActionTarget.Bgm -> {
+                    val clip = target.clip
                     com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
                         title = "BGM 편집",
-                        volume = selectedBgm.volumeScale,
-                        speed = selectedBgm.speedScale,
-                        onVolumeChange = { viewModel.onUpdateBgmVolume(clipId, it) },
+                        volume = clip.volumeScale,
+                        speed = clip.speedScale,
+                        onVolumeChange = { viewModel.onUpdateBgmVolume(clip.id, it) },
                         onSpeedChange = { /* commit only — preview 없음 */ },
-                        onApplyVolume = { viewModel.onUpdateBgmVolume(clipId, it) },
-                        onApplySpeed = { viewModel.onApplyBgmClipSpeed(clipId, it) },
+                        onApplyVolume = { viewModel.onUpdateBgmVolume(clip.id, it) },
+                        onApplySpeed = { viewModel.onApplyBgmClipSpeed(clip.id, it) },
                         secondaryActionLabel = "배경음 제거",
-                        onSecondaryAction = { viewModel.onStartBgmSeparation(clipId) },
-                        onDelete = { viewModel.onDeleteBgmClip(clipId) },
+                        onSecondaryAction = { viewModel.onStartBgmSeparation(clip.id) },
+                        onDelete = { viewModel.onDeleteBgmClip(clip.id) },
                         onCancel = { viewModel.onSelectBgmClip(null) },
                     )
                 }

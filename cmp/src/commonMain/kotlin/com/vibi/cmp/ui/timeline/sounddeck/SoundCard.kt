@@ -139,59 +139,32 @@ fun SoundCard(
                 }
             }
 
-            AnimatedVisibility(visible = expanded) {
-                Column(
+            // BGM 은 timeline 클립 탭 → 하단바로 편집 진입. SoundCard 의 expand 영역은 stem 전용
+            // 볼륨 슬라이더만 — BGM 카드는 long-press 가 없어 expanded 가 영영 false 라 본 영역 미렌더.
+            AnimatedVisibility(visible = expanded && canLongPressExpand) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.alpha(if (disabled) 0.4f else 1f),
-                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
                 ) {
-                    if (model.kind == SoundCardKind.BGM &&
-                        onApplySpeed != null && onSecondaryAction != null && onDelete != null
-                    ) {
-                        // BGM 다듬기 — 영상 다듬기와 동일한 4-액션(볼륨/속도/배경음 제거/삭제) 패널.
-                        // 볼륨은 슬라이더 드래그 = 즉시 적용(onUpdateVolume → bgm.volumeScale).
-                        // 속도는 ripple 효과(뒤 BGM 클립 startMs shift), 배경음 제거는 음원분리 sheet 진입.
-                        // 패널 닫기는 카드 long-press collapse 로 — onCancel 생략.
-                        // model.speed 가 바뀔 때만 pendingSpeed 재초기화 — 사용자가 드래그 중인
-                        // 값이 외부 재합성으로 덮어쓰이는 사고 방지.
-                        var pendingSpeed by remember(model.speed) { mutableStateOf(model.speed) }
-                        EditActionsPanel(
-                            title = "",
-                            volume = model.volume,
-                            speed = pendingSpeed,
-                            onVolumeChange = { if (!disabled) onUpdateVolume(it) },
-                            onSpeedChange = { pendingSpeed = it },
-                            onApplyVolume = { if (!disabled) onUpdateVolume(it) },
-                            onApplySpeed = { if (!disabled) onApplySpeed(it) },
-                            secondaryActionLabel = "배경음 제거",
-                            onSecondaryAction = { if (!disabled) onSecondaryAction() },
-                            onDelete = { if (!disabled) onDelete() },
-                            onCancel = null,
-                        )
-                    } else {
-                        // stem 카드 — 재생은 헤더 IconButton 으로 노출되므로, 펼친 패널엔 볼륨 슬라이더만.
-                        // 삭제는 stem 자체엔 없음 (분리 결과는 구간 단위로만 wipe).
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "볼륨",
-                                modifier = Modifier.width(VibiSpacing.xxl),
-                                style = typo.bodySm,
-                                color = tokens.mutedText,
-                            )
-                            Slider(
-                                modifier = Modifier.weight(1f),
-                                value = model.volume.coerceIn(0f, 2f),
-                                onValueChange = { if (!disabled) onUpdateVolume(it) },
-                                valueRange = 0f..2f,
-                                enabled = !disabled && model.selected,
-                            )
-                            Text(
-                                "${(model.volume * 100).toInt()}%",
-                                modifier = Modifier.width(VibiSpacing.xxl),
-                                style = typo.bodySm,
-                                color = tokens.mutedText,
-                            )
-                        }
-                    }
+                    Text(
+                        "볼륨",
+                        modifier = Modifier.width(VibiSpacing.xxl),
+                        style = typo.bodySm,
+                        color = tokens.mutedText,
+                    )
+                    Slider(
+                        modifier = Modifier.weight(1f),
+                        value = model.volume.coerceIn(0f, 2f),
+                        onValueChange = { if (!disabled) onUpdateVolume(it) },
+                        valueRange = 0f..2f,
+                        enabled = !disabled && model.selected,
+                    )
+                    Text(
+                        "${(model.volume * 100).toInt()}%",
+                        modifier = Modifier.width(VibiSpacing.xxl),
+                        style = typo.bodySm,
+                        color = tokens.mutedText,
+                    )
                 }
             }
         }
