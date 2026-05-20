@@ -18,9 +18,8 @@ import com.vibi.shared.domain.usecase.draft.ExpireOldDraftsUseCase
 import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.input.ValidateVideoUseCase
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -28,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 
@@ -96,24 +96,33 @@ class InputViewModel constructor(
         viewModelScope.launch { runCatching { expireOldDrafts() } }
         // drafts 영속 상태 관찰 — 자동 저장이 EditProject 를 갱신할 때마다 카드도 갱신.
         //
-        // 각 project 의 (firstSourceUri 조회 + JPEG 썸네일 추출) 를 모두 병렬 async/awaitAll 로 묶음.
-        // 썸네일은 cache 히트 시 빠른 path 반환 (file existence check 만), 첫 추출만 ~50ms.
-        // VideoPlayer(이전 구현) 의 ExoPlayer/AVPlayer 다중 인스턴스를 회피하려는 핫패스 최적화.
+        // Progressive: project 메타 (썸네일 없이) 를 먼저 emit → UI 가 즉시 카드 노출 + skeleton.
+        // 이후 각 project 의 (firstSourceUri + 썸네일 추출) 을 병렬로 진행, 완료되는 대로 그 카드만
+        // updateAt-stable diff 로 교체. 이전엔 awaitAll 로 모든 썸네일 끝날 때까지 카드 안 보임 (N×100-300ms).
         editProjectRepository.observeAllProjects()
             .onEach { projects ->
-                val summaries = coroutineScope {
-                    projects.map { project ->
-                        async {
+                // 1) 즉시 placeholder 카드 노출
+                val placeholders = projects.map { it.toDraftSummary(thumbnailPath = null) }
+                _uiState.value = _uiState.value.copy(drafts = placeholders)
+                // 2) 병렬 썸네일 추출 — 완료되는 대로 그 카드만 교체
+                coroutineScope {
+                    projects.forEach { project ->
+                        launch {
                             val firstUri = runCatching {
                                 segmentRepository.getFirstSourceUri(project.projectId)
-                            }.getOrNull()
-                            val thumbPath = firstUri
-                                ?.let { runCatching { thumbnailExtractor.extractThumbnail(it) }.getOrNull() }
-                            project.toDraftSummary(thumbPath)
+                            }.getOrNull() ?: return@launch
+                            val thumbPath = runCatching {
+                                thumbnailExtractor.extractThumbnail(firstUri)
+                            }.getOrNull() ?: return@launch
+                            _uiState.update { s ->
+                                s.copy(drafts = s.drafts.map { d ->
+                                    if (d.projectId == project.projectId)
+                                        project.toDraftSummary(thumbPath) else d
+                                })
+                            }
                         }
-                    }.awaitAll()
+                    }
                 }
-                _uiState.value = _uiState.value.copy(drafts = summaries)
             }
             .launchIn(viewModelScope)
     }

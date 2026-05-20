@@ -13,6 +13,8 @@ import platform.Foundation.NSFileManager
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.writeToFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import platform.UIKit.UIImage
 import platform.UIKit.UIImageJPEGRepresentation
 
@@ -25,34 +27,34 @@ import platform.UIKit.UIImageJPEGRepresentation
  */
 class IosVideoThumbnailExtractor : VideoThumbnailExtractor {
 
-    override suspend fun extractThumbnail(uri: String, atMs: Long): String? {
+    override suspend fun extractThumbnail(uri: String, atMs: Long): String? = withContext(Dispatchers.Default) {
+        // copyCGImageAtTime + JPEG encode + writeToFile 가 100-300ms 동기 디스크 호출.
+        // InputViewModel 이 모든 draft 의 썸네일을 awaitAll 로 묶어 추출하기 때문에 caller dispatcher
+        // (Main) 에서 동작하면 N drafts × 100-300ms = 첫 진입 시 UI freeze.
         val cacheDir = "${cacheDirectory()}/thumbs"
         ensureDir(cacheDir)
         val cachePath = "$cacheDir/${uri.hashCode().toUInt()}_${atMs}.jpg"
-        if (NSFileManager.defaultManager.fileExistsAtPath(cachePath)) return cachePath
+        if (NSFileManager.defaultManager.fileExistsAtPath(cachePath)) return@withContext cachePath
 
-        // resolver: 상대 / 절대 / file:// / 옛 UUID remap.
-        val url = resolveStoredUriToFileUrl(uri) ?: return null
+        val url = resolveStoredUriToFileUrl(uri) ?: return@withContext null
         val asset: AVAsset = AVURLAsset(
             uRL = url,
             options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to true)
         )
         val generator = AVAssetImageGenerator(asset).apply {
             appliesPreferredTrackTransform = true
-            // 너무 큰 프레임은 메모리 부담 — 적당히 다운샘플 (썸네일 용도).
             maximumSize = CGSizeMake(720.0, 720.0)
         }
 
-        // 1초 = 600 timescale (CMTime convention).
         val time = CMTimeMake(value = atMs * 600L / 1000L, timescale = 600)
         val cgImage = runCatching {
             generator.copyCGImageAtTime(requestedTime = time, actualTime = null, error = null)
-        }.getOrNull() ?: return null
+        }.getOrNull() ?: return@withContext null
 
         val uiImage = UIImage.imageWithCGImage(cgImage)
-        val data = UIImageJPEGRepresentation(uiImage, 0.8) ?: return null
+        val data = UIImageJPEGRepresentation(uiImage, 0.8) ?: return@withContext null
         val ok = data.writeToFile(cachePath, atomically = true)
-        return if (ok) cachePath else null
+        if (ok) cachePath else null
     }
 
     private fun cacheDirectory(): String {

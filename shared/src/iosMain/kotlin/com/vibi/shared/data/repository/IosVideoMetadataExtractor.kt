@@ -37,8 +37,9 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
             options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to true)
         )
 
-        // 로컬 파일은 보통 < 100ms 안에 callback. 2s 는 worst-case 가 사용자 wait 으로 직결돼 너무 길다.
-        withTimeoutOrNull(600) {
+        // iCloud-only / 대용량 영상은 async load 가 수백 ms 걸릴 수 있어 너무 짧으면 incomplete
+        // asset 으로 진행돼 tracks().firstOrNull() 가 null → "메타데이터 못 읽음" 분기. 2000ms 유지.
+        withTimeoutOrNull(2000) {
             suspendCancellableCoroutine<Unit> { cont ->
                 asset.loadValuesAsynchronouslyForKeys(
                     keys = listOf("duration", "tracks")
