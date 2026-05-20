@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -167,7 +168,7 @@ private fun AudioInsertSheetBody(
 
     // Recording 단계 — currentLevel rolling buffer + 경과 시간.
     var levelSnapshot by remember { mutableStateOf<List<Float>>(emptyList()) }
-    var elapsedMs by remember { mutableStateOf(0L) }
+    var elapsedMs by remember { mutableLongStateOf(0L) }
     LaunchedEffect(phase) {
         if (phase !is Phase.Recording) {
             levelSnapshot = emptyList()
@@ -190,7 +191,7 @@ private fun AudioInsertSheetBody(
     val audioMetadataExtractor = koinInject<AudioMetadataExtractor>()
     val previewUri = (phase as? Phase.Preview)?.uri
     var peaks by remember(previewUri) { mutableStateOf<List<Float>>(emptyList()) }
-    var actualDurationMs by remember(previewUri) { mutableStateOf(0L) }
+    var actualDurationMs by remember(previewUri) { mutableLongStateOf(0L) }
     LaunchedEffect(previewUri) {
         val uri = previewUri ?: return@LaunchedEffect
         val info = audioMetadataExtractor.extract(uri)

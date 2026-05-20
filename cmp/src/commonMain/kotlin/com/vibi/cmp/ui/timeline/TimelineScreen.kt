@@ -100,6 +100,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -2169,8 +2170,8 @@ private fun UnifiedTimelineBar(
                 val rangeWidthDp = totalWidthDp * (endFrac - startFrac).coerceAtLeast(0f)
                 val rangeFillHeight = TimelineBarSpec.WaveformHeight
 
-                var fillBaseStartMs by remember { mutableStateOf(0L) }
-                var fillAccumPx by remember { mutableStateOf(0f) }
+                var fillBaseStartMs by remember { mutableLongStateOf(0L) }
+                var fillAccumPx by remember { mutableFloatStateOf(0f) }
                 RangeFillStrip(
                     startDp = rangeStartDp,
                     widthDp = rangeWidthDp,
@@ -2259,8 +2260,8 @@ private fun UnifiedTimelineBar(
                 val selectedBgmForOverlay = bgmClips.firstOrNull { it.id == selectedBgmClipId }
                 val bgmLaneYDp = bgmRowStrideDp * (selectedBgmForOverlay?.lane?.coerceAtLeast(0) ?: 0)
                 if (bgmRangeMode && showRange && rangeEndMs > rangeStartMs) {
-                    var bgmFillBaseStartMs by remember { mutableStateOf(0L) }
-                    var bgmFillAccumPx by remember { mutableStateOf(0f) }
+                    var bgmFillBaseStartMs by remember { mutableLongStateOf(0L) }
+                    var bgmFillAccumPx by remember { mutableFloatStateOf(0f) }
                     // 평행 이동도 선택된 BGM 의 bounds 안에서만 — 영상 timeline 전체로 슬라이드되지 않도록.
                     val translateMin = selectedBgmForOverlay?.startMs ?: 0L
                     val translateMaxStart = selectedBgmForOverlay?.let {
@@ -2308,10 +2309,12 @@ private fun UnifiedTimelineBar(
                 }
                 // BGM 클립 색은 startMs 정렬 1-based 인덱스로 BgmPalette cycle (4색). 같은 통합 매핑을
                 // SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을 매칭.
-                val bgmIndexByClipId: Map<String, Int> = bgmClips
-                    .sortedBy { it.startMs }
-                    .withIndex()
-                    .associate { (i, b) -> b.id to (i + 1) }
+                // bgmClips 변경 시에만 재계산 (이전엔 매 recomposition 마다 sort+map allocate).
+                val bgmIndexByClipId: Map<String, Int> = remember(bgmClips) {
+                    bgmClips.sortedBy { it.startMs }
+                        .withIndex()
+                        .associate { (i, b) -> b.id to (i + 1) }
+                }
                 bgmClips.forEach { clip ->
                     // effectiveDurationMs 는 trim (sourceTrimStart/End) + speed 모두 반영 — 시각 막대 길이를
                     // BGM 의 실제 timeline 점유와 일치시켜야 사용자가 trim 결과를 즉시 확인 가능.
@@ -2319,8 +2322,8 @@ private fun UnifiedTimelineBar(
                     // 드래그 중에는 local override 만 갱신 → 시각이 손가락 따라 즉시. drag end 시점에 한 번만
                     // VM commit. 매 tick 마다 DB write/Flow emit 하던 lag 제거.
                     var dragOverrideMs by remember(clip.id) { mutableStateOf<Long?>(null) }
-                    var dragBaseStartMs by remember(clip.id) { mutableStateOf(0L) }
-                    var dragAccumPx by remember(clip.id) { mutableStateOf(0f) }
+                    var dragBaseStartMs by remember(clip.id) { mutableLongStateOf(0L) }
+                    var dragAccumPx by remember(clip.id) { mutableFloatStateOf(0f) }
                     // trim override — start 핸들 드래그 시 trimStart + startMs 동시 갱신, end 핸들은 trimEnd 만.
                     var trimOverrideStart by remember(clip.id) { mutableStateOf<Long?>(null) }
                     var trimOverrideEnd by remember(clip.id) { mutableStateOf<Long?>(null) }
@@ -2594,8 +2597,8 @@ private fun UnifiedTimelineBar(
             val hitWidth = TimelineBarSpec.PlaybackHitWidth
             val visualX = totalWidthDp * frac - hitWidth / 2
             val currentPosMs by rememberUpdatedState(playbackPositionMs)
-            var basePosMs by remember { mutableStateOf(0L) }
-            var accumPx by remember { mutableStateOf(0f) }
+            var basePosMs by remember { mutableLongStateOf(0L) }
+            var accumPx by remember { mutableFloatStateOf(0f) }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -3223,8 +3226,8 @@ private fun RangeHandle(
 ) {
     // hitHeight 는 명시 파라미터 — UnifiedTimelineBar 가 BGM region 까지 컨테이너가 늘어난 뒤에도
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
-    var baseMs by remember { mutableStateOf(0L) }
-    var accumPx by remember { mutableStateOf(0f) }
+    var baseMs by remember { mutableLongStateOf(0L) }
+    var accumPx by remember { mutableFloatStateOf(0f) }
     Box(
         modifier = Modifier
             .offset(x = offsetX, y = offsetY)
@@ -3431,11 +3434,11 @@ private fun BgmTrimHandle(
     visualAlignment: Alignment = Alignment.Center,
 ) {
     val clipRef by rememberUpdatedState(currentClip)
-    var accumPx by remember(clipId, side) { mutableStateOf(0f) }
+    var accumPx by remember(clipId, side) { mutableFloatStateOf(0f) }
     // base 는 onDragStart 시점의 trim/startMs snapshot. drag 중 absolute clamp 계산을 위해 보관.
-    var baseTrimStart by remember(clipId, side) { mutableStateOf(0L) }
-    var baseTrimEnd by remember(clipId, side) { mutableStateOf(0L) }
-    var baseStartMs by remember(clipId, side) { mutableStateOf(0L) }
+    var baseTrimStart by remember(clipId, side) { mutableLongStateOf(0L) }
+    var baseTrimEnd by remember(clipId, side) { mutableLongStateOf(0L) }
+    var baseStartMs by remember(clipId, side) { mutableLongStateOf(0L) }
     val minEffSrcDurMs = 200L
     Box(
         modifier = Modifier
