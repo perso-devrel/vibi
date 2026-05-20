@@ -2724,15 +2724,21 @@ private fun TimelineWaveformBackground(
                 val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 val peaks = stemPeaksByUrl[url] ?: return@mapNotNull null
                 if (peaks.isEmpty()) null
-                else StemPeakContribution(
-                    peaks = peaks,
-                    volume = sel.volume,
-                    totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
-                    // directive 가 펼친 상태면 화자별 색, 닫힘이면 단일 highlight (드러나지 않음).
-                    color = if (d.id in expandedDirectiveIds)
-                        SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor)
-                    else highlightBarColor,
-                )
+                else {
+                    val isSpeaker = com.vibi.shared.domain.model.Stem.kindFromId(sel.stemId) ==
+                        com.vibi.shared.domain.model.StemKind.SPEAKER
+                    StemPeakContribution(
+                        peaks = peaks,
+                        volume = sel.volume,
+                        totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
+                        // directive 가 펼친 상태면 화자별 색, 닫힘이면 단일 highlight (드러나지 않음).
+                        color = if (d.id in expandedDirectiveIds)
+                            SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor)
+                        else highlightBarColor,
+                        // dominant 색 후보는 speaker 만 — background 가 peak 가 항상 커서 화자 색을 묻는 사고 방지.
+                        colorCandidate = isSpeaker && d.id in expandedDirectiveIds,
+                    )
+                }
             }
             DirectiveScaleOverlay(
                 startMs = d.rangeStartMs,
@@ -2817,7 +2823,9 @@ private fun TimelineWaveformBackground(
                                     .coerceIn(0, c.peaks.size - 1)
                                 val v = c.peaks[idx] * c.volume
                                 sumSq += v * v
-                                if (v > dominantWeight) {
+                                // dominant 색은 colorCandidate (=speaker) 들 중에서만 선택.
+                                // background 가 peak 항상 커서 화자 색 묻는 사고 차단.
+                                if (c.colorCandidate && v > dominantWeight) {
                                     dominantWeight = v
                                     directiveBarColor = c.color
                                 }
@@ -3076,6 +3084,8 @@ private data class StemPeakContribution(
     val totalDurMs: Long,
     /** 시각 색 — SPEAKER 는 [SpeakerPalette], BACKGROUND/VOICE_ALL 은 기존 highlight 색. */
     val color: Color,
+    /** dominant 색 픽에서 후보 여부. BACKGROUND 가 peak 가 항상 커서 화자 색을 묻는 것 방지 위해 false. */
+    val colorCandidate: Boolean,
 )
 private data class SegmentSpan(
     val startMs: Long,
