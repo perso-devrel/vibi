@@ -2,7 +2,6 @@ package com.vibi.cmp.ui.timeline
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
@@ -1260,9 +1259,9 @@ fun TimelineScreen(
         }
     }
 
-    // 채팅 어시스턴트 FAB — 메인 타임라인 뷰 전용. range/segment edit/패널/시트 활성 시 숨김.
-    // 자막/더빙 단계에서는 노출 안 함. unified 모드(stepper 숨김) 에선 단계 구분 없음 — localizationOpen
-    // 같은 다른 가시성 가드가 이미 자막/더빙 패널 열린 시간 동안 FAB 를 가린다.
+    // 채팅 어시스턴트 FAB — 일단 숨김 (사용자 요청). 재노출 시 아래 블록 주석 해제.
+    // 가시성 가드, BadgedBox, FloatingActionButton 모두 보존돼 있어 그대로 되돌릴 수 있음.
+    /*
     val chatFabVisible = (unifiedScroll || state.currentStep != TimelineStep.SubtitleDub) &&
         !state.isSegmentEditMode &&
         !state.isRangeSelecting &&
@@ -1284,8 +1283,6 @@ fun TimelineScreen(
                 .padding(start = VibiSpacing.md, end = VibiSpacing.md, top = VibiSpacing.md, bottom = fabBottomPadding),
             badge = {
                 if (chatState.hasUnreadMessages) {
-                    // AI 메시지 도착 신호 — 기본 Material3 Badge 의 6dp dot 은 너무 작아 멀리서 안 보임.
-                    // 16dp 빨간 원으로 키워서 알아보기 쉽게.
                     Box(
                         modifier = Modifier
                             .size(VibiSpacing.base)
@@ -1304,6 +1301,7 @@ fun TimelineScreen(
             }
         }
     }
+    */
 
     // A/B (원본/내믹스) 미리듣기 바는 UI 에서 일단 제거 — 추후 재추가 예정. VM 의 [state.previewMode] +
     // [TimelineViewModel.onTogglePreviewMode] + [sounddeck/ABPreviewBar.kt] composable 은 그대로 두어
@@ -2367,8 +2365,11 @@ private fun UnifiedTimelineBar(
                         bgmIndexByClipId[clip.id], tokens,
                     )
                     val clipContentColor = Color(0xFF0C0A09)
-                    // selection border 는 bgmRangeMode 일 땐 미적용 — range overlay 핸들과 시각 충돌 방지.
-                    val showSelectionBorder = isSelected && !bgmRangeMode
+                    // selection border 제거 — 사용자가 (1) bgmRangeMode 일 땐 top/bottom range 바만,
+                    // (2) 일반 selection 일 땐 좌/우 trim 핸들만 보이는 상태를 정상으로 인지. 두 모드 간
+                    // 전환 시 border 가 한 쪽에만 나타나 불일치 발생 (target 이 BGM→Video 로 바뀌어
+                    // bgmRangeMode=false 가 되면 bar 가 사라지고 border 만 추가됨). selectedBgmClipId 가
+                    // 살아있다는 사실은 좌/우 핸들 또는 하단 EditActionsPanel 로 이미 신호됨.
                     Box(
                         modifier = Modifier
                             .offset(x = offsetXDp, y = offsetYDp)
@@ -2380,11 +2381,6 @@ private fun UnifiedTimelineBar(
                             .background(
                                 if (isMuted) markerColor.copy(alpha = 0.30f)
                                 else clipBaseColor.copy(alpha = 0.90f)
-                            )
-                            .then(
-                                if (showSelectionBorder)
-                                    Modifier.border(2.dp, accent, VibiShape.xs)
-                                else Modifier
                             )
                             .pointerInput(clip.id, bgmTapEnabled) {
                                 // tap 은 BGM 바 자체 영역 (= bgmRowHeight × clip width) 에서만 인식 — lane 의
