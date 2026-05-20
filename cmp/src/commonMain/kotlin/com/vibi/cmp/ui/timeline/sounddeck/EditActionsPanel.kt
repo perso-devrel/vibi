@@ -16,6 +16,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderColors
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -150,6 +152,7 @@ fun EditActionsPanel(
                     valueRange = 0f..2f,
                     onValueChange = onVolumeChange,
                     modifier = Modifier.fillMaxWidth(),
+                    colors = mutedSliderColors(tokens.mutedText),
                 )
             }
         }
@@ -171,8 +174,25 @@ fun EditActionsPanel(
                     valueRange = 0.25f..4f,
                     onValueChange = onSpeedChange,
                     modifier = Modifier.fillMaxWidth(),
+                    colors = mutedSliderColors(tokens.mutedText),
                 )
             }
         }
     }
 }
+
+/**
+ * 음원분리 결과 / BGM 편집 슬라이더 전용 muted 색상. M3 Slider 기본은 thumb·activeTrack=primary(우리
+ * 테마에선 잉크 near-black) + inactiveTrack=surfaceContainerHighest(M3 미override 기본 라벤더
+ * 0xFFE6E0E9). 두 색이 분리 stem 카드 (화자/배경 팔레트) 위에서 액티브 컬러로 인식돼 시각 과부하 +
+ * 사용자가 "보라" 로 인지. mutedText 한 톤으로 묶고 alpha 를 단계화해 active/inactive 만 구분.
+ */
+@Composable
+internal fun mutedSliderColors(base: androidx.compose.ui.graphics.Color): SliderColors =
+    SliderDefaults.colors(
+        thumbColor = base,
+        activeTrackColor = base.copy(alpha = 0.40f),
+        activeTickColor = base.copy(alpha = 0.40f),
+        inactiveTrackColor = base.copy(alpha = 0.18f),
+        inactiveTickColor = base.copy(alpha = 0.18f),
+    )

@@ -224,6 +224,7 @@ fun AudioSeparationSheet(
                                         .weight(1f)
                                         .padding(horizontal = VibiSpacing.xxs)
                                         .scale(scaleX = 1f, scaleY = 0.7f),
+                                    colors = com.vibi.cmp.ui.timeline.sounddeck.mutedSliderColors(tokens.mutedText),
                                 )
                                 val isThisPlaying = playingId == stem.stemId
                                 val canPreview = stem.url.isNotBlank()
@@ -302,6 +303,7 @@ fun AudioSeparationSheet(
                                         valueRange = 0f..2f,
                                         onValueChange = { onUpdateStemVolume(stem.stemId, it) },
                                         modifier = Modifier.weight(1f),
+                                        colors = com.vibi.cmp.ui.timeline.sounddeck.mutedSliderColors(tokens.mutedText),
                                     )
                                     Text(
                                         "${(volume * 100).toInt()}%",

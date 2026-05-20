@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -153,20 +152,16 @@ fun SoundCard(
                         style = typo.bodySm,
                         color = tokens.mutedText,
                     )
-                    // stem 분리 결과는 accent 가 아닌 mutedText (회색) — 카드 자체 색이 화자/배경
-                    // 팔레트로 이미 컬러풀해 슬라이더까지 보라를 더하면 시각 과부하 + 자기 비판: 사용자가
-                    // 카드 컬러와 슬라이더 컬러를 두 개의 액티브 컬러로 인식.
+                    // stem 분리 결과 슬라이더 — accent (잉크 near-black) 와 M3 기본 surfaceContainerHighest
+                    // (라벤더 0xFFE6E0E9, 우리 colorScheme 미override) 두 색을 모두 muted gray 로 통일.
+                    // 카드 자체 색이 화자/배경 팔레트라 슬라이더에 컬러 더하면 시각 과부하.
                     Slider(
                         modifier = Modifier.weight(1f),
                         value = model.volume.coerceIn(0f, 2f),
                         onValueChange = { if (!disabled) onUpdateVolume(it) },
                         valueRange = 0f..2f,
                         enabled = !disabled && model.selected,
-                        colors = SliderDefaults.colors(
-                            thumbColor = tokens.mutedText,
-                            activeTrackColor = tokens.mutedText.copy(alpha = 0.55f),
-                            activeTickColor = tokens.mutedText,
-                        ),
+                        colors = mutedSliderColors(tokens.mutedText),
                     )
                     Text(
                         "${(model.volume * 100).toInt()}%",
