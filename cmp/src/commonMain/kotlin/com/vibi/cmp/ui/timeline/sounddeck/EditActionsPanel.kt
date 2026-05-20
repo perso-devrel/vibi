@@ -68,33 +68,42 @@ fun EditActionsPanel(
             .padding(VibiSpacing.sm),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
-        ) {
-            if (onCancel != null) {
-                IconButton(
-                    onClick = onCancel,
-                    modifier = Modifier.size(28.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "닫기",
-                        tint = tokens.onBackgroundPrimary,
+        // 헤더(닫기/제목)는 액션 버튼 행과 분리 — 4 액션 버튼이 행 폭을 가로질러 양 끝 flush 로
+        // 분포되도록 SpaceBetween. 헤더가 같은 Row 에 있으면 weight(1f) 가 빈 공간을 흡수해 액션 4개가
+        // 우측에 쏠림. 헤더가 없는 호출 (현행 영상/BGM 양쪽 모두) 에서는 헤더 Row 자체 미렌더.
+        if (onCancel != null || title.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+            ) {
+                if (onCancel != null) {
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "닫기",
+                            tint = tokens.onBackgroundPrimary,
+                        )
+                    }
+                }
+                if (title.isNotEmpty()) {
+                    Text(
+                        title,
+                        style = typo.titleSm,
+                        color = tokens.onBackgroundPrimary,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
-            if (title.isNotEmpty()) {
-                Text(
-                    title,
-                    style = typo.titleSm,
-                    color = tokens.onBackgroundPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
             OutlinedButton(
                 onClick = { expanded = if (expanded == "volume") null else "volume" },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),

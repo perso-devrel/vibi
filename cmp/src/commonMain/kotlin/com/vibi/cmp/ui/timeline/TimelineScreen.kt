@@ -723,21 +723,33 @@ fun TimelineScreen(
                         modifier = Modifier.size(iconSize),
                     )
                 }
-                // Center — 재생/정지.
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(btnSize)
-                        .clip(CircleShape)
-                        .background(tokens.onBackgroundPrimary)
-                        .clickable { viewModel.onTogglePlayback() },
-                    contentAlignment = Alignment.Center
+                // Center — 재생/정지 + 현재s/전체s 라벨. Row 로 묶어 align(Center) 하면 (버튼+텍스트)
+                // 두 자식의 합산 폭이 화면 중앙에 위치 — 버튼만 정중앙에 두고 텍스트를 오른쪽에 띄우는
+                // 절대 offset 보다 자연스럽고 너비 변동(예: 999s vs 9s) 에 안전.
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
                 ) {
-                    Icon(
-                        imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (state.isPlaying) "일시정지" else "재생",
-                        tint = tokens.backgroundPrimary,
-                        modifier = Modifier.size(iconSize),
+                    Box(
+                        modifier = Modifier
+                            .size(btnSize)
+                            .clip(CircleShape)
+                            .background(tokens.onBackgroundPrimary)
+                            .clickable { viewModel.onTogglePlayback() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (state.isPlaying) "일시정지" else "재생",
+                            tint = tokens.backgroundPrimary,
+                            modifier = Modifier.size(iconSize),
+                        )
+                    }
+                    Text(
+                        text = "${state.playbackPositionMs / 1000}s/${state.videoDurationMs / 1000}s",
+                        style = typo.bodySm,
+                        color = tokens.mutedText,
                     )
                 }
                 // Right — undo / redo.
@@ -2501,6 +2513,7 @@ private fun UnifiedTimelineBar(
                                 trimOverrideStart = null
                                 trimOverrideStartMs = null
                             },
+                            onTap = { onBgmSelectClip(currentClip.id) },
                         )
                         // 우 핸들 — sourceTrimEndMs 만. startMs 불변.
                         BgmTrimHandle(
@@ -2525,6 +2538,7 @@ private fun UnifiedTimelineBar(
                             onCancel = {
                                 trimOverrideEnd = null
                             },
+                            onTap = { onBgmSelectClip(currentClip.id) },
                         )
                     }
                 }
@@ -3427,6 +3441,11 @@ private fun BgmTrimHandle(
     onCommit: (newTrimMs: Long, newStartMs: Long?) -> Unit,
     onCancel: () -> Unit,
     /**
+     * 핸들 hit zone 안에서 가벼운 탭(드래그 슬롭 미만) — 클립 본체 탭과 동일하게 선택 토글로 흘려보냄.
+     * 본체가 핸들 hit zone 으로 일부 가려진 wide path 에서 사용자가 가장자리를 눌러도 선택 해제 가능.
+     */
+    onTap: () -> Unit,
+    /**
      * hit zone 안에서 시각 chevron 을 정렬할 위치. 기본 Center — 좁은 클립 path 에서 hit zone 이 클립
      * 본체 바깥으로 통째 밀려난 경우엔 visual 까지 같이 떨어져 보이지 않도록 CenterEnd(좌핸들) /
      * CenterStart(우핸들) 로 inner-edge 정렬해 본체 엣지에 그대로 붙여 그린다.
@@ -3445,6 +3464,11 @@ private fun BgmTrimHandle(
             .offset(x = offsetX, y = offsetY)
             .width(TimelineBarSpec.HandleHitWidth)
             .height(height)
+            .pointerInput(clipId, side) {
+                // 드래그 슬롭 미만의 탭은 클립 본체 tap 과 동일하게 선택 토글 — wide path 에서 핸들이
+                // 본체 가장자리 16dp 를 덮는 구간에서도 사용자가 한번 더 눌러 선택 해제 가능.
+                detectTapGestures(onTap = { onTap() })
+            }
             .pointerInput(clipId, side, laneWidthPx, totalMs) {
                 detectHorizontalDragGestures(
                     onDragStart = {
