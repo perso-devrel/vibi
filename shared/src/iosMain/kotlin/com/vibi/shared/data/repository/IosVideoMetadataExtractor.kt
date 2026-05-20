@@ -6,7 +6,9 @@ import com.vibi.shared.platform.resolveStoredUriToFileUrl
 import kotlin.coroutines.resume
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import platform.AVFoundation.AVAssetTrack
 import platform.AVFoundation.AVMediaTypeVideo
@@ -23,19 +25,20 @@ import platform.Foundation.NSFileManager
 class IosVideoMetadataExtractor : VideoMetadataExtractor {
 
     @OptIn(ExperimentalForeignApi::class)
-    override suspend fun extract(uri: String): VideoInfo? {
-        // resolver: 상대 / 절대 / file:// / 옛 UUID remap. 모든 분기 fileURLWithPath.
+    override suspend fun extract(uri: String): VideoInfo? = withContext(Dispatchers.Default) {
+        // resolver / AVURLAsset / NSFileManager 모두 동기 디스크 호출 — caller dispatcher (보통 Main)
+        // 에 머물면 UI 프레임 dropped. Default 로 분리.
         val url = resolveStoredUriToFileUrl(uri) ?: run {
             println("[Extractor] resolver returned null for uri=$uri")
-            return null
+            return@withContext null
         }
         val asset = AVURLAsset(
             uRL = url,
             options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to true)
         )
 
-        // 안전망: async load 도 시도하되 1초 timeout
-        withTimeoutOrNull(2000) {
+        // 로컬 파일은 보통 < 100ms 안에 callback. 2s 는 worst-case 가 사용자 wait 으로 직결돼 너무 길다.
+        withTimeoutOrNull(600) {
             suspendCancellableCoroutine<Unit> { cont ->
                 asset.loadValuesAsynchronouslyForKeys(
                     keys = listOf("duration", "tracks")
@@ -48,7 +51,7 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
         val tracks = asset.tracksWithMediaType(AVMediaTypeVideo)
         val videoTrack = tracks.firstOrNull() as? AVAssetTrack ?: run {
             println("[Extractor] no video track in $uri")
-            return null
+            return@withContext null
         }
 
         // duration: asset.duration 우선, 0 이면 track timeRange 로 fallback
@@ -59,7 +62,7 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
         }
         if (durationSec.isNaN() || durationSec <= 0.0) {
             println("[Extractor] duration invalid for $uri")
-            return null
+            return@withContext null
         }
         val durationMs = (durationSec * 1000.0).toLong()
 
@@ -71,7 +74,7 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
             (attrs?.get(platform.Foundation.NSFileSize) as? Number)?.toLong() ?: 0L
         }.getOrDefault(0L)
 
-        return VideoInfo(
+        VideoInfo(
             uri = uri,
             fileName = fileName,
             mimeType = "video/mp4",

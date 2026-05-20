@@ -4,6 +4,8 @@ package com.vibi.shared.platform
 
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
@@ -54,10 +56,10 @@ actual fun saveBytesToCache(fileName: String, bytes: ByteArray): String {
     return path
 }
 
-actual suspend fun readFileBytes(uriOrPath: String): ByteArray {
-    // Picker 가 저장하는 sourceUri 는 `picker_media/foo.mp4` 같은 Documents-relative path —
-    // NSData.dataWithContentsOfFile 는 절대경로만 받아 silent nil 반환. 컨테이너 UUID 변경
-    // 후 옛 절대경로도 resolver 가 remap.
+actual suspend fun readFileBytes(uriOrPath: String): ByteArray = withContext(Dispatchers.Default) {
+    // NSData.dataWithContentsOfFile + memcpy 가 대용량 영상(100MB+) 에서 수십~수백ms blocking.
+    // caller (보통 viewModelScope 의 Main) 에 머물면 UI freeze. Default 로 분리.
+    // (Android 쪽 readFileBytes 는 이미 IO dispatcher 안에서 동작 — 대칭 확보.)
     val resolved = resolveStoredUriToPath(uriOrPath) ?: uriOrPath
     val data = requireNotNull(NSData.dataWithContentsOfFile(resolved)) {
         "Cannot read bytes from $uriOrPath (resolved=$resolved)"
@@ -67,5 +69,5 @@ actual suspend fun readFileBytes(uriOrPath: String): ByteArray {
     bytes.usePinned { pinned ->
         memcpy(pinned.addressOf(0), data.bytes, size.toULong())
     }
-    return bytes
+    bytes
 }

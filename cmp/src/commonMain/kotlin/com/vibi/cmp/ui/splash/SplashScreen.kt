@@ -12,14 +12,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.vibi.shared.data.repository.AuthRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
-private const val SPLASH_DURATION_MS = 1500L
+/** 워드마크 노출 최소 시간 — restoreSession() 보다 짧게 끝나면 잔여 시간만 wait. */
+private const val SPLASH_MIN_VISIBLE_MS = 600L
 
 /**
- * 앱 진입 직후 1.5초간 "vibi" 워드마크. 이 시간 동안 백그라운드에서 토큰 유효성을
- * 확인하고, [onDone] 콜백으로 다음 화면 라우팅 결정을 부모(NavHost)에 위임.
+ * 앱 진입 직후 "vibi" 워드마크. restoreSession() (백그라운드 JWT 검증) 과 splash 최소 노출 시간을
+ * race — 둘 다 끝나야 onDone. 이전엔 1500ms 고정 delay 후 sequential restoreSession 호출이라
+ * worst-case 1.5s + restoreSession 시간이 모두 사용자 wait 으로 누적됐다.
  */
 @Composable
 fun SplashScreen(
@@ -27,10 +32,12 @@ fun SplashScreen(
     authRepository: AuthRepository = koinInject(),
 ) {
     LaunchedEffect(Unit) {
-        delay(SPLASH_DURATION_MS)
-        // 저장된 JWT 의 sub 또는 lastUserId 로 UserSession 복원 — 콜드 스타트 후
-        // EditProjectRepository 의 user-scoped 쿼리가 즉시 올바른 userId 를 사용하도록.
-        authRepository.restoreSession()
+        coroutineScope {
+            val restore = async { authRepository.restoreSession() }
+            val timer = launch { delay(SPLASH_MIN_VISIBLE_MS) }
+            restore.await()
+            timer.join()
+        }
         onDone(authRepository.hasValidSession())
     }
     Box(

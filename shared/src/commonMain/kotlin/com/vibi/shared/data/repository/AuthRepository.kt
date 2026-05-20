@@ -8,6 +8,8 @@ import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Google / Apple OAuth → BFF JWT 교환 + 로컬 토큰 캐시 + 계정별 로컬 데이터 스코핑.
@@ -44,8 +46,12 @@ class AuthRepository(
 
     fun hasValidSession(): Boolean = tokenStore.getValidToken() != null
 
-    /** 앱 시작 시 토큰의 sub 또는 lastUserId 로 [UserSession] 복원. */
-    fun restoreSession() {
+    /**
+     * 앱 시작 시 토큰의 sub 또는 lastUserId 로 [UserSession] 복원.
+     * Base64 decode + JSON 파싱 + Settings I/O 가 동기 작업이라 caller (Splash) 가 Main 이면
+     * 첫 frame block. Dispatchers.Default 로 분리.
+     */
+    suspend fun restoreSession() = withContext(Dispatchers.Default) {
         val sub = tokenStore.getValidToken()?.let(::extractJwtSubject)
         val resolved = sub ?: tokenStore.lastUserId() ?: UserSession.ANONYMOUS_USER_ID
         userSession.set(resolved)
