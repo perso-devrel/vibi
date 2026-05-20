@@ -102,3 +102,12 @@ android {
         buildConfig = true
     }
 }
+
+// Compose Compiler stability config — List/Map/StateFlow 등을 stable 로 선언해 TimelineUiState
+// 처럼 List 다수 필드를 가진 data class 도 stable 로 인식, 같은 값 emission 시 composable skip.
+// 효과: 매 state emission 마다 전체 트리 recompose 가 → 변경 필드 의존 subtree 만 recompose.
+composeCompiler {
+    stabilityConfigurationFiles.add(
+        rootProject.layout.projectDirectory.file("compose_compiler_config.conf")
+    )
+}
