@@ -5,6 +5,7 @@ import com.vibi.shared.data.local.db.entity.ImageClipEntity
 import com.vibi.shared.domain.model.ImageClip
 import com.vibi.shared.domain.repository.ImageClipRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 class ImageClipRepositoryImpl constructor(
@@ -13,6 +14,7 @@ class ImageClipRepositoryImpl constructor(
 
     override fun observeClips(projectId: String): Flow<List<ImageClip>> =
         dao.getByProjectId(projectId).map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun addClip(clip: ImageClip) {
         dao.insert(clip.toEntity())

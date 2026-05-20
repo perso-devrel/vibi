@@ -5,6 +5,7 @@ import com.vibi.shared.data.local.db.entity.TextOverlayEntity
 import com.vibi.shared.domain.model.TextOverlay
 import com.vibi.shared.domain.repository.TextOverlayRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 class TextOverlayRepositoryImpl constructor(
@@ -13,6 +14,7 @@ class TextOverlayRepositoryImpl constructor(
 
     override fun observeOverlays(projectId: String): Flow<List<TextOverlay>> =
         dao.getByProjectId(projectId).map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun getOverlay(overlayId: String): TextOverlay? {
         return dao.getById(overlayId)?.toDomain()

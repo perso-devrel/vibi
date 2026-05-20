@@ -5,6 +5,7 @@ import com.vibi.shared.data.local.db.entity.DubClipEntity
 import com.vibi.shared.domain.model.DubClip
 import com.vibi.shared.domain.repository.DubClipRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 class DubClipRepositoryImpl constructor(
@@ -13,6 +14,7 @@ class DubClipRepositoryImpl constructor(
 
     override fun observeClips(projectId: String): Flow<List<DubClip>> =
         dao.getByProjectId(projectId).map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun addClip(clip: DubClip) {
         dao.insert(clip.toEntity())

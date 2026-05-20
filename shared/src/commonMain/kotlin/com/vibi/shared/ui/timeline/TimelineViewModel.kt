@@ -616,7 +616,9 @@ class TimelineViewModel constructor(
             viewModelScope.launch {
                 val project = editProjectRepository.getProject(projectId) ?: return@launch
                 if (!project.isRenderStale) {
-                    editProjectRepository.updateProject(project.copy(isRenderStale = true))
+                    editProjectRepository.updateProject(
+                        project.copy(isRenderStale = true), touchActivity = false,
+                    )
                 }
                 renderStaleMarked = true
             }
@@ -4788,7 +4790,8 @@ class TimelineViewModel constructor(
                         separationMuteOriginal = sep.muteOriginalSegmentAudio,
                         separationStatus = AutoJobStatus.RUNNING,
                         separationError = null,
-                    )
+                    ),
+                    touchActivity = false,
                 )
             }
             separationGate = TriggerGate.FIRED
@@ -4822,7 +4825,8 @@ class TimelineViewModel constructor(
         editProjectRepository.getProject(projectId)?.let { p ->
             val cleaned = entry?.jobId?.let { p.removeProcessingSeparation(it) } ?: p
             editProjectRepository.updateProject(
-                cleaned.copy(separationStatus = AutoJobStatus.FAILED, separationError = reason)
+                cleaned.copy(separationStatus = AutoJobStatus.FAILED, separationError = reason),
+                touchActivity = false,
             )
         }
     }

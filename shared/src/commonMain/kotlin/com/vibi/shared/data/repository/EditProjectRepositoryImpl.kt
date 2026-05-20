@@ -23,6 +23,7 @@ import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.deleteLocalFile
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -59,16 +60,18 @@ class EditProjectRepositoryImpl constructor(
     }
 
     override fun observeProject(projectId: String): Flow<EditProject?> =
-        dao.observeById(projectId).map { it?.toDomain() }
+        dao.observeById(projectId).map { it?.toDomain() }.distinctUntilChanged()
 
     override suspend fun getProject(projectId: String): EditProject? {
         return dao.getById(projectId)?.toDomain()
     }
 
-    override suspend fun updateProject(project: EditProject) {
-        // 모든 update 에서 updatedAt 강제 bump — InputScreen "이어서 작업" 카드 정렬이
-        // 실제 마지막 편집 시각을 따라가도록 (호출자가 잊어버려도 안전).
-        dao.update(project.copy(updatedAt = currentTimeMillis()).toEntity())
+    override suspend fun updateProject(project: EditProject, touchActivity: Boolean) {
+        // touchActivity=true: InputScreen "이어서 작업" 카드 정렬을 위해 updatedAt bump (default).
+        // touchActivity=false: internal job bookkeeping (separation status, isRenderStale 등) —
+        // updatedAt 유지하면 observeProject 의 distinctUntilChanged 가 무변화 update 를 dedup.
+        val toPersist = if (touchActivity) project.copy(updatedAt = currentTimeMillis()) else project
+        dao.update(toPersist.toEntity())
     }
 
     override suspend fun deleteProject(projectId: String) {
@@ -79,7 +82,7 @@ class EditProjectRepositoryImpl constructor(
     override fun observeAllProjects(): Flow<List<EditProject>> =
         userSession.userId.flatMapLatest { uid ->
             dao.observeAllForUser(uid).map { list -> list.map { it.toDomain() } }
-        }
+        }.distinctUntilChanged()
 
     override suspend fun expireOldDrafts(thresholdMs: Long) {
         // updatedAt < threshold 인 projectId 들 fetch 후 각각 cascade.

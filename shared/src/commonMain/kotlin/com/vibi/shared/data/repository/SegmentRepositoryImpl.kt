@@ -6,14 +6,18 @@ import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.repository.SegmentRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 class SegmentRepositoryImpl constructor(
     private val dao: SegmentDao
 ) : SegmentRepository {
 
+    // distinctUntilChanged — Room invalidation 이 무관한 컬럼 변경에도 emit 트리거하므로
+    // domain 값 비교로 dedup. 다운스트림 _uiState.update fan-out 막음.
     override fun observeByProjectId(projectId: String): Flow<List<Segment>> =
         dao.observeByProjectId(projectId).map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun getByProjectId(projectId: String): List<Segment> =
         dao.getByProjectId(projectId).map { it.toDomain() }

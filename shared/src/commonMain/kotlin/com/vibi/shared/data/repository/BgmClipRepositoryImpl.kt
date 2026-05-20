@@ -5,6 +5,7 @@ import com.vibi.shared.data.local.db.entity.BgmClipEntity
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.domain.repository.BgmClipRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 class BgmClipRepositoryImpl constructor(
@@ -13,6 +14,7 @@ class BgmClipRepositoryImpl constructor(
 
     override fun observeClips(projectId: String): Flow<List<BgmClip>> =
         dao.getByProjectId(projectId).map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun getClip(clipId: String): BgmClip? {
         return dao.getById(clipId)?.toDomain()

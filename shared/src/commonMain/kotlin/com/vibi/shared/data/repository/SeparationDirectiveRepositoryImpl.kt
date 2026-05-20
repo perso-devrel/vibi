@@ -6,6 +6,7 @@ import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.StemSelection
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -25,6 +26,7 @@ class SeparationDirectiveRepositoryImpl(
 
     override fun observe(projectId: String): Flow<List<SeparationDirective>> =
         dao.observeByProject(projectId).map { rows -> rows.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun getByProject(projectId: String): List<SeparationDirective> =
         dao.getByProject(projectId).map { it.toDomain() }

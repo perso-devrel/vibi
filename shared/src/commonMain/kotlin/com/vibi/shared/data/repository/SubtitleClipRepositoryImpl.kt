@@ -8,6 +8,7 @@ import com.vibi.shared.domain.model.SubtitlePosition
 import com.vibi.shared.domain.model.SubtitleSource
 import com.vibi.shared.domain.repository.SubtitleClipRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 class SubtitleClipRepositoryImpl constructor(
@@ -16,6 +17,7 @@ class SubtitleClipRepositoryImpl constructor(
 
     override fun observeClips(projectId: String): Flow<List<SubtitleClip>> =
         dao.getByProjectId(projectId).map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
 
     override suspend fun addClip(clip: SubtitleClip) {
         dao.insert(clip.toEntity())
