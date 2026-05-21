@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  vibi — Privacy Manifest
+
+  Apple 가 2024-05 이후 App Store 업로드 시 필수화한 manifest.
+  세 가지를 선언한다:
+    1. NSPrivacyTracking / NSPrivacyTrackingDomains — ATT 추적 여부 (vibi 는 false).
+    2. NSPrivacyCollectedDataTypes — 앱이 수집/전송하는 데이터 유형 + 목적.
+    3. NSPrivacyAccessedAPITypes — Required Reason API 사용 사유.
+
+  업데이트 정책:
+    - 새 SDK / 라이브러리 추가 시 → 해당 SDK 의 Required Reason API 가 우리 manifest 에 포함되는지 검토.
+    - 새 데이터 수집 (예: 위치, 연락처) 추가 시 → NSPrivacyCollectedDataTypes 에 항목 추가.
+    - 광고/Analytics SDK 도입 시 → NSPrivacyTracking 을 true 로 바꾸고 NSPrivacyTrackingDomains 채우기.
+
+  레퍼런스:
+    https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
+    https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ATT (App Tracking Transparency) 추적 안 함. 광고 SDK / 3rd-party analytics 없음. -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <!-- 추적 목적으로 데이터를 전송하는 도메인 (NSPrivacyTracking=true 일 때만 채움). -->
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!--
+      수집 데이터 유형. 각 항목은:
+        - NSPrivacyCollectedDataType: 데이터 유형 (Apple 정의 enum)
+        - NSPrivacyCollectedDataTypeLinked: 사용자 신원과 연결되는가
+        - NSPrivacyCollectedDataTypeTracking: 추적 목적인가 (NSPrivacyTracking 과 일관)
+        - NSPrivacyCollectedDataTypePurposes: 수집 목적 (Apple 정의 enum)
+    -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array>
+        <!-- Email — Google/Apple Sign In 으로 받은 이메일을 BFF 에 전달, user 영속화. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeEmailAddress</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- Name — Google/Apple Sign In 이 제공하는 displayName. UI 표시용. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeName</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- User ID — BFF 가 발급하는 내부 user id (Apple sub / Google sub 기반). -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeUserID</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- Photos or Videos — 사용자가 import 한 영상 + 완성본 mp4 를 BFF 에 업로드해 분리/렌더. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypePhotosorVideos</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- Audio Data — 즉석 녹음 / BGM 파일을 BFF 에 업로드해 stem 분리/믹스. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeAudioData</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- Other User Content — 채팅창 사용자 입력 (Gemini function calling 으로 전달). -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- Crash Data — Apple 표준 crash report (현재 별도 crash SDK 없음, OS 기본만). -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeCrashData</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+    </array>
+
+    <!--
+      Required Reason APIs. 각 카테고리는 Apple 이 정의한 reason code 중 하나 이상을 골라야 함.
+      코드는 https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api 참조.
+    -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!--
+          File Timestamp — Room DB / Coil 캐시 / ffmpeg 임시 파일의 mtime 조회 등.
+          C617.1: 앱 자신의 컨테이너 내부 파일 timestamp 만 사용.
+        -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+
+        <!--
+          Disk Space — Coil 디스크 캐시 정리 / 업로드 전 free space 체크.
+          E174.1: 앱 자신의 디스크 공간 조회 (캐시 관리).
+        -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>E174.1</string>
+            </array>
+        </dict>
+
+        <!--
+          System Boot Time — Foundation/CFNetwork 내부에서 mach_absolute_time / kern.boottime
+          기반 monotonic clock 사용. Ktor Client / Coil 등이 간접 호출.
+          35F9.1: 사용자에게 정보 표시 없이 앱 내부 이벤트 간 시간 측정.
+        -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>35F9.1</string>
+            </array>
+        </dict>
+
+        <!--
+          UserDefaults — multiplatform-settings (KMP) / GoogleSignIn SDK 내부에서 사용.
+          CA92.1: 앱 자신/같은 App Group 의 정보 접근.
+        -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
