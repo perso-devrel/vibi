@@ -2894,7 +2894,6 @@ private val BottomBarReserveDp = 160.dp
 private sealed interface BottomActionTarget {
     data object None : BottomActionTarget
     data object Video : BottomActionTarget
-    data class Bgm(val clip: com.vibi.shared.domain.model.BgmClip) : BottomActionTarget
 }
 
 private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): BottomActionTarget {
@@ -2904,10 +2903,10 @@ private fun com.vibi.shared.ui.timeline.TimelineUiState.bottomActionTarget(): Bo
         return if (pendingRangeEndMs > pendingRangeStartMs) BottomActionTarget.Video
         else BottomActionTarget.None
     }
-    if (isLocalizationBusy()) return BottomActionTarget.None
-    val id = selectedBgmClipId ?: return BottomActionTarget.None
-    val clip = bgmClips.firstOrNull { it.id == id } ?: return BottomActionTarget.None
-    return BottomActionTarget.Bgm(clip)
+    // BGM/녹음 clip 선택은 하단 바를 띄우지 않음 — 볼륨/속도/배경음 제거/삭제는 SoundDeck 의 BGM 카드에서
+    // 일관되게 처리. timeline 막대는 좌/우 trim 핸들 + 가로 drag (이동) 만 노출해 영상 편집 모드와 시각적
+    // 혼선 회피.
+    return BottomActionTarget.None
 }
 
 /**
@@ -2955,22 +2954,6 @@ private fun BoxScope.TimelineActionBottomBar(
                     onDelete = { viewModel.onDeleteRange() },
                     onCancel = null,
                 )
-                is BottomActionTarget.Bgm -> {
-                    val clip = target.clip
-                    com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
-                        title = "",
-                        volume = clip.volumeScale,
-                        speed = clip.speedScale,
-                        onVolumeChange = { viewModel.onUpdateBgmVolume(clip.id, it) },
-                        onSpeedChange = { /* commit only — preview 없음 */ },
-                        onApplyVolume = { viewModel.onUpdateBgmVolume(clip.id, it) },
-                        onApplySpeed = { viewModel.onApplyBgmClipSpeed(clip.id, it) },
-                        secondaryActionLabel = "배경음 제거",
-                        onSecondaryAction = { viewModel.onStartBgmSeparation(clip.id) },
-                        onDelete = { viewModel.onDeleteBgmClip(clip.id) },
-                        onCancel = null,
-                    )
-                }
             }
         }
     }
