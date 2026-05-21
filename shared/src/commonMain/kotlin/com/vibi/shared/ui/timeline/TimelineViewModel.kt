@@ -4859,7 +4859,9 @@ class TimelineViewModel constructor(
                             val isVoiceAll = stem.stemId == Stem.STEM_ID_VOICE_ALL
                             stem.stemId to StemSelectionUi(stem.stemId, selected = !isVoiceAll, volume = 1.0f)
                         }
-                        commitProcessingSeparationToDirective(clientToken, absStems, defaults)
+                        commitProcessingSeparationToDirective(
+                            clientToken, absStems, defaults, status.actualDurationMs,
+                        )
                     }
                     is SeparationStatus.Failed ->
                         handleSeparationFailure(clientToken, status.progressReason ?: ERROR_SEPARATION_GENERIC)
@@ -4876,11 +4878,16 @@ class TimelineViewModel constructor(
      * Processing entry → SeparationDirective 영속화. polling Ready 시 자동 호출.
      * entry 의 range / numberOfSpeakers / editingDirectiveId 그대로 사용. 기존 directive 의 좌표나
      * editingDirectiveId 가 일치하면 upsert (id 보존) — TimelineScreen 의 stemMixer group 끊김 방지.
+     *
+     * [actualDurationMs] 가 사용자 선택 길이와 ±SEPARATION_DURATION_SNAP_TOLERANCE_MS 이내면 rangeEndMs
+     * 를 실측값으로 보정해 timeline 막대 길이를 stem 파일과 1:1 매칭. 차이가 그보다 크면 서버 측 측정
+     * 이상 신호로 보고 사용자 선택값 유지.
      */
     private suspend fun commitProcessingSeparationToDirective(
         clientToken: String,
         stems: List<Stem>,
         selections: Map<String, StemSelectionUi>,
+        actualDurationMs: Long? = null,
     ) {
         val entry = _uiState.value.processingSeparations.firstOrNull { it.clientToken == clientToken }
             ?: return
@@ -4907,12 +4914,21 @@ class TimelineViewModel constructor(
                 isWholeVideo -> 0L
                 else -> segStart + segment.trimStartMs
             }
-            val directiveEnd = when {
+            val requestedEnd = when {
                 entry.rangeEndMs != null -> entry.rangeEndMs
                 isWholeVideo -> state.videoDurationMs.coerceAtLeast(1L)
                 else -> directiveStart + (
                     if (segment.trimEndMs > 0L) segment.trimEndMs - segment.trimStartMs else segment.durationMs
                 )
+            }
+            val requestedDuration = (requestedEnd - directiveStart).coerceAtLeast(0L)
+            val directiveEnd = if (
+                actualDurationMs != null &&
+                kotlin.math.abs(actualDurationMs - requestedDuration) <= SEPARATION_DURATION_SNAP_TOLERANCE_MS
+            ) {
+                directiveStart + actualDurationMs
+            } else {
+                requestedEnd
             }
             val existing = entry.editingDirectiveId?.let { id ->
                 _uiState.value.separationDirectives.firstOrNull { it.id == id }
@@ -5186,6 +5202,10 @@ class TimelineViewModel constructor(
         private const val ERROR_SEPARATION_GENERIC = "분리에 실패했습니다"
         private const val ERROR_SEPARATION_CONSUMED =
             "이 작업은 이미 합성에 사용되어 더 이상 사용할 수 없습니다"
+        /** 사용자 선택 trim 길이 ↔ stem 실측 길이의 허용 오차. 이 범위 밖이면 보정하지 않고
+         * 사용자 선택값을 그대로 유지 (서버 측 측정 이상 가드). BFF TRIM_DURATION_TOLERANCE_MS
+         * (100ms) 의 ~2배. */
+        private const val SEPARATION_DURATION_SNAP_TOLERANCE_MS = 200L
     }
 
     fun onOpenExportOptionsSheet() {

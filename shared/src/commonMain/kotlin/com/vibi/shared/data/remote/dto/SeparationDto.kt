@@ -38,7 +38,13 @@ data class SeparationStatusResponse(
     val stems: List<StemDto> = emptyList(),
     val mixJobId: String? = null,
     /** status=FAILED 시 reason. UI 에서 그대로 표시. */
-    val error: String? = null
+    val error: String? = null,
+    /**
+     * READY 시 BFF 가 ffprobe 로 잰 stem FLAC 의 실측 길이(ms). TimelineViewModel 이
+     * SeparationDirective.rangeEndMs 를 사용자 선택값이 아닌 실제 stem 길이로 보정하기 위해 사용.
+     * 누락(서버 측정 실패) 시 클라이언트가 사용자 선택값을 그대로 사용 — 기존 동작 fallback.
+     */
+    val actualDurationMs: Long? = null
 )
 
 @Serializable

@@ -79,7 +79,8 @@ class AudioSeparationRepositoryImpl(
                             kind = Stem.kindFromId(it.stemId),
                             speakerIndex = Stem.speakerIndexFromId(it.stemId)
                         )
-                    }
+                    },
+                    actualDurationMs = response.actualDurationMs
                 )
 
             else -> SeparationStatus.Processing(

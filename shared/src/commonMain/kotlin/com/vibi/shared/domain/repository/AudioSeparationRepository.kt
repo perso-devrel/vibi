@@ -14,7 +14,13 @@ sealed class SeparationStatus {
 
     data class Ready(
         override val jobId: String,
-        val stems: List<Stem>
+        val stems: List<Stem>,
+        /**
+         * BFF 가 측정한 stem FLAC 실측 길이(ms). TimelineViewModel 이 SeparationDirective 의
+         * rangeEndMs 를 사용자 선택값 대신 이 값으로 보정해 UI 막대 길이와 stem 길이를 1:1
+         * 매칭. null 이면 측정 누락 → 클라이언트가 사용자 선택값 fallback.
+         */
+        val actualDurationMs: Long? = null
     ) : SeparationStatus()
 
     data class Consumed(
