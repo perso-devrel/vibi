@@ -283,7 +283,9 @@ fun AudioSeparationSheet(
                                             else MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
-                                Spacer(Modifier.size(2.dp))
+                                // volume 토글(44dp) 과 CircleToggle(44dp) 의 hit zone 이 거의 닿아
+                                // mis-tap 위험. 8dp 여유로 분리.
+                                Spacer(Modifier.size(VibiSpacing.xs))
                                 CircleToggle(
                                     selected = selected,
                                     onClick = { onToggleStem(stem.stemId) },

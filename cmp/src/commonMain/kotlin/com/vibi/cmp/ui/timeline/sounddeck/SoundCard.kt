@@ -17,6 +17,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
@@ -122,6 +123,17 @@ fun SoundCard(
                             color = tokens.mutedText,
                         )
                     }
+                }
+                // Long-press 발견성 hint — 점 3개 affordance 로 "추가 옵션 있음" 암시. BGM 은
+                // long-press 비활성이라 미표시. 펼친 상태에서도 미표시 (이미 발견됨). clickable 없음
+                // — 시각 전용, 손가락은 카드 row 의 combinedClickable 이 받음.
+                if (canLongPressExpand && !expanded) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = null,
+                        tint = tokens.onBackgroundPrimary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(VibiSpacing.base),
+                    )
                 }
                 // 재생/정지 버튼 — stem · BGM 공통. IconButton 의 자체 클릭이 카드의 combinedClickable
                 // (onClick=onToggle) 보다 우선 소비. 다듬기/볼륨 진입은 long-press (expanded) 로 분리.
