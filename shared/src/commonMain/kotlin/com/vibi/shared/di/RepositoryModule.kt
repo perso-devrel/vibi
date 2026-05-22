@@ -8,14 +8,12 @@ import com.vibi.shared.data.repository.BgmClipRepositoryImpl
 import com.vibi.shared.data.repository.EditProjectRepositoryImpl
 import com.vibi.shared.data.repository.ImageClipRepositoryImpl
 import com.vibi.shared.data.repository.RemoteRenderExecutor
-import com.vibi.shared.data.repository.RenderRepositoryImpl
 import com.vibi.shared.data.repository.SegmentRepositoryImpl
 import com.vibi.shared.data.repository.TextOverlayRepositoryImpl
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.ImageClipRepository
-import com.vibi.shared.domain.repository.RenderRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.usecase.export.FfmpegExecutor
@@ -46,14 +44,12 @@ val repositoryModule = module {
     }
     single { RemoteRenderExecutor(api = get()) }
     single<FfmpegExecutor> { get<RemoteRenderExecutor>() }
-    single<RenderRepository> { RenderRepositoryImpl(executor = get()) }
     single<com.vibi.shared.domain.repository.SeparationDirectiveRepository> {
         com.vibi.shared.data.repository.SeparationDirectiveRepositoryImpl(dao = get())
     }
 
     // 인증 — Settings / GoogleSignInClient 는 platform 모듈에서 주입.
     single { AuthTokenStore(settings = get()) }
-    single { com.vibi.shared.data.local.UserPreferencesStore(settings = get()) }
     single { com.vibi.shared.data.local.CreditStore(settings = get(), userSession = get()) }
     single {
         com.vibi.shared.data.repository.CreditPurchaseService(

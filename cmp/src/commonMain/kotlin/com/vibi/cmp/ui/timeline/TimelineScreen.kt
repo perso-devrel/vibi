@@ -123,7 +123,6 @@ import com.vibi.shared.ui.timeline.SaveStatus
 import com.vibi.shared.ui.timeline.ShareStatus
 import com.vibi.shared.ui.timeline.hasBgm
 import com.vibi.shared.ui.timeline.PreviewMode
-import com.vibi.shared.ui.timeline.TimelineStep
 import com.vibi.shared.ui.timeline.TimelineViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
@@ -439,7 +438,7 @@ fun TimelineScreen(
                 Text("‹", color = tokens.onBackgroundPrimary, style = typo.titleLg)
             }
             Text(
-                text = state.currentStep.label,
+                text = "편집·음원",
                 style = typo.displaySm,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = tokens.onBackgroundPrimary,
@@ -1064,30 +1063,7 @@ fun TimelineScreen(
 
     // 구간 선택 — popup sheet 대신 인라인 RangeSlider 로 처리하므로 sheet 제거
 
-    // 저장/공유 variant picker sheet — variant 2+ 일 때만 ViewModel 이 state set.
-    state.exportVariantPicker?.let { picker ->
-        ExportVariantPickerSheet(
-            picker = picker,
-            onToggleSave = { key -> viewModel.onToggleSavePickerVariant(key) },
-            onToggleShare = { key -> viewModel.onToggleSharePickerVariant(key) },
-            onConfirm = {
-                when (picker) {
-                    is com.vibi.shared.ui.timeline.ExportVariantPickerState.Save ->
-                        viewModel.onConfirmSavePicker()
-                    is com.vibi.shared.ui.timeline.ExportVariantPickerState.Share ->
-                        viewModel.onConfirmSharePicker()
-                }
-            },
-            onCancel = { viewModel.onCancelExportVariantPicker() },
-        )
-    }
-
 }
-
-private val TimelineStep.label: String
-    get() = when (this) {
-        TimelineStep.EditAudio -> "편집·음원"
-    }
 
 /**
  * 통합 타임라인 바 — segment/directive content strip + BGM lane 까지 한 컴포넌트로 묶음.

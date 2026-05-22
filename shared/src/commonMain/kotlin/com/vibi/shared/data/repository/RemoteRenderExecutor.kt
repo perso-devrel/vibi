@@ -23,14 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * BFF render 잡 제출 진입점. 두 사용 패턴:
- *  - [renderProject] (FfmpegExecutor 인터페이스): 제출 + 폴링 + 결과 mp4 다운로드 + 캐시 저장 후
- *    파일 경로 반환. ExportWithDubbingUseCase 가 사용.
- *  - [submitAndAwaitJobId]: 제출 + 폴링까지만, jobId 만 반환. RenderRepositoryImpl 가
- *    "편집 영상" source 보장 (자막/더빙/분리 직전 EnsureLatestRender) 흐름에서 사용. 결과 파일은
- *    BFF 가 inputId 로 캐시하고 후속 잡이 재사용.
- *
- * 두 진입점은 동일 multipart 빌드를 공유 ([buildRenderRequest]).
+ * BFF render 잡 제출 + COMPLETED 폴링 + 결과 mp4 다운로드 + 캐시 저장 후 파일 경로 반환.
  */
 class RemoteRenderExecutor(
     private val api: BffApi
@@ -55,16 +48,13 @@ class RemoteRenderExecutor(
                 bgmClips = bgmClips,
                 separationDirectives = separationDirectives,
                 preUploadedInputId = preUploadedInputId,
-                outputKind = null,
             )
 
             onProgress(5)
             val jobId = api.submitRenderJob(
                 videoFiles = req.videoParts,
-                audioFiles = emptyList(),
                 segmentImageFiles = req.segmentImageParts,
                 bgmFiles = req.bgmParts,
-                audioOverride = null,
                 config = req.config,
                 inputId = preUploadedInputId,
             ).jobId
@@ -83,57 +73,6 @@ class RemoteRenderExecutor(
         }
     }
 
-    /**
-     * Render 제출 + COMPLETED 폴링까지만. 다운로드는 안 함. 결과 파일은 BFF 가 inputId 로 캐시.
-     *
-     * 진행률 매핑:
-     *  - 0..9: 업로드 + 큐 진입
-     *  - 10..99: BFF 진행률 비례
-     *  - 100: COMPLETED
-     */
-    suspend fun submitAndAwaitJobId(
-        segments: List<SegmentInput>,
-        frame: FrameInput?,
-        bgmClips: List<BgmClipMixInput>,
-        separationDirectives: List<SeparationDirectiveInput>,
-        preUploadedInputId: String?,
-        outputKind: String = "video",
-        onProgress: (percent: Int) -> Unit,
-    ): Result<String> {
-        try {
-            require(segments.isNotEmpty()) { "segments must not be empty" }
-            onProgress(0)
-
-            val req = buildRenderRequest(
-                segments = segments,
-                frame = frame,
-                bgmClips = bgmClips,
-                separationDirectives = separationDirectives,
-                preUploadedInputId = preUploadedInputId,
-                outputKind = outputKind,
-            )
-
-            onProgress(5)
-            val jobId = api.submitRenderJob(
-                videoFiles = req.videoParts,
-                audioFiles = emptyList(),
-                segmentImageFiles = req.segmentImageParts,
-                bgmFiles = req.bgmParts,
-                audioOverride = null,
-                config = req.config,
-                inputId = preUploadedInputId,
-            ).jobId
-            onProgress(10)
-
-            pollUntilDone(jobId, downloadProgressMax = 99, completedProgress = 100, onProgress = onProgress)
-            return Result.success(jobId)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            return Result.failure(e)
-        }
-    }
-
     private suspend fun pollUntilDone(
         jobId: String,
         downloadProgressMax: Int,
@@ -142,7 +81,6 @@ class RemoteRenderExecutor(
     ) {
         val maxPollMs = 15 * 60 * 1000L
         val startTime = currentTimeMillis()
-        // BFF progress 0..100 → 10..(downloadProgressMax) 로 매핑.
         val span = (downloadProgressMax - 10).coerceAtLeast(1)
         val ratio = span / 100f
         while (currentCoroutineContext().isActive) {
@@ -160,7 +98,6 @@ class RemoteRenderExecutor(
             }
             delay(2000)
         }
-        // 코루틴 취소: 호출자에게 CancellationException 으로 전달.
         throw CancellationException("Render polling cancelled")
     }
 
@@ -177,20 +114,16 @@ class RemoteRenderExecutor(
         bgmClips: List<BgmClipMixInput>,
         separationDirectives: List<SeparationDirectiveInput>,
         preUploadedInputId: String?,
-        outputKind: String?,
     ): RenderRequest {
         val sortedSegments = segments.sortedBy { it.order }
         val videoParts = mutableListOf<BinaryPart>()
         val segmentImageParts = mutableListOf<BinaryPart>()
         val renderSegments = mutableListOf<RenderSegment>()
 
-        // 같은 source video 를 가리키는 N 개 segment 가 동일 71MB 파일을 N번 read+upload 하지
-        // 않도록 sourceFilePath → key 1대1 매핑. server 는 segments[i].sourceFileKey 로 videoFiles
-        // map 을 lookup 하므로 한 key 를 여러 segment 가 공유해도 정상 동작.
+        // 같은 source video 를 가리키는 N 개 segment 가 동일 파일을 N번 read+upload 하지
+        // 않도록 sourceFilePath → key 1대1 매핑.
         val videoKeyByPath = mutableMapOf<String, String>()
 
-        // preUploadedInputId 가 있으면 video/audio bytes 는 BFF 캐시에서 재사용 — 여기서 read 도, multipart 도 skip.
-        // 단, segment 가 IMAGE 일 때는 캐시 대상이 아니므로 항상 multipart 로 전송 (아래 분기).
         for (seg in sortedSegments) {
             when (seg.type) {
                 SegmentType.VIDEO -> {
@@ -217,7 +150,6 @@ class RemoteRenderExecutor(
                 }
                 SegmentType.IMAGE -> {
                     val key = "segment_image_${seg.order}"
-                    // IMAGE segment 는 input 캐시 대상이 아님 — 항상 read + multipart.
                     val bytes = readFileBytes(seg.sourceFilePath)
                     segmentImageParts += BinaryPart(key, "$key.img", bytes, "image/*")
                     renderSegments += RenderSegment(
@@ -282,7 +214,7 @@ class RemoteRenderExecutor(
             },
             bgmClips = renderBgmClips,
             separationDirectives = renderSeparationDirectives,
-            outputKind = outputKind ?: "video",
+            outputKind = "video",
         )
 
         return RenderRequest(

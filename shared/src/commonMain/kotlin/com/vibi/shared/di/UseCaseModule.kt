@@ -8,8 +8,6 @@ import com.vibi.shared.domain.usecase.image.UpdateImageClipUseCase
 import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.ValidateVideoUseCase
-import com.vibi.shared.domain.usecase.render.EnsureLatestRenderUseCase
-import com.vibi.shared.domain.usecase.save.ListExportVariantsUseCase
 import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
@@ -31,19 +29,12 @@ import org.koin.core.module.dsl.factoryOf
 import org.koin.dsl.module
 
 val useCaseModule = module {
-    // input
     factoryOf(::ValidateVideoUseCase)
     factoryOf(::CreateProjectWithInitialVideoSegmentUseCase)
     factoryOf(::SetProjectFrameUseCase)
-
-    // draft (메인 화면 "이어서 작업" 만료 cleanup)
     factory { ExpireOldDraftsUseCase(get()) }
-
-    // image
     factoryOf(::AddImageClipUseCase)
     factoryOf(::UpdateImageClipUseCase)
-
-    // save (timeline header → 모든 variant 렌더 + 갤러리 저장)
     factory {
         SaveAllVariantsUseCase(
             platformAdapter = get(),
@@ -51,29 +42,18 @@ val useCaseModule = module {
             editProjectRepository = get(),
             segmentRepository = get(),
             bgmClipRepository = get(),
+            textOverlayRepository = get(),
+            imageClipRepository = get(),
             separationDirectiveRepository = get(),
-            bffApi = get(),
         )
     }
-    factoryOf(::ListExportVariantsUseCase)
-
-    // separation
     factoryOf(::StartAudioSeparationUseCase)
     factoryOf(::PollSeparationUseCase)
-
-    // render — 음원분리 시작 직전 편집 영상 source 보장
-    factoryOf(::EnsureLatestRenderUseCase)
-
-    // bgm
     factoryOf(::AddBgmClipUseCase)
     factoryOf(::UpdateBgmClipUseCase)
-
-    // text
     factoryOf(::AddTextOverlayUseCase)
     factoryOf(::UpdateTextOverlayUseCase)
     factoryOf(::DuplicateTextOverlayUseCase)
-
-    // timeline
     factoryOf(::AddVideoSegmentUseCase)
     factoryOf(::AddImageSegmentUseCase)
     factoryOf(::RemoveSegmentUseCase)

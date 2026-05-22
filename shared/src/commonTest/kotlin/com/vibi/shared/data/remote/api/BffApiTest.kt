@@ -77,10 +77,8 @@ class BffApiTest {
 
         val result = api.submitRenderJob(
             videoFiles = listOf(BinaryPart("video_0", "v.mp4", byteArrayOf(0x00, 0x01), "video/mp4")),
-            audioFiles = emptyList(),
             segmentImageFiles = emptyList(),
             bgmFiles = emptyList(),
-            audioOverride = null,
             config = RenderConfig(segments = emptyList())
         )
 

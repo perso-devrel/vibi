@@ -14,8 +14,6 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
-import org.koin.core.component.KoinComponent
-import org.koin.core.component.inject
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
@@ -25,11 +23,11 @@ import platform.Foundation.writeToFile
 
 /**
  * iOS Export 어댑터 — BFF [FfmpegExecutor] (= RemoteRenderExecutor) 에 직접 위임.
- * 자막/더빙 제거 후 ExportWithDubbingUseCase 가 없어졌으므로 어댑터가 segment/bgm 변환만 담당.
+ * 자막/더빙 제거 후 어댑터가 segment/bgm/separation 변환만 담당.
  */
-class IosExportPlatformAdapter : ExportPlatformAdapter, KoinComponent {
-
-    private val executor: FfmpegExecutor by inject()
+class IosExportPlatformAdapter(
+    private val executor: FfmpegExecutor,
+) : ExportPlatformAdapter {
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     override suspend fun executeExport(
@@ -61,9 +59,11 @@ class IosExportPlatformAdapter : ExportPlatformAdapter, KoinComponent {
             )
         } else null
 
-        val bgmInputs = request.bgmClips.mapNotNull { clip ->
+        val bgmInputs = request.bgmClips.map { clip ->
+            // BGM 은 사용자가 timeline 에 명시적으로 배치한 결과물이라 silent drop 금지.
+            // 권한 만료 / HTTP 4xx / 사라진 content:// 등으로 path 해소 실패 시 fail-loud.
             val localPath = copyUriToCache(clip.sourceUri, cacheDir, prefix = "bgm")
-                ?: return@mapNotNull null
+                ?: error("BGM source unreadable: ${clip.sourceUri}")
             BgmClipMixInput(
                 audioFilePath = localPath,
                 startMs = clip.startMs,

@@ -1,12 +1,16 @@
 package com.vibi.shared.domain.usecase.save
 
-import com.vibi.shared.data.remote.api.BffApi
+import com.vibi.shared.domain.model.EditProject
+import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
+import com.vibi.shared.domain.repository.TextOverlayRepository
+import com.vibi.shared.domain.repository.ImageClipRepository
 import com.vibi.shared.domain.usecase.share.GallerySaver
+import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.ui.export.ExportPlatformAdapter
 import com.vibi.shared.ui.export.ExportRequest
 import kotlinx.coroutines.flow.first
@@ -23,16 +27,17 @@ class SaveAllVariantsUseCase(
     private val editProjectRepository: EditProjectRepository,
     private val segmentRepository: SegmentRepository,
     private val bgmClipRepository: BgmClipRepository,
+    private val textOverlayRepository: TextOverlayRepository,
+    private val imageClipRepository: ImageClipRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
-    @Suppress("UNUSED_PARAMETER") private val bffApi: BffApi,
 ) {
 
     suspend operator fun invoke(
         projectId: String,
         onProgress: (percent: Int) -> Unit,
         saveToGallery: Boolean = true,
-        @Suppress("UNUSED_PARAMETER") selectedVariantKeys: Set<String>? = null,
     ): Result<List<SavedVariant>> = runCatching {
+        onProgress(0)
         val project = editProjectRepository.getProject(projectId)
             ?: error("Project not found: $projectId")
         val segments = segmentRepository.getByProjectId(projectId)
@@ -40,18 +45,15 @@ class SaveAllVariantsUseCase(
 
         val bgmClips = bgmClipRepository.observeClips(projectId).first()
         val separationDirectives = separationDirectiveRepository.getByProject(projectId)
+        val textOverlays = textOverlayRepository.observeOverlays(projectId).first()
+        val imageClips = imageClipRepository.observeClips(projectId).first()
 
-        val noEdits = bgmClips.isEmpty() &&
-            separationDirectives.isEmpty() && segments.size == 1 &&
-            segments[0].trimStartMs == 0L && segments[0].trimEndMs == 0L
-
-        val renderedPath: String = if (noEdits && segments[0].type == SegmentType.VIDEO) {
-            onProgress(90)
+        val renderedPath: String = if (canCopySourceDirectly(project, segments, bgmClips, separationDirectives, textOverlays, imageClips)) {
+            onProgress(100)
             segments[0].sourceUri
         } else {
             val request = ExportRequest(
                 projectId = "$projectId#${ExportVariant.KEY_ORIGINAL}",
-                outputLanguageCode = ExportVariant.KEY_ORIGINAL,
                 segments = segments,
                 bgmClips = bgmClips,
                 separationDirectives = separationDirectives,
@@ -68,13 +70,43 @@ class SaveAllVariantsUseCase(
         }
 
         if (saveToGallery) {
-            val displayName = "VID_${projectId.hashCode().toUInt()}"
+            // hashCode 충돌 + 동일 projectId 재저장 race 방지 위해 timestamp 포함.
+            val displayName = "VID_${projectId.hashCode().toUInt()}_${currentTimeMillis()}"
             gallerySaver.saveVideo(renderedPath, displayName).getOrElse { e ->
                 error("Gallery save failed: ${e.message}")
             }
         }
         onProgress(100)
         listOf(SavedVariant(languageCode = ExportVariant.KEY_ORIGINAL, outputPath = renderedPath))
+    }
+
+    /**
+     * 사용자가 timeline 에 가한 모든 mutation 을 검사 — segment 자체 (trim/volume/speed) 와
+     * project 레벨 frame/scale/배경, BGM/separation/text overlay/image clip 까지 포함. 무편집이고
+     * 단일 VIDEO segment 면 BFF render 우회하고 원본 파일을 그대로 갤러리 저장 가능.
+     */
+    private fun canCopySourceDirectly(
+        project: EditProject,
+        segments: List<Segment>,
+        bgmClips: List<*>,
+        separationDirectives: List<*>,
+        textOverlays: List<*>,
+        imageClips: List<*>,
+    ): Boolean {
+        if (segments.size != 1) return false
+        val seg = segments[0]
+        if (seg.type != SegmentType.VIDEO) return false
+        if (seg.trimStartMs != 0L || seg.trimEndMs != 0L) return false
+        if (seg.volumeScale != 1f || seg.speedScale != 1f) return false
+        if (bgmClips.isNotEmpty() || separationDirectives.isNotEmpty()) return false
+        if (textOverlays.isNotEmpty() || imageClips.isNotEmpty()) return false
+        // Frame override: 0×0 = "원본 그대로". non-zero 인데 segment 와 다르면 frame edit 적용된 것.
+        if (project.frameWidth != 0 && project.frameWidth != seg.width) return false
+        if (project.frameHeight != 0 && project.frameHeight != seg.height) return false
+        if (project.videoScale != EditProject.DEFAULT_VIDEO_SCALE) return false
+        if (project.videoOffsetXPct != 0f || project.videoOffsetYPct != 0f) return false
+        if (project.backgroundColorHex != EditProject.DEFAULT_BACKGROUND_COLOR_HEX) return false
+        return true
     }
 }
 

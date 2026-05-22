@@ -123,15 +123,12 @@ class BffApi(
         }.body()
 
     /**
-     * @param inputId non-null 이면 BFF 가 캐시된 video/audios 를 재사용. 그 경우 [videoFiles] / [audioFiles]
-     *   는 빈 list 로 보내도 됨. null 이면 기존처럼 multipart 로 업로드.
+     * @param inputId non-null 이면 BFF 가 캐시된 video 를 재사용. null 이면 multipart 로 업로드.
      */
     suspend fun submitRenderJob(
         videoFiles: List<BinaryPart>,
-        audioFiles: List<BinaryPart>,
         segmentImageFiles: List<BinaryPart>,
         bgmFiles: List<BinaryPart>,
-        audioOverride: BinaryPart?,
         config: RenderConfig,
         inputId: String? = null,
     ): RenderJobResponse =
@@ -141,13 +138,11 @@ class BffApi(
                     formData {
                         if (inputId == null) {
                             videoFiles.forEach { append(it) }
-                            audioFiles.forEach { append(it) }
                         } else {
                             append("inputId", inputId)
                         }
                         segmentImageFiles.forEach { append(it) }
                         bgmFiles.forEach { append(it) }
-                        audioOverride?.let { append(it) }
                         append("config", json.encodeToString(RenderConfig.serializer(), config))
                     }
                 )

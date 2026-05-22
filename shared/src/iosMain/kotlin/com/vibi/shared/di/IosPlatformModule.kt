@@ -3,7 +3,6 @@ package com.vibi.shared.di
 import com.vibi.shared.data.repository.IosAudioMetadataExtractor
 import com.vibi.shared.data.repository.IosGallerySaver
 import com.vibi.shared.data.repository.IosImageMetadataExtractor
-import com.vibi.shared.data.repository.IosMediaJobUploader
 import com.vibi.shared.data.repository.IosShareSheetLauncher
 import com.vibi.shared.data.repository.IosVideoMetadataExtractor
 import com.vibi.shared.platform.AppleSignInClient
@@ -30,14 +29,13 @@ import org.koin.dsl.module
  * iOS 측 platform module.
  */
 val iosPlatformModule = module {
-    single<ExportPlatformAdapter> { IosExportPlatformAdapter() }
+    single<ExportPlatformAdapter> { IosExportPlatformAdapter(executor = get()) }
     single<GallerySaver> { IosGallerySaver() }
     single<ShareSheetLauncher> { IosShareSheetLauncher() }
     single<VideoMetadataExtractor> { IosVideoMetadataExtractor() }
     single<VideoThumbnailExtractor> { IosVideoThumbnailExtractor() }
     single<AudioMetadataExtractor> { IosAudioMetadataExtractor() }
     single<ImageMetadataExtractor> { IosImageMetadataExtractor() }
-    single { IosMediaJobUploader() }
 
     // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
     // 호출 시 별도 module 로 주입.

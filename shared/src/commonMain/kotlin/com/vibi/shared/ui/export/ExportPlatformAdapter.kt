@@ -25,11 +25,8 @@ interface ExportPlatformAdapter {
 
 data class ExportRequest(
     val projectId: String,
-    /** 결과 영상의 언어 코드. 자막/더빙 제거 후 항상 "original". 향후 확장 여지로 시그니처는 유지. */
-    val outputLanguageCode: String,
     val segments: List<Segment>,
     val bgmClips: List<BgmClip>,
-    /** 모든 결과 영상에 동일하게 적용되는 음성분리 명세. */
     val separationDirectives: List<SeparationDirective>,
     val frameWidth: Int,
     val frameHeight: Int,

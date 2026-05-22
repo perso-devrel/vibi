@@ -30,7 +30,6 @@ import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
 import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.model.SeparationMediaType
-import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.domain.usecase.image.AddImageClipUseCase
 import com.vibi.shared.domain.usecase.image.UpdateImageClipUseCase
 import com.vibi.shared.domain.usecase.bgm.AddBgmClipUseCase
@@ -39,9 +38,7 @@ import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
 import com.vibi.shared.domain.usecase.input.ImageMetadataExtractor
 import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
-import com.vibi.shared.domain.usecase.render.EnsureLatestRenderUseCase
 import com.vibi.shared.domain.usecase.save.ExportVariant
-import com.vibi.shared.domain.usecase.save.ListExportVariantsUseCase
 import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
@@ -100,32 +97,6 @@ sealed interface ShareStatus {
     data class FAILED(val message: String) : ShareStatus
 }
 
-/**
- * 저장/공유 흐름 진입 시 노출하는 variant picker sheet 상태.
- * variant 가 1개 이하면 picker 안 띄움 (즉시 동작) — 이 state 는 null.
- *
- *  - [Save] : multi-select. default 는 모든 variant 선택. confirm 시 갤러리 저장.
- *  - [Share] : multi-select. default 는 "original" 한 건. confirm 시 share sheet 으로 다중 첨부.
- *      외부 앱이 다중 첨부를 지원 못 하면 chooser 결과는 앱별 동작에 따름.
- */
-sealed class ExportVariantPickerState {
-    abstract val variants: List<ExportVariant>
-
-    data class Save(
-        override val variants: List<ExportVariant>,
-        val selected: Set<String>,
-    ) : ExportVariantPickerState()
-
-    data class Share(
-        override val variants: List<ExportVariant>,
-        val selected: Set<String>,
-    ) : ExportVariantPickerState()
-}
-
-/**
- * 타임라인 작업 단계 — 자막/더빙 제거 후 단일 단계만 남음. 향후 stepper 부활 여지 위해 enum 유지.
- */
-enum class TimelineStep { EditAudio }
 
 /**
  * 백그라운드 폴링 중인 음원분리 1건. 동시에 여러 구간을 분리할 수 있도록
@@ -256,13 +227,6 @@ data class TimelineUiState(
     val showExportOptionsSheet: Boolean = false,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     val shareStatus: ShareStatus = ShareStatus.IDLE,
-    /**
-     * 음원분리 시작 직전 EnsureLatestRenderUseCase 가 BFF 에 편집 영상 render 잡을 보내고
-     * 폴링 중일 때의 진행률(0..100). null = 진행 중 아님.
-     */
-    val editedVideoRenderProgress: Int? = null,
-    val exportVariantPicker: ExportVariantPickerState? = null,
-    val currentStep: TimelineStep = TimelineStep.EditAudio,
     /** Sound Deck A/B 미리듣기 모드. */
     val previewMode: PreviewMode = PreviewMode.MIX,
 ) {
@@ -321,12 +285,8 @@ class TimelineViewModel constructor(
     private val audioSeparationRepository: AudioSeparationRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val bffBaseUrl: String,
-    private val bffApi: BffApi,
     private val saveAllVariants: SaveAllVariantsUseCase,
-    private val listExportVariants: ListExportVariantsUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
-    private val ensureLatestRender: EnsureLatestRenderUseCase,
-    private val userPrefs: com.vibi.shared.data.local.UserPreferencesStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -350,40 +310,10 @@ class TimelineViewModel constructor(
 
     private var hasSeededUndoSnapshot = false
 
-    /**
-     * `editedVideoRenderProgress` 단일 필드 mutation helper. BFF 편집 영상 render 잡
-     * (분리 시작 직전 EnsureLatestRender) 의 진행률(0..100)을 UiState 에 반영.
-     *
-     *  - `percent != null` → "편집 영상 준비 중… (xx%)" 노출.
-     *  - `percent == null` → 진행 중 아님 (또는 무편집 → render skip).
-     */
-    private fun setRenderProgress(percent: Int?) {
-        _uiState.update { it.copy(editedVideoRenderProgress = percent) }
-    }
-
     // 음원분리 자동 재개·refresh 가드 — project 가 다시 emit 되어도 한 번만 fire.
     private enum class TriggerGate { ARMED, FIRED }
     private var separationGate = TriggerGate.ARMED
     private var separationRefreshGate = TriggerGate.ARMED
-
-    /**
-     * Hot-path 가드 — 이미 stale 마킹된 상태면 [markRenderStale] 의 코루틴 launch 도 skip.
-     * pushUndoState 가 드래그·슬라이더에서 빈번 호출되므로 idempotent no-op 도 zero round-trip 으로.
-     *
-     * Lifecycle:
-     *  - 신규 프로젝트 / fresh render 직후 → false (mutation 마다 markRenderStale 가 첫 1회 진입 허용).
-     *  - markRenderStale 가 invalidateGeneratedResults / RUNNING 가드 stale 마킹 / DB 가 이미 stale
-     *    이라 즉시 종료 — 모두 끝에서 true 로 set. 이후 mutation 들은 launch 도 안 함.
-     *  - [observeProject] 가 `project.isRenderStale=false` (= EnsureLatestRenderUseCase 가 새로 render
-     *    완료 후 set) 를 관찰한 순간 다시 false 로 풀어 다음 mutation cycle 정상.
-     *  - [resetTimelineDerivedResults] (영상편집 commit) 직후에도 explicit true — DB 가 stale 이므로
-     *    observeProject 의 fresh 검사가 자동 reset 하지 않으니 명시.
-     *
-     * @Volatile 은 다른 코루틴이 set 한 값을 다른 launch 안에서 즉시 보게 하기 위함 — KMP 공통이라
-     *   actual 동작은 플랫폼 메모리모델에 위임 (JVM/Native 모두 volatile 시맨틱 제공).
-     */
-    @kotlin.concurrent.Volatile
-    private var renderStaleMarked = false
 
     init {
         loadSegments()
@@ -392,55 +322,6 @@ class TimelineViewModel constructor(
         observeTextOverlays()
         observeBgmClips()
         observeSeparationDirectives()
-    }
-
-    /**
-     * Timeline mutation 이 발생하면 즉시 호출 — 다음 자막/더빙/분리 시점에 EnsureLatestRender 가
-     * 새로 BFF render 잡을 보내도록 표시 + 이전에 생성된 자막/더빙 결과를 제거 (timeline 과 어긋난
-     * stale 결과 노출 방지). 이미 stale 상태면 no-op (idempotent — 첫 mutation 시 1회만 정리).
-     * pushUndoState 와 함께 호출되는 곳마다 한 줄 추가하면 됨 — segment add/remove/trim/speed/volume/
-     * split/duplicate/range mutate 등.
-     *
-     * 자막/더빙 generation 이 RUNNING 인 도중에 호출되면 clip 삭제 시 race 가능 — clip 정리는 보류하고
-     * `isRenderStale=true` 만 마킹. 사용자가 generation 직후 timeline 편집을 시도하는 드문 케이스에 대비.
-     *
-     * Hot-path 최적화: in-memory [renderStaleMarked] 플래그로 이미 마킹됐으면 launch 도 skip.
-     */
-    private fun markRenderStale() {
-        if (renderStaleMarked) return
-        viewModelScope.launch {
-            val project = editProjectRepository.getProject(projectId) ?: return@launch
-            if (project.isRenderStale) {
-                renderStaleMarked = true
-                return@launch
-            }
-            editProjectRepository.updateProject(
-                project.copy(isRenderStale = true), touchActivity = false,
-            )
-            renderStaleMarked = true
-        }
-    }
-
-    /** 자막/더빙 제거 후 stepper 는 단일 단계만 — no-op (TimelineScreen 호환 위해 시그니처 유지). */
-    fun onSelectStep(@Suppress("UNUSED_PARAMETER") target: TimelineStep) {
-        // no-op
-    }
-
-    private fun applyStepTransition(target: TimelineStep) {
-        _uiState.update {
-            it.copy(
-                currentStep = target,
-                isSegmentEditMode = false,
-                isRangeSelecting = false,
-                rangeTargetSegmentId = null,
-                showRangeActionSheet = false,
-                selectedSegmentId = null,
-                showAudioSeparationSheet = false,
-                showAppendSheet = false,
-                showFrameSheet = false,
-                showTextOverlaySheet = false,
-            )
-        }
     }
 
     /**
@@ -541,10 +422,7 @@ class TimelineViewModel constructor(
                     }
                     if (!hasSeededUndoSnapshot) {
                         hasSeededUndoSnapshot = true
-                        pushUndoState(markStale = false)
-                    }
-                    if (!project.isRenderStale && renderStaleMarked) {
-                        renderStaleMarked = false
+                        pushUndoState()
                     }
                     maybeTriggerAutoPipelines(project)
                 }
@@ -763,15 +641,9 @@ class TimelineViewModel constructor(
         )
     }
 
-    /**
-     * @param markStale true 면 EditProject.isRenderStale=true 로 마킹 — 다음 자막/더빙/분리
-     *   시점에 EnsureLatestRender 가 새로 BFF render 잡을 보냄. 일반 mutation 후 호출 시 true 가 default;
-     *   초기 seed 또는 reset 후 baseline 푸시는 false.
-     */
-    private fun pushUndoState(markStale: Boolean = true) {
+    private fun pushUndoState(@Suppress("UNUSED_PARAMETER") markStale: Boolean = true) {
         mainUndoManager.pushState(buildSnapshot())
         updateUndoRedoState()
-        if (markStale) markRenderStale()
     }
 
     private fun updateUndoRedoState() {
@@ -969,8 +841,6 @@ class TimelineViewModel constructor(
             val snapshot = mainUndoManager.undo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
-            // undo 도 segments / volumes / speeds 를 변경하므로 render 캐시 무효화.
-            markRenderStale()
         }
     }
 
@@ -979,7 +849,6 @@ class TimelineViewModel constructor(
             val snapshot = mainUndoManager.redo() ?: return@launch
             restoreSnapshot(snapshot)
             updateUndoRedoState()
-            markRenderStale()
         }
     }
 
@@ -1109,167 +978,56 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(isTrimming = false, isVideoSelected = false)
     }
 
-    /**
-     * Timeline 헤더 "저장" 버튼 — variant 1개면 즉시 모두 렌더 + 갤러리 저장.
-     * 2+ 면 picker sheet 노출하고 사용자 선택을 기다림 ([onConfirmSavePicker] 가 실제 호출).
-     */
+    /** Timeline 헤더 "저장" 버튼 — 원본 영상 렌더 + 갤러리 저장. */
     fun onSaveAllVariants() {
         if (_uiState.value.saveStatus is SaveStatus.RUNNING) return
-        if (_uiState.value.exportVariantPicker != null) return
-        // 새 시도 진입 — 직전 FAILED 흔적 (snackbar) 제거. RUNNING 가드는 위에서 통과했으므로 충돌 없음.
-        run {
-            val s = _uiState.value
-            _uiState.value = s.copy(
-                saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
-                shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
-            )
-        }
-        viewModelScope.launch {
-            val variants = listExportVariants(projectId).getOrElse { e ->
-                _uiState.value = _uiState.value.copy(
-                    saveStatus = SaveStatus.FAILED("저장 준비 실패")
-                )
-                return@launch
-            }
-            if (variants.size <= 1) {
-                runSaveAllVariants(selectedKeys = null)
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    // Picker 와 다른 sheet 의 z-order 충돌 방지 — picker open 직전에 동시 열려있을 수 있는
-                    // sheet flag 들 하향.
-                    exportVariantPicker = ExportVariantPickerState.Save(
-                        variants = variants,
-                        selected = variants.map { it.key }.toSet(),
-                    )
-                )
-            }
-        }
-    }
-
-    /** Picker sheet 의 "저장" 버튼 — 현재 선택된 variant 들로 본 저장 흐름 시작. */
-    fun onConfirmSavePicker() {
-        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Save ?: return
-        if (current.selected.isEmpty()) return
-        _uiState.value = _uiState.value.copy(exportVariantPicker = null)
-        viewModelScope.launch { runSaveAllVariants(selectedKeys = current.selected) }
-    }
-
-    /** Picker 안에서 항목 체크박스 토글. */
-    fun onToggleSavePickerVariant(key: String) {
-        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Save ?: return
-        val next = if (key in current.selected) current.selected - key else current.selected + key
-        _uiState.value = _uiState.value.copy(
-            exportVariantPicker = current.copy(selected = next)
-        )
-    }
-
-    /**
-     * Save / Share 양쪽 picker 의 취소 버튼.
-     *
-     * picker 취소가 새 시도의 entry 라는 의미 — 직전 FAILED 메시지는 클리어해서 snackbar 잔존 방지.
-     * RUNNING 중에는 picker 가 떠있을 수 없으니 그 상태는 보존 (RUNNING 가드 onSaveAllVariants/onShareExport 에 있음).
-     */
-    fun onCancelExportVariantPicker() {
         val s = _uiState.value
-        if (s.exportVariantPicker == null) return
         _uiState.value = s.copy(
-            exportVariantPicker = null,
             saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
             shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
         )
+        viewModelScope.launch { runSaveAllVariants() }
     }
 
-    private suspend fun runSaveAllVariants(selectedKeys: Set<String>?) {
+    private suspend fun runSaveAllVariants() {
         _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(0))
         val result = saveAllVariants(
             projectId = projectId,
             onProgress = { percent ->
                 _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(percent))
             },
-            selectedVariantKeys = selectedKeys,
         )
         result.fold(
             onSuccess = {
                 _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.DONE)
-                // 저장 성공 — EditProject 삭제 후 InputScreen 복귀 신호. drafts 가 사라졌으므로
-                // 사용자는 새 영상 선택부터 다시.
                 runCatching { editProjectRepository.deleteProject(projectId) }
                 _navigateBackHome.emit(Unit)
             },
             onFailure = { e ->
                 _uiState.value = _uiState.value.copy(
-                    saveStatus = SaveStatus.FAILED("저장 실패")
+                    saveStatus = SaveStatus.FAILED("저장 실패: ${e.message ?: e::class.simpleName}")
                 )
             }
         )
     }
 
-    /** Snackbar 닫기 등 — UI 에서 호출 후 idle 로 복귀. */
     fun onClearSaveStatus() {
         _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.IDLE)
     }
 
-    /**
-     * Timeline 헤더 "공유" 버튼 — variant 1개면 즉시 그것을 렌더해서 share sheet.
-     * 2+ 면 picker sheet 노출 (multi-select, default "original" 한 건).
-     */
+    /** Timeline 헤더 "공유" 버튼 — 원본 영상을 렌더 후 share sheet. */
     fun onShareExport() {
         if (_uiState.value.shareStatus is ShareStatus.RUNNING) return
         if (_uiState.value.segments.isEmpty()) return
-        if (_uiState.value.exportVariantPicker != null) return
-        // 새 시도 진입 — 직전 FAILED 흔적 제거. RUNNING 가드 위에서 통과했으므로 충돌 없음.
-        run {
-            val s = _uiState.value
-            _uiState.value = s.copy(
-                saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
-                shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
-            )
-        }
-        viewModelScope.launch {
-            val variants = listExportVariants(projectId).getOrElse { e ->
-                _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED("공유 준비 실패")
-                )
-                return@launch
-            }
-            if (variants.size <= 1) {
-                runShareExport(selectedKeys = null)
-            } else {
-                // computeAllVariantKeys 가 KEY_ORIGINAL 을 항상 첫 항목으로 보장 — fallback (variants.first())
-                // 은 invariant 위반 시 안전망. 실제 호출 경로에서 발동되지 않는 dead path.
-                val defaultKey = variants.firstOrNull { it.key == ExportVariant.KEY_ORIGINAL }?.key
-                    ?: variants.first().key
-                _uiState.value = _uiState.value.copy(
-                    // Picker 와 다른 sheet 의 z-order 충돌 방지 — picker open 직전에 동시 열려있을 수 있는
-                    // sheet flag 들 하향. (RUNNING 가드는 위에서 통과했으므로 진행 중 흐름은 영향 없음.)
-                    exportVariantPicker = ExportVariantPickerState.Share(
-                        variants = variants,
-                        selected = setOf(defaultKey),
-                    )
-                )
-            }
-        }
-    }
-
-    /** Share picker 의 체크박스 토글. 빈 selection 도 허용 — confirm 버튼 측에서 가드. */
-    fun onToggleSharePickerVariant(key: String) {
-        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Share ?: return
-        val next = if (key in current.selected) current.selected - key else current.selected + key
-        _uiState.value = _uiState.value.copy(
-            exportVariantPicker = current.copy(selected = next)
+        val s = _uiState.value
+        _uiState.value = s.copy(
+            saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
+            shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
         )
+        viewModelScope.launch { runShareExport() }
     }
 
-    /** Share picker "공유" 버튼 — 선택된 variant 들을 렌더 후 share sheet 으로 다중 첨부. */
-    fun onConfirmSharePicker() {
-        val current = _uiState.value.exportVariantPicker as? ExportVariantPickerState.Share ?: return
-        if (current.selected.isEmpty()) return
-        val keys = current.selected
-        _uiState.value = _uiState.value.copy(exportVariantPicker = null)
-        viewModelScope.launch { runShareExport(selectedKeys = keys) }
-    }
-
-    private suspend fun runShareExport(selectedKeys: Set<String>?) {
+    private suspend fun runShareExport() {
         _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(0))
         val result = saveAllVariants(
             projectId = projectId,
@@ -1277,7 +1035,6 @@ class TimelineViewModel constructor(
                 _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(percent))
             },
             saveToGallery = false,
-            selectedVariantKeys = selectedKeys,
         )
         result.fold(
             onSuccess = { variants ->
@@ -1298,14 +1055,14 @@ class TimelineViewModel constructor(
                     },
                     onFailure = { e ->
                         _uiState.value = _uiState.value.copy(
-                            shareStatus = ShareStatus.FAILED("공유 실패")
+                            shareStatus = ShareStatus.FAILED("공유 실패: ${e.message ?: e::class.simpleName}")
                         )
                     }
                 )
             },
             onFailure = { e ->
                 _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED("공유 실패")
+                    shareStatus = ShareStatus.FAILED("공유 실패: ${e.message ?: e::class.simpleName}")
                 )
             }
         )
@@ -1658,38 +1415,6 @@ class TimelineViewModel constructor(
             selectedSegmentId = null,
         )
         pushUndoState()
-    }
-
-    /**
-     * 영상편집 commit 후 stale 가 된 downstream 산출물 정리. 음원분리 directive 는 segment 좌표
-     * 기반이라 wipe. BGM 은 구간 액션 시 ripple/split 로 영상과 동기 갱신되므로 보존.
-     */
-    private suspend fun resetTimelineDerivedResults() {
-        _uiState.value.separationDirectives.forEach { separationDirectiveRepository.delete(it.id) }
-        _uiState.value.segments.filter { it.type == SegmentType.VIDEO }
-            .forEach { updateSegmentVolume(it.id, 1f) }
-        separationJobs.values.forEach { it.cancel() }
-        separationJobs.clear()
-        bgmSeparationJob?.cancel()
-        bgmSeparationJob = null
-        separationGate = TriggerGate.ARMED
-        renderStaleMarked = true
-
-        editProjectRepository.getProject(projectId)?.let { p ->
-            editProjectRepository.updateProject(
-                p.clearSeparation().copy(processingSeparations = emptyList())
-            )
-        }
-
-        _uiState.update { s ->
-            s.copy(
-                audioSeparation = null,
-                showAudioSeparationSheet = false,
-                separationDirectives = emptyList(),
-                processingSeparations = emptyList(),
-                separationStatus = AutoJobStatus.IDLE,
-            )
-        }
     }
 
     /**

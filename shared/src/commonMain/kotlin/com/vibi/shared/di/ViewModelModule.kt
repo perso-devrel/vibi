@@ -52,14 +52,10 @@ val viewModelModule = module {
             startAudioSeparation = get(),
             pollSeparation = get(),
             audioSeparationRepository = get(),
-            bffBaseUrl = getProperty<String>("bffBaseUrl"),
-            bffApi = get(),
             separationDirectiveRepository = get(),
+            bffBaseUrl = getProperty<String>("bffBaseUrl"),
             saveAllVariants = get(),
-            listExportVariants = get(),
             shareSheetLauncher = get(),
-            ensureLatestRender = get(),
-            userPrefs = get(),
         )
     }
     factory { LoginViewModel(authRepository = get()) }

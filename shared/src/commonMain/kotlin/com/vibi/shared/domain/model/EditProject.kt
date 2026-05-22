@@ -36,11 +36,7 @@ data class EditProject(
      * AUDIO 와 별도 슬롯 — 한 종류 캐시 hit 이 다른 종류로 cross-contaminate 하지 않도록.
      */
     val currentVideoRenderJobId: String? = null,
-    /**
-     * 마지막 render 후 timeline mutation (segment add/remove/trim/speed/volume/reorder 등) 가
-     * 발생했는지. true 면 [currentAudioRenderJobId] / [currentVideoRenderJobId] 모두 신뢰할 수 없어
-     * EnsureLatestRenderUseCase 가 요청된 kind 로 새로 render. 신규 프로젝트는 true.
-     */
+    /** 마지막 render 와 timeline 이 어긋나는지 여부 — schema 호환 위해 보존. */
     val isRenderStale: Boolean = true,
 ) {
     companion object {
