@@ -48,20 +48,29 @@ data class Segment(
 }
 
 /**
+ * Slider 가 1.0 위치에서 emit 하는 부동소수점 quantize 오차 (예: 0.9999999f) 를 흡수하기 위한
+ * tolerance. 1e-4 = 0.01% — 사람 귀/눈에 무의미한 차이.
+ */
+private const val EDIT_TOLERANCE = 1e-4f
+
+private fun Float.isApproxOne(): Boolean = kotlin.math.abs(this - 1f) < EDIT_TOLERANCE
+private fun Float.isApproxZero(): Boolean = kotlin.math.abs(this) < EDIT_TOLERANCE
+
+/**
  * 본 segment 에 무편집 default 가 아닌 변경이 적용됐는지.
- * default 기준: trimStartMs == 0, trimEndMs == 0 (미트림), volumeScale == 1.0, speedScale == 1.0.
+ * default 기준: trimStartMs == 0, trimEndMs == 0 or durationMs (미트림 sentinel), volumeScale ≈ 1.0, speedScale ≈ 1.0.
  *
  * IMAGE segment 는 trim 개념이 없으므로 volume/speed 도 항상 default — 본 함수는 false 를 자주 반환.
  * 용도: 편집 영상이 필요한지(=새로 render 해야 하는지) 판단. 무편집이면 원본 sourceUri 직접 사용 가능.
  */
 fun Segment.hasNonTrivialEdits(): Boolean {
-    if (type == SegmentType.VIDEO) {
-        if (trimStartMs != 0L) return true
-        // trimEndMs == 0L 또는 == durationMs 둘 다 "미트림" 으로 본다 (effectiveTrimEndMs 의 fallback).
-        if (trimEndMs != 0L && trimEndMs != durationMs) return true
-    }
-    if (volumeScale != 1.0f) return true
-    if (speedScale != 1.0f) return true
+    // IMAGE 는 trim/volume/speed 자체가 무의미 (still frame) — 항상 미편집.
+    if (type != SegmentType.VIDEO) return false
+    if (trimStartMs != 0L) return true
+    // trimEndMs == 0L 또는 == durationMs 둘 다 "미트림" 으로 본다 (effectiveTrimEndMs 의 fallback).
+    if (trimEndMs != 0L && trimEndMs != durationMs) return true
+    if (!volumeScale.isApproxOne()) return true
+    if (!speedScale.isApproxOne()) return true
     return false
 }
 
@@ -109,8 +118,8 @@ fun isProjectEdited(
     val frameIsUnset = project.frameWidth == 0 && project.frameHeight == 0
     if (!frameMatchesNative && !frameIsUnset) return true
     if (project.backgroundColorHex != EditProject.DEFAULT_BACKGROUND_COLOR_HEX) return true
-    if (project.videoScale != EditProject.DEFAULT_VIDEO_SCALE) return true
-    if (project.videoOffsetXPct != 0f) return true
-    if (project.videoOffsetYPct != 0f) return true
+    if (!project.videoScale.isApproxOne()) return true
+    if (!project.videoOffsetXPct.isApproxZero()) return true
+    if (!project.videoOffsetYPct.isApproxZero()) return true
     return false
 }
