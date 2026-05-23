@@ -98,13 +98,13 @@ internal fun isRecordingSourceUri(sourceUri: String): Boolean {
  */
 internal fun bgmDisplayLabel(sourceUri: String, recordingOrdinal: Int? = null): String {
     if (isRecordingSourceUri(sourceUri)) {
-        return if (recordingOrdinal != null) "녹음$recordingOrdinal" else "녹음"
+        return if (recordingOrdinal != null) "Recording $recordingOrdinal" else "Recording"
     }
     val lastSegment = sourceUri.substringAfterLast('/')
     val withoutExt = lastSegment.substringBeforeLast('.', missingDelimiterValue = lastSegment)
-    if (withoutExt.matches(Regex("audio_\\d+"))) return "음원"
+    if (withoutExt.matches(Regex("audio_\\d+"))) return "Audio"
     val stripped = withoutExt.replace(Regex("_\\d{13,}$"), "")
-    return stripped.ifBlank { "음원" }
+    return stripped.ifBlank { "Audio" }
 }
 
 /**

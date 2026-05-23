@@ -30,11 +30,11 @@ fun formatRelative(millis: Long, now: Long = currentTimeMillis()): String {
     val hour = min / 60
     val day = hour / 24
     return when {
-        sec < 30 -> "방금 전"
-        min < 1 -> "${sec}초 전"
-        hour < 1 -> "${min}분 전"
-        day < 1 -> "${hour}시간 전"
-        day < 7 -> "${day}일 전"
+        sec < 30 -> "just now"
+        min < 1 -> "${sec}s ago"
+        hour < 1 -> "${min}m ago"
+        day < 1 -> "${hour}h ago"
+        day < 7 -> "${day}d ago"
         else -> formatTimestamp(millis)
     }
 }

@@ -49,13 +49,13 @@ fun ABPreviewBar(
         horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
     ) {
         SegmentChip(
-            label = "원본",
+            label = "Original",
             selected = mode == PreviewMode.ORIGINAL,
             onClick = { if (mode != PreviewMode.ORIGINAL) onToggle() },
             modifier = Modifier.weight(1f),
         )
         SegmentChip(
-            label = "내 믹스",
+            label = "My mix",
             selected = mode == PreviewMode.MIX,
             onClick = { if (mode != PreviewMode.MIX) onToggle() },
             modifier = Modifier.weight(1f),

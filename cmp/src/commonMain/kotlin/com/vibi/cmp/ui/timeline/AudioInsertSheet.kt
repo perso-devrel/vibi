@@ -138,7 +138,7 @@ private fun AudioInsertSheetBody(
                 errorMessage != null -> phase = Phase.Idle
                 // 너무 짧은 녹음 — 사용자 미스클릭 또는 권한 거부 후 즉시 stop 케이스.
                 durationMs < 500L -> {
-                    errorMessage = "녹음이 너무 짧습니다 (${durationMs}ms). 다시 시도해주세요."
+                    errorMessage = "Recording too short (${durationMs}ms). Please try again."
                     phase = Phase.Idle
                 }
                 else -> phase = Phase.Preview(uri, recordedDurationMs = durationMs)
@@ -203,8 +203,8 @@ private fun AudioInsertSheetBody(
         val uri = previewUri ?: return@LaunchedEffect
         val info = audioMetadataExtractor.extract(uri)
         if (info == null || info.durationMs < 200L) {
-            errorMessage = "녹음 파일이 비어있습니다 (${info?.durationMs ?: 0}ms). " +
-                "마이크 권한을 확인해주세요 (iOS 시뮬레이터는 macOS 호스트 설정)."
+            errorMessage = "Recording is empty (${info?.durationMs ?: 0}ms). " +
+                "Check microphone permission (iOS Simulator uses the macOS host settings)."
             phase = Phase.Idle
             return@LaunchedEffect
         }
@@ -335,7 +335,7 @@ private fun IdleBody(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = if (mode == AudioInsertMode.Recording) "마이크 준비 중…" else "파일 선택을 기다리는 중…",
+            text = if (mode == AudioInsertMode.Recording) "Preparing mic…" else "Waiting for file…",
             color = SheetTextSecondary,
             style = typo.bodySm,
         )
@@ -344,7 +344,7 @@ private fun IdleBody(
             onClick = if (mode == AudioInsertMode.Recording) onRecord else onPick,
         ) {
             Text(
-                text = if (mode == AudioInsertMode.Recording) "녹음 시작" else "파일 다시 선택",
+                text = if (mode == AudioInsertMode.Recording) "Start recording" else "Pick another file",
                 color = SheetTextPrimary,
                 style = typo.bodySm,
             )
@@ -473,7 +473,7 @@ private fun FooterControls(
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPlaying) "일시정지" else "재생",
+                        contentDescription = if (isPlaying) "Pause" else "Play",
                         tint = SheetTextPrimary,
                     )
                 }
@@ -481,7 +481,7 @@ private fun FooterControls(
                     modifier = Modifier.weight(1f).height(56.dp),
                     shape = VibiShape.lg,
                     onClick = onInsert,
-                ) { Text("삽입", style = typo.bodySm) }
+                ) { Text("Insert", style = typo.bodySm) }
             }
         }
     }
@@ -530,7 +530,7 @@ private fun SheetHeader(onDismiss: () -> Unit) {
         ) {
             Icon(
                 imageVector = Icons.Filled.Close,
-                contentDescription = "닫기",
+                contentDescription = "Close",
                 tint = SheetTextPrimary,
             )
         }

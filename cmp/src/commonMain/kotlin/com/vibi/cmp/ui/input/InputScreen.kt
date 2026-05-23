@@ -157,8 +157,8 @@ fun InputScreen(
                     }
                     Spacer(Modifier.height(if (isFirstPick) 18.dp else 12.dp))
                     Text(
-                        text = if (isFirstPick) "갤러리에서 영상 선택"
-                               else "다른 영상 선택",
+                        text = if (isFirstPick) "Choose a video"
+                               else "Pick another video",
                         style = TextStyle(
                             fontSize = if (isFirstPick) 22.sp else 18.sp,
                             fontWeight = FontWeight.Bold,
@@ -168,7 +168,7 @@ fun InputScreen(
                     if (isFirstPick) {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "영상은 남기고, 소음만 지운다",
+                            text = "Keep the video. Remove the noise.",
                             style = TextStyle(
                                 fontSize = 13.sp,
                                 color = Color(0xCCFFFFFF),
@@ -180,23 +180,23 @@ fun InputScreen(
 
             // 선택된 영상 메타·검증 결과 — hero 아래 평범한 Section.
             if (state.selectedVideo != null || state.isExtracting || state.validationResult != null) {
-                Section(header = "선택된 영상") {
+                Section(header = "Selected video") {
                     state.selectedVideo?.let { info ->
                         SectionRow {
                             Column {
-                                BodyText("${info.durationMs / 1000}초")
+                                BodyText("${info.durationMs / 1000}s")
                                 Spacer(Modifier.height(2.dp))
                                 SecondaryText("${info.width}×${info.height}")
                             }
                         }
                     }
                     if (state.isExtracting) {
-                        SectionRow { SecondaryText("메타데이터 분석 중…") }
+                        SectionRow { SecondaryText("Analyzing…") }
                     }
                     when (val v = state.validationResult) {
                         ValidationResult.Valid -> SectionRow {
                             Text(
-                                "✓  사용 가능",
+                                "✓  Ready",
                                 style = TextStyle(
                                     fontSize = 17.sp,
                                     color = Color(0xFF30D158),
@@ -224,7 +224,7 @@ fun InputScreen(
             if (state.drafts.isNotEmpty()) {
                 Spacer(Modifier.height(20.dp))
                 Text(
-                    text = "이어서 작업",
+                    text = "Drafts",
                     style = TextStyle(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -233,7 +233,7 @@ fun InputScreen(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "최근 작업은 7일간만 보관됩니다.",
+                    text = "Drafts are kept for 7 days.",
                     style = TextStyle(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -288,7 +288,7 @@ private fun DraftCard(
     val titleText = draft.title?.takeIf { it.isNotBlank() }
         ?: formatTimestamp(draft.createdAt)
     val now = currentTimeMillis()
-    val relative = "마지막 편집: " + formatRelative(draft.updatedAt, now)
+    val relative = "Last edited " + formatRelative(draft.updatedAt, now)
 
     Box(
         modifier = Modifier
@@ -393,8 +393,8 @@ private fun DraftCard(
 @Composable
 private fun GreetingRow(name: String?, credits: Int) {
     val safeName = name?.trim()?.takeIf { it.isNotBlank() }
-    val title = if (safeName != null) "안녕하세요, $safeName 님" else "오늘 어떤 영상 만들어볼까요?"
-    val sub = if (safeName != null) "오늘도 깔끔한 음원만 남겨보세요" else "VIBI 가 소음만 지워드릴게요"
+    val title = if (safeName != null) "Hi, $safeName" else "What are we making today?"
+    val sub = if (safeName != null) "Keep your audio clean" else "VIBI removes the noise for you"
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,

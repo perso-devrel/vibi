@@ -113,12 +113,12 @@ fun BgmTrimSheet(
             verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
         ) {
             Text(
-                "음원이 영상보다 깁니다 — 삽입할 구간을 선택해주세요",
+                "This track is longer than the video — pick the range to insert",
                 color = tokens.onBackgroundPrimary,
                 style = typo.titleSm,
             )
             Text(
-                "영상 길이 ${formatSec(videoDurationMs)} / 음원 길이 ${formatSec(request.sourceDurationMs)}",
+                "Video ${formatSec(videoDurationMs)} / Track ${formatSec(request.sourceDurationMs)}",
                 color = tokens.onBackgroundPrimary.copy(alpha = 0.7f),
                 style = typo.bodySm,
             )
@@ -150,7 +150,7 @@ fun BgmTrimSheet(
                 ) {
                     Icon(
                         imageVector = if (isPreviewing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPreviewing) "정지" else "미리듣기",
+                        contentDescription = if (isPreviewing) "Stop" else "Preview",
                         tint = tokens.onBackgroundPrimary,
                     )
                 }
@@ -173,8 +173,8 @@ fun BgmTrimSheet(
             }
 
             Text(
-                if (withinLimit) "선택 구간 ${formatSec(span)}"
-                else "선택 구간 ${formatSec(span)} — 영상보다 깁니다",
+                if (withinLimit) "Selected ${formatSec(span)}"
+                else "Selected ${formatSec(span)} — longer than video",
                 color = if (withinLimit) tokens.onBackgroundPrimary.copy(alpha = 0.7f)
                 else tokens.accent,
                 style = typo.bodySm,
@@ -188,7 +188,7 @@ fun BgmTrimSheet(
                     modifier = Modifier.weight(1f),
                     shape = VibiShape.lg,
                     onClick = dismissAndStop,
-                ) { Text("취소", style = typo.bodySm) }
+                ) { Text("Cancel", style = typo.bodySm) }
                 Button(
                     modifier = Modifier.weight(1f),
                     enabled = canInsert,
@@ -200,7 +200,7 @@ fun BgmTrimSheet(
                         }
                         onConfirm()
                     },
-                ) { Text("삽입", style = typo.bodySm) }
+                ) { Text("Insert", style = typo.bodySm) }
             }
             Spacer(Modifier.height(VibiSpacing.xs))
         }

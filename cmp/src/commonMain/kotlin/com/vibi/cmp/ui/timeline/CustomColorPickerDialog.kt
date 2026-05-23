@@ -63,7 +63,7 @@ fun CustomColorPickerDialog(
     val typo = LocalVibiTypography.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("색 선택", style = typo.titleLg) },
+        title = { Text("Pick a color", style = typo.titleLg) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                 // 큰 preview Box — 체커보드 배경 위에 색을 올려 alpha 가시화.
@@ -100,10 +100,10 @@ fun CustomColorPickerDialog(
             Button(onClick = {
                 onSelect(hexString)
                 onDismiss()
-            }) { Text("선택") }
+            }) { Text("Select") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("취소") }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
 }

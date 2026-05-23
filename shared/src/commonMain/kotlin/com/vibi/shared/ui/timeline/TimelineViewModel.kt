@@ -1040,7 +1040,7 @@ class TimelineViewModel constructor(
             },
             onFailure = { e ->
                 com.vibi.shared.platform.logError("TimelineVM", "save failed", e)
-                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.FAILED("저장 실패"))
+                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.FAILED("Save failed"))
             }
         )
     }
@@ -1075,7 +1075,7 @@ class TimelineViewModel constructor(
                 val paths = variants.map { it.outputPath }
                 if (paths.isEmpty()) {
                     _uiState.value = _uiState.value.copy(
-                        shareStatus = ShareStatus.FAILED("공유할 결과가 없음")
+                        shareStatus = ShareStatus.FAILED("Nothing to share")
                     )
                     return@fold
                 }
@@ -1090,7 +1090,7 @@ class TimelineViewModel constructor(
                     onFailure = { e ->
                         com.vibi.shared.platform.logError("TimelineVM", "share sheet failed", e)
                         _uiState.value = _uiState.value.copy(
-                            shareStatus = ShareStatus.FAILED("공유 실패")
+                            shareStatus = ShareStatus.FAILED("Share failed")
                         )
                     }
                 )
@@ -1098,7 +1098,7 @@ class TimelineViewModel constructor(
             onFailure = { e ->
                 com.vibi.shared.platform.logError("TimelineVM", "share render failed", e)
                 _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED("공유 실패")
+                    shareStatus = ShareStatus.FAILED("Share failed")
                 )
             }
         )
@@ -2126,11 +2126,11 @@ class TimelineViewModel constructor(
         val width = state.pendingFrameWidth.toIntOrNull()
         val height = state.pendingFrameHeight.toIntOrNull()
         if (width == null || width <= 0 || height == null || height <= 0) {
-            _uiState.value = state.copy(frameError = "Width와 Height는 양의 정수")
+            _uiState.value = state.copy(frameError = "Width and height must be positive integers")
             return
         }
         if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
-            _uiState.value = state.copy(frameError = "최대 ${MAX_FRAME_DIMENSION}px")
+            _uiState.value = state.copy(frameError = "Max ${MAX_FRAME_DIMENSION}px")
             return
         }
         val color = state.pendingBackgroundColorHex.trim()
@@ -2203,11 +2203,11 @@ class TimelineViewModel constructor(
         val width = state.pendingFrameWidth.toIntOrNull()
         val height = state.pendingFrameHeight.toIntOrNull()
         if (width == null || width <= 0 || height == null || height <= 0) {
-            _uiState.value = state.copy(frameError = "Width와 Height는 양의 정수")
+            _uiState.value = state.copy(frameError = "Width and height must be positive integers")
             return
         }
         if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
-            _uiState.value = state.copy(frameError = "최대 ${MAX_FRAME_DIMENSION}px")
+            _uiState.value = state.copy(frameError = "Max ${MAX_FRAME_DIMENSION}px")
             return
         }
         val color = state.pendingBackgroundColorHex.trim()
@@ -2475,7 +2475,7 @@ class TimelineViewModel constructor(
                 if (info == null || info.durationMs <= 0L) {
                     _uiState.value = _uiState.value.copy(
                         isAddingBgm = false,
-                        bgmError = "오디오 메타데이터를 읽지 못함"
+                        bgmError = "Couldn't read audio metadata"
                     )
                     return@launch
                 }
@@ -3547,9 +3547,9 @@ class TimelineViewModel constructor(
         const val MAX_FRAME_DIMENSION = 7680
         const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
         private const val HTTP_NOT_FOUND = 404
-        private const val ERROR_SEPARATION_GENERIC = "분리에 실패했습니다"
+        private const val ERROR_SEPARATION_GENERIC = "Separation failed"
         private const val ERROR_SEPARATION_CONSUMED =
-            "이 작업은 이미 합성에 사용되어 더 이상 사용할 수 없습니다"
+            "This separation has already been finalized and can't be reused"
         /** 사용자 선택 trim 길이 ↔ stem 실측 길이의 허용 오차. 이 범위 밖이면 보정하지 않고
          * 사용자 선택값을 그대로 유지 (서버 측 측정 이상 가드). BFF TRIM_DURATION_TOLERANCE_MS
          * (100ms) 의 ~2배. */

@@ -145,7 +145,7 @@ fun SoundCard(
                     Icon(
                         imageVector = if (isPreviewing) Icons.Filled.Pause
                                       else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPreviewing) "정지" else "재생",
+                        contentDescription = if (isPreviewing) "Stop" else "Play",
                         tint = tokens.onBackgroundPrimary,
                     )
                 }
@@ -159,7 +159,7 @@ fun SoundCard(
                     modifier = Modifier.alpha(if (disabled) 0.4f else 1f),
                 ) {
                     Text(
-                        "볼륨",
+                        "Volume",
                         modifier = Modifier.width(VibiSpacing.xxl),
                         style = typo.bodySm,
                         color = tokens.mutedText,

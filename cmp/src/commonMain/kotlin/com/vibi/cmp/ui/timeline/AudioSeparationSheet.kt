@@ -117,7 +117,7 @@ fun AudioSeparationSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "음원 분리",
+                    "Separate audio",
                     style = typo.displaySm,
                     color = tokens.onBackgroundPrimary,
                     modifier = Modifier.weight(1f),
@@ -153,11 +153,11 @@ fun AudioSeparationSheet(
                     }) {
                         Icon(
                             imageVector = if (isAllPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (isAllPlaying) "선택 재생 일시정지" else "선택 재생",
+                            contentDescription = if (isAllPlaying) "Pause selection" else "Play selection",
                             modifier = Modifier.size(VibiSpacing.md),
                         )
                         Spacer(Modifier.size(VibiSpacing.xxs))
-                        Text("선택 재생", style = typo.bodySm)
+                        Text("Play selection", style = typo.bodySm)
                     }
                 }
             }
@@ -245,7 +245,7 @@ fun AudioSeparationSheet(
                                 ) {
                                     Icon(
                                         imageVector = if (isThisPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                        contentDescription = if (isThisPlaying) "일시정지" else "재생",
+                                        contentDescription = if (isThisPlaying) "Pause" else "Play",
                                         modifier = Modifier.size(VibiSpacing.md),
                                     )
                                 }
@@ -277,7 +277,7 @@ fun AudioSeparationSheet(
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                        contentDescription = "볼륨",
+                                        contentDescription = "Volume",
                                         modifier = Modifier.size(18.dp),
                                         tint = if (volumeExpanded) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.onSurface,
@@ -317,11 +317,11 @@ fun AudioSeparationSheet(
                     }
 
                     AudioSeparationStep.DONE -> {
-                        Text("완료 — 선택한 stem 이 명세로 저장됨", style = typo.bodyMd)
+                        Text("Done. Selection saved.", style = typo.bodyMd)
                     }
 
                     AudioSeparationStep.FAILED -> {
-                        Text("실패", color = MaterialTheme.colorScheme.error, style = typo.bodyMd)
+                        Text("Failed", color = MaterialTheme.colorScheme.error, style = typo.bodyMd)
                         state.errorMessage?.let { Text(it, style = typo.bodySm) }
                     }
                 }
@@ -339,23 +339,23 @@ fun AudioSeparationSheet(
                         mixer.pause()
                         playingId = null
                         onDelete()
-                    }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
+                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                 }
-                TextButton(onClick = dismissAndCleanup) { Text("취소") }
+                TextButton(onClick = dismissAndCleanup) { Text("Cancel") }
                 Spacer(Modifier.weight(1f))
                 when (state.step) {
                     AudioSeparationStep.SETUP -> Button(
                         enabled = state.canStart,
                         onClick = onStart,
-                    ) { Text("분리 시작") }
+                    ) { Text("Start") }
 
                     AudioSeparationStep.PICK_STEMS -> Button(
                         enabled = state.canMix,
                         onClick = onConfirmMix,
-                    ) { Text("적용") }
+                    ) { Text("Apply") }
 
                     AudioSeparationStep.DONE,
-                    AudioSeparationStep.FAILED -> Button(onClick = dismissAndCleanup) { Text("닫기") }
+                    AudioSeparationStep.FAILED -> Button(onClick = dismissAndCleanup) { Text("Close") }
 
                     else -> Unit
                 }

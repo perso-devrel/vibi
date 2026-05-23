@@ -41,15 +41,15 @@ fun ShareScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("내보내기 완료", style = MaterialTheme.typography.headlineSmall)
-        Text("출력 경로: $outputPath")
+        Text("Export complete", style = MaterialTheme.typography.headlineSmall)
+        Text("Output: $outputPath")
 
         Button(
             modifier = Modifier.fillMaxWidth(),
             onClick = { viewModel.shareVideo() },
             enabled = !state.isSharing && outputPath.isNotEmpty()
         ) {
-            Text(if (state.isSharing) "공유 시트 여는 중…" else "공유")
+            Text(if (state.isSharing) "Opening share sheet…" else "Share")
         }
 
         FilledTonalButton(
@@ -59,13 +59,13 @@ fun ShareScreen(
         ) {
             Text(
                 when {
-                    state.isSaving -> "저장 중…"
-                    state.savedToGallery -> "갤러리에 저장됨"
-                    else -> "갤러리에 저장"
+                    state.isSaving -> "Saving…"
+                    state.savedToGallery -> "Saved to library"
+                    else -> "Save to library"
                 }
             )
         }
 
-        state.error?.let { Text("오류: $it", color = MaterialTheme.colorScheme.error) }
+        state.error?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
     }
 }

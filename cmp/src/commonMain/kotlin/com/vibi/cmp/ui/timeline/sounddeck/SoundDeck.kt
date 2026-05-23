@@ -134,17 +134,26 @@ fun SoundDeck(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "소리",
+                "Audio",
                 style = typo.titleSm,
                 color = tokens.onBackgroundPrimary,
             )
-            Spacer(modifier = Modifier.width(VibiSpacing.xs))
-            Text(
-                if (groups.isEmpty()) "분리된 소리·삽입한 음원이 여기 카드로 모입니다"
-                else "구간을 펼쳐 분리된 소리를 조절하세요",
-                style = typo.bodySm,
-                color = tokens.mutedText,
-            )
+            // 보조 문구는 ①비어있을 때 placeholder, ②분리 결과가 있을 때만 "구간 탭" 가이드.
+            // BGM 만 있는 상태는 카드 자체가 의미를 전달하므로 보조 문구 숨김.
+            val hasSeparation = groups.any { it is SoundDeckGroup.Separation }
+            val hint = when {
+                groups.isEmpty() -> "Your separated and added audio shows up here"
+                hasSeparation -> "Tap a range to adjust the sounds"
+                else -> null
+            }
+            if (hint != null) {
+                Spacer(modifier = Modifier.width(VibiSpacing.xs))
+                Text(
+                    hint,
+                    style = typo.bodySm,
+                    color = tokens.mutedText,
+                )
+            }
         }
 
         groups.forEach { group ->
@@ -178,16 +187,16 @@ fun SoundDeck(
 
         if (onAddSeparation != null) {
             AddSourceCard(
-                label = "음원 분리",
-                description = "원하는 구간을 골라 화자·배경음으로 나눠요",
+                label = "Separate audio",
+                description = "Pick a range and split it into voices and background",
                 enabled = !disabled,
                 onClick = onAddSeparation,
             )
         }
         if (onAddBgm != null) {
             AddSourceCard(
-                label = "음원 삽입",
-                description = "BGM 파일 업로드 또는 즉시 녹음",
+                label = "Add audio",
+                description = "Upload a track or record your own",
                 enabled = !disabled,
                 onClick = onAddBgm,
             )
@@ -258,7 +267,7 @@ private fun CollapsibleSeparationCard(
                 ) {
                     Icon(
                         imageVector = if (expanded) Icons.Filled.Remove else Icons.Filled.Add,
-                        contentDescription = if (expanded) "접기" else "펼치기",
+                        contentDescription = if (expanded) "Collapse" else "Expand",
                         tint = tokens.onBackgroundPrimary,
                         modifier = Modifier.size(16.dp),
                     )
@@ -269,7 +278,7 @@ private fun CollapsibleSeparationCard(
                     verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs),
                 ) {
                     Text(
-                        "구간 ${group.index}",
+                        "Range ${group.index}",
                         style = typo.bodyStrong,
                         color = tokens.onBackgroundPrimary,
                     )

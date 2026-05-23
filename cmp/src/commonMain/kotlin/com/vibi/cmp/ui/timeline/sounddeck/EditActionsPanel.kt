@@ -99,7 +99,7 @@ fun EditActionsPanel(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = "닫기",
+                            contentDescription = "Close",
                             tint = tokens.onBackgroundPrimary,
                         )
                     }
@@ -136,7 +136,7 @@ fun EditActionsPanel(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = "볼륨",
+                    contentDescription = "Volume",
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -151,7 +151,7 @@ fun EditActionsPanel(
             ) {
                 Icon(
                     Icons.Filled.Speed,
-                    contentDescription = "속도",
+                    contentDescription = "Speed",
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -178,7 +178,7 @@ fun EditActionsPanel(
             ) {
                 Icon(
                     Icons.Filled.Delete,
-                    contentDescription = "삭제",
+                    contentDescription = "Delete",
                     modifier = Modifier.size(20.dp),
                     tint = tokens.accent,
                 )
@@ -213,8 +213,8 @@ fun EditActionsPanel(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("볼륨 ${(sliderVal * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplyVolume(sliderVal) }) { Text("적용") }
+                    Text("Volume ${(sliderVal * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
+                    TextButton(onClick = { onApplyVolume(sliderVal) }) { Text("Apply") }
                 }
                 Slider(
                     value = sliderVal,
@@ -244,8 +244,8 @@ fun EditActionsPanel(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     val pct = (sliderVal * 100).toInt()
-                    Text("속도 ${pct}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplySpeed(sliderVal) }) { Text("적용") }
+                    Text("Speed ${pct}%", style = typo.bodySm, color = tokens.mutedText)
+                    TextButton(onClick = { onApplySpeed(sliderVal) }) { Text("Apply") }
                 }
                 Slider(
                     value = sliderVal,

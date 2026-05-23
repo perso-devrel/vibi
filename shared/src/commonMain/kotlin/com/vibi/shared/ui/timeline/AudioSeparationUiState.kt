@@ -51,15 +51,15 @@ data class AudioSeparationUiState(
  * when the BFF adds a reason we haven't seen yet.
  */
 fun localizeProgressReason(reason: String?): String = when (reason) {
-    null, "" -> "준비 중"
-    "Enqueue Pending" -> "대기열 대기 중"
-    "Slow Mode Pending" -> "느린 모드 대기 중"
-    "Uploading" -> "업로드 중"
-    "Transcribing" -> "음성 전사 중"
-    "Translating" -> "번역 중"
-    "Generating Voice" -> "음원 분리 중"
-    "Completed" -> "완료"
-    "Failed" -> "실패"
+    null, "" -> "Preparing"
+    "Enqueue Pending" -> "Queued"
+    "Slow Mode Pending" -> "Queued (slow mode)"
+    "Uploading" -> "Uploading"
+    "Transcribing" -> "Transcribing"
+    "Translating" -> "Translating"
+    "Generating Voice" -> "Separating audio"
+    "Completed" -> "Done"
+    "Failed" -> "Failed"
     else -> reason
 }
 
@@ -70,9 +70,9 @@ fun localizeProgressReason(reason: String?): String = when (reason) {
  * to match the user's mental model.
  */
 fun stemDisplayLabel(stem: Stem): String = when {
-    stem.stemId == "background" -> "배경음"
-    stem.stemId == "voice_all" -> "모든 화자"
-    stem.speakerIndex != null -> "화자 ${stem.speakerIndex + 1}"
+    stem.stemId == "background" -> "Background"
+    stem.stemId == "voice_all" -> "All speakers"
+    stem.speakerIndex != null -> "Speaker ${stem.speakerIndex + 1}"
     else -> stem.label.ifBlank { stem.stemId }
 }
 
@@ -81,7 +81,7 @@ fun stemDisplayLabel(stem: Stem): String = when {
  * 처럼 Stem 객체가 없는 경로에서 사용. label 폴백이 stemId 본인.
  */
 fun stemDisplayLabelFromId(stemId: String): String = when {
-    stemId == Stem.STEM_ID_BACKGROUND -> "배경음"
-    stemId == Stem.STEM_ID_VOICE_ALL -> "모든 화자"
-    else -> Stem.speakerIndexFromId(stemId)?.let { "화자 ${it + 1}" } ?: stemId
+    stemId == Stem.STEM_ID_BACKGROUND -> "Background"
+    stemId == Stem.STEM_ID_VOICE_ALL -> "All speakers"
+    else -> Stem.speakerIndexFromId(stemId)?.let { "Speaker ${it + 1}" } ?: stemId
 }

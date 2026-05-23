@@ -95,7 +95,7 @@ fun UserMenuSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "로그아웃",
+                    text = "Sign out",
                     style = TextStyle(
                         fontSize = 15.sp,
                         color = tokens.mutedText,
@@ -106,7 +106,7 @@ fun UserMenuSheet(
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 )
                 Text(
-                    text = "회원탈퇴",
+                    text = "Delete account",
                     style = TextStyle(
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.error,
@@ -140,15 +140,15 @@ fun UserMenuSheet(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("회원탈퇴") },
+            title = { Text("Delete account?") },
             text = {
                 Text(
-                    "계정과 이 기기에 저장된 모든 작업이 삭제됩니다. 이 작업은 되돌릴 수 없습니다."
+                    "Your account and all projects on this device will be permanently deleted. This can't be undone."
                 )
             },
             confirmButton = {
                 Text(
-                    text = "탈퇴",
+                    text = "Delete",
                     color = MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
@@ -161,7 +161,7 @@ fun UserMenuSheet(
             },
             dismissButton = {
                 Text(
-                    text = "취소",
+                    text = "Cancel",
                     modifier = Modifier
                         .clickable { confirmDelete = false }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -182,7 +182,7 @@ private fun ProfileHeader(user: AuthUser?, credits: Int, showCredits: Boolean) {
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = user?.name?.takeIf { it.isNotBlank() } ?: "게스트",
+                text = user?.name?.takeIf { it.isNotBlank() } ?: "Guest",
                 style = TextStyle(
                     fontSize = 17.sp,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -192,7 +192,7 @@ private fun ProfileHeader(user: AuthUser?, credits: Int, showCredits: Boolean) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = user?.email?.takeIf { it.isNotBlank() } ?: "로그인된 계정 없음",
+                text = user?.email?.takeIf { it.isNotBlank() } ?: "Not signed in",
                 style = TextStyle(
                     fontSize = 13.sp,
                     color = tokens.mutedText,
@@ -203,7 +203,7 @@ private fun ProfileHeader(user: AuthUser?, credits: Int, showCredits: Boolean) {
         if (showCredits) {
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "보유 크레딧",
+                    text = "Credits",
                     style = TextStyle(
                         fontSize = 11.sp,
                         color = tokens.mutedText,
@@ -255,7 +255,7 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "크레딧 구매",
+                text = "Buy credits",
                 style = TextStyle(
                     fontSize = 16.sp,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -264,7 +264,7 @@ private fun BuyCreditsRow(onClick: () -> Unit) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "음원 분리에 사용",
+                text = "For audio separation",
                 style = TextStyle(
                     fontSize = 12.sp,
                     color = tokens.mutedText,

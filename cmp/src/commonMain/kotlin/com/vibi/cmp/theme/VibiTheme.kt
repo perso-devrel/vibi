@@ -1,6 +1,7 @@
 package com.vibi.cmp.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -138,6 +139,9 @@ fun VibiTheme(
     CompositionLocalProvider(
         LocalVibiColors provides tokens,
         LocalVibiTypography provides typography,
+        // Surface 로 감싸지 않으므로 LocalContentColor 가 기본 Color.Black 으로 남아
+        // 색을 명시하지 않은 Text() 가 다크모드에서도 검정으로 렌더되던 버그를 차단.
+        LocalContentColor provides tokens.onBackgroundPrimary,
     ) {
         MaterialTheme(colorScheme = colorScheme, content = content)
     }

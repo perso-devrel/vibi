@@ -34,7 +34,7 @@ fun UserAvatarButton(
         size = 36.dp,
         initialFontSize = 15.sp,
         modifier = modifier.clickable(onClick = onClick),
-        contentDescription = "내 정보",
+        contentDescription = "Account",
     )
 }
 

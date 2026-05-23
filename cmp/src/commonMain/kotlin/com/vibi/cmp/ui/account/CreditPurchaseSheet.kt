@@ -116,7 +116,7 @@ fun CreditPurchaseSheet(
                         if (isAdmin) {
                             status = onAdminGrant(target).fold(
                                 onSuccess = { Status.Success },
-                                onFailure = { Status.Error(it.message ?: "관리자 충전 실패") },
+                                onFailure = { Status.Error(it.message ?: "Failed to grant credits") },
                             )
                             return@launch
                         }
@@ -146,11 +146,11 @@ fun CreditPurchaseSheet(
                     style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.error),
                 )
                 Status.Success -> Text(
-                    text = if (isAdmin) "✓ 관리자 충전이 적용되었습니다." else "✓ 구매가 완료되었습니다.",
+                    text = if (isAdmin) "✓ Admin credits applied." else "✓ Purchase complete.",
                     style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.primary),
                 )
                 Status.Deferred -> Text(
-                    text = "결제가 완료됐어요. 잠시 후 크레딧이 자동으로 적용됩니다.",
+                    text = "Payment received. Credits will appear shortly.",
                     style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.primary),
                 )
                 else -> Unit
@@ -205,7 +205,7 @@ private fun Header(currentCredits: Int, isAdmin: Boolean) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (isAdmin) "크레딧 충전" else "크레딧 구매",
+                    text = if (isAdmin) "Add credits" else "Buy credits",
                     style = TextStyle(
                         fontSize = 22.sp,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -221,7 +221,7 @@ private fun Header(currentCredits: Int, isAdmin: Boolean) {
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                     ) {
                         Text(
-                            text = "관리자",
+                            text = "ADMIN",
                             style = TextStyle(
                                 fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onPrimary,
@@ -234,7 +234,7 @@ private fun Header(currentCredits: Int, isAdmin: Boolean) {
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "현재 보유 · ${currentCredits} 크레딧 (= ${currentCredits}분 분리 가능)",
+                text = "Balance · $currentCredits credits (≈ $currentCredits min)",
                 style = TextStyle(fontSize = 13.sp, color = tokens.mutedText),
             )
         }
@@ -271,7 +271,7 @@ private fun HeroBanner() {
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "1 크레딧 = 1분 분리",
+                    text = "1 credit = 1 minute of separation",
                     style = TextStyle(
                         fontSize = 15.sp,
                         color = tokens.onBackgroundPrimary,
@@ -280,7 +280,7 @@ private fun HeroBanner() {
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "영상 1분 구간의 음원 / 배경음 분리에 사용됩니다",
+                    text = "1 minute of vocal or background separation",
                     style = TextStyle(
                         fontSize = 12.sp,
                         color = tokens.onBackgroundPrimary.copy(alpha = 0.75f),
@@ -395,9 +395,9 @@ private fun PurchaseCta(
     val bg = if (enabled) tokens.accent else tokens.chipBgDisabled
     val fg = if (enabled) MaterialTheme.colorScheme.onPrimary else tokens.chipContentDisabled
     val label = when {
-        productLabel == null -> "상품을 선택하세요"
-        isAdmin -> "관리자 무료 충전"
-        else -> "$productLabel 구매"
+        productLabel == null -> "Choose a plan"
+        isAdmin -> "Grant credits (admin)"
+        else -> "Buy $productLabel"
     }
     Box(
         modifier = Modifier
@@ -444,7 +444,7 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            text = "구매 내역 복원",
+            text = "Restore purchases",
             style = TextStyle(
                 fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.primary,
@@ -465,9 +465,9 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
 private fun FinePrint() {
     val tokens = LocalVibiColors.current
     Text(
-        text = "1 크레딧 = 영상 1분 구간의 음원 / 배경음 분리. " +
-            "결제는 구매 확인 시 Apple ID 또는 Google 계정으로 청구됩니다. " +
-            "크레딧은 환불되지 않으며 미사용분도 양도/현금 환산할 수 없습니다.",
+        text = "1 credit = separation of 1 minute of vocals or background. " +
+            "Payment is charged to your Apple ID or Google account at confirmation. " +
+            "Credits are non-refundable and cannot be transferred or redeemed for cash.",
         style = TextStyle(
             fontSize = 11.sp,
             color = tokens.mutedText,

@@ -439,7 +439,7 @@ fun TimelineScreen(
                 Text("‹", color = tokens.onBackgroundPrimary, style = typo.titleLg)
             }
             Text(
-                text = "편집·음원",
+                text = "Edit",
                 style = typo.displaySm,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = tokens.onBackgroundPrimary,
@@ -462,7 +462,7 @@ fun TimelineScreen(
                     saving -> "${savingPercent}%"
                     sharing -> "${sharingPercent}%"
                     state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-                        state.processingSeparations.isNotEmpty() -> "음원분리 중"
+                        state.processingSeparations.isNotEmpty() -> "Separating…"
                     else -> "Export"
                 }
                 Text(label, style = typo.bodySm, color = tokens.onBackgroundPrimary)
@@ -506,7 +506,7 @@ fun TimelineScreen(
                 )
             } else if (state.videoUri.isEmpty()) {
                 // 영상 Box bg 가 항상 검정이므로 라이트 모드에서도 흰색 텍스트 유지.
-                Text("비디오 없음", color = Color.White)
+                Text("No video", color = Color.White)
             }
 
         }
@@ -530,7 +530,7 @@ fun TimelineScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Fullscreen,
-                        contentDescription = "전체화면",
+                        contentDescription = "Fullscreen",
                         tint = tokens.onBackgroundPrimary,
                         modifier = Modifier.size(iconSize),
                     )
@@ -553,7 +553,7 @@ fun TimelineScreen(
                     ) {
                         Icon(
                             imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (state.isPlaying) "일시정지" else "재생",
+                            contentDescription = if (state.isPlaying) "Pause" else "Play",
                             tint = tokens.backgroundPrimary,
                             modifier = Modifier.size(iconSize),
                         )
@@ -580,7 +580,7 @@ fun TimelineScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Undo,
-                            contentDescription = "실행 취소",
+                            contentDescription = "Undo",
                             tint = if (state.canUndo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
                             modifier = Modifier.size(iconSize),
                         )
@@ -595,7 +595,7 @@ fun TimelineScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Redo,
-                            contentDescription = "다시 실행",
+                            contentDescription = "Redo",
                             tint = if (state.canRedo) tokens.onBackgroundPrimary else tokens.chipContentDisabled,
                             modifier = Modifier.size(iconSize),
                         )
@@ -710,7 +710,7 @@ fun TimelineScreen(
             )
             if (state.isRangeSelecting) {
                 Text(
-                    "구간 ${state.pendingRangeStartMs / 1000}s ~ ${state.pendingRangeEndMs / 1000}s · 재생 ${state.playbackPositionMs / 1000}s",
+                    "Range ${state.pendingRangeStartMs / 1000}s – ${state.pendingRangeEndMs / 1000}s · Time ${state.playbackPositionMs / 1000}s",
                     style = typo.bodySm,
                     color = tokens.accent
                 )
@@ -736,8 +736,8 @@ fun TimelineScreen(
                                 viewModel.onShowAudioSeparationSheet(segId)
                                 viewModel.onStartSeparation()
                             }
-                        ) { Text("이 구간 음원분리") }
-                        OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("취소") }
+                        ) { Text("Separate this range") }
+                        OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("Cancel") }
                     }
                 }
                 // SegmentEditActionPanel 은 음원분리/음원삽입 행 아래로 이동 — 사용자 요청.
@@ -751,8 +751,8 @@ fun TimelineScreen(
             // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
             run {
                 val sepLabel = when (state.separationStatus) {
-                    AutoJobStatus.FAILED -> "다시 시도"
-                    else -> "음원 분리"
+                    AutoJobStatus.FAILED -> "Retry"
+                    else -> "Separate audio"
                 }
                 // 녹음/파일선택/미리듣기 는 AudioInsertSheet 가 흡수 — 본 scope 에선 메뉴만 띄움.
                 var audioMenuOpen by remember { mutableStateOf(false) }
@@ -785,7 +785,7 @@ fun TimelineScreen(
                 // 음원 삽입 — IconLabelCard + DropdownMenu (Box anchor). 설명 텍스트는 의도적으로 생략.
                 Box {
                     com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
-                        label = if (state.isAddingBgm) "추가 중..." else "음원 삽입",
+                        label = if (state.isAddingBgm) "Adding…" else "Add audio",
                         description = null,
                         // 영상편집 모드 가드 제거 — deselect 후 stuck disabled 되던 회귀 fix.
                         // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
@@ -804,14 +804,14 @@ fun TimelineScreen(
                         onDismissRequest = { audioMenuOpen = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("파일 업로드") },
+                            text = { Text("Upload file") },
                             onClick = {
                                 audioMenuOpen = false
                                 audioInsertMode = AudioInsertMode.Picker
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("즉시 녹음") },
+                            text = { Text("Record now") },
                             onClick = {
                                 audioMenuOpen = false
                                 audioInsertMode = AudioInsertMode.Recording
@@ -920,7 +920,7 @@ fun TimelineScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "전체화면 닫기",
+                        contentDescription = "Exit fullscreen",
                         tint = tokens.onBackgroundPrimary,
                         modifier = Modifier.size(24.dp),
                     )
@@ -936,8 +936,8 @@ fun TimelineScreen(
                         .padding(2.dp),
                 ) {
                     listOf(
-                        com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL to "원본",
-                        com.vibi.shared.ui.timeline.PreviewMode.MIX to "내믹스",
+                        com.vibi.shared.ui.timeline.PreviewMode.ORIGINAL to "Original",
+                        com.vibi.shared.ui.timeline.PreviewMode.MIX to "My mix",
                     ).forEach { (mode, label) ->
                         val selected = state.previewMode == mode
                         Box(
@@ -981,7 +981,7 @@ fun TimelineScreen(
                 ) {
                     Icon(
                         imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (state.isPlaying) "일시정지" else "재생",
+                        contentDescription = if (state.isPlaying) "Pause" else "Play",
                         tint = tokens.onBackgroundPrimary,
                         modifier = Modifier.size(28.dp),
                     )
@@ -1173,7 +1173,7 @@ private fun ChevronThumb(
             imageVector = if (side == BgmTrimSide.Start)
                 Icons.AutoMirrored.Filled.KeyboardArrowLeft
             else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = if (side == BgmTrimSide.Start) "왼쪽 트림" else "오른쪽 트림",
+            contentDescription = if (side == BgmTrimSide.Start) "Trim start" else "Trim end",
             tint = gripColor,
             modifier = Modifier.size(TimelineBarSpec.ChevronIconSize),
         )
@@ -2370,7 +2370,7 @@ private fun BoxScope.TimelineActionBottomBar(
                     onApplyVolume = { viewModel.onApplyRangeVolume(it) },
                     onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
                     secondaryActionIcon = Icons.Filled.ContentCopy,
-                    secondaryActionContentDescription = "복제",
+                    secondaryActionContentDescription = "Duplicate",
                     onSecondaryAction = { viewModel.onDuplicateRange() },
                     onDelete = { viewModel.onDeleteRange() },
                     onCancel = null,
@@ -2388,15 +2388,15 @@ private fun BoxScope.TimelineActionBottomBar(
                         val bgRemovalEnabled: Boolean
                         when {
                             removalProgress is com.vibi.shared.ui.timeline.BgmRemovalProgress.Processing -> {
-                                bgRemovalLabel = "처리 중"
+                                bgRemovalLabel = "Processing"
                                 bgRemovalEnabled = false
                             }
                             clip.isBackgroundRemoved -> {
-                                bgRemovalLabel = "원래대로"
+                                bgRemovalLabel = "Restore"
                                 bgRemovalEnabled = true
                             }
                             else -> {
-                                bgRemovalLabel = "배경음 제거"
+                                bgRemovalLabel = "Isolate"
                                 bgRemovalEnabled = true
                             }
                         }
@@ -2614,7 +2614,7 @@ private fun ExportOptionsSheet(
                         tint = tokens.onBackgroundPrimary,
                     )
                     Spacer(Modifier.width(VibiSpacing.xs))
-                    Text("저장", style = typo.bodySm)
+                    Text("Save", style = typo.bodySm)
                 }
             }
             OutlinedButton(
@@ -2633,7 +2633,7 @@ private fun ExportOptionsSheet(
                         tint = tokens.onBackgroundPrimary,
                     )
                     Spacer(Modifier.width(VibiSpacing.xs))
-                    Text("공유", style = typo.bodySm)
+                    Text("Share", style = typo.bodySm)
                 }
             }
             Spacer(Modifier.height(VibiSpacing.sm))
@@ -2871,7 +2871,7 @@ private fun bgmClipLabelText(
             .filter { isBgmRecording(it) }
             .sortedWith(compareBy({ it.createdAt }, { it.id }))
         val idx = ordered.indexOfFirst { it.id == clip.id }
-        return if (idx >= 0) "녹음${idx + 1}" else "녹음"
+        return if (idx >= 0) "Recording ${idx + 1}" else "Recording"
     }
     val name = clip.sourceUri.substringAfterLast('/').substringBeforeLast('.')
     return name.take(18)
