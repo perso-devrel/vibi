@@ -559,7 +559,9 @@ fun TimelineScreen(
                         )
                     }
                     Text(
-                        text = "${state.playbackPositionMs / 1000}s/${state.videoDurationMs / 1000}s",
+                        // ms→s 는 올림 — 4.87s 영상이 라벨에서 "4s" 로 잘려 보이지 않도록.
+                        // (ms + 999) / 1000 = ceil(ms/1000). ms ≥ 0 보장 컨텍스트.
+                        text = "${(state.playbackPositionMs + 999) / 1000}s/${(state.videoDurationMs + 999) / 1000}s",
                         style = typo.bodySm,
                         color = tokens.mutedText,
                     )

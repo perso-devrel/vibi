@@ -3082,6 +3082,22 @@ class TimelineViewModel constructor(
                 segment.trimStartMs to segment.effectiveTrimEndMs
             else -> null to null
         }
+        // 같은 segment + 같은 range 가 이미 in-flight 면 중복 시작 차단 — UI 더블탭이나
+        // sheet/range 버튼 경로 양쪽 어디서 들어와도 한 구간당 1잡 보장. editingDirectiveId
+        // 케이스는 기존 directive 가 separationDirectives 에 있고 processingSeparations 엔
+        // 없으므로 본 가드를 통과 (의도된 재처리).
+        val alreadyProcessing = state.processingSeparations.any { p ->
+            p.segmentId == sep.segmentId &&
+                p.rangeStartMs == effStart &&
+                p.rangeEndMs == effEnd
+        }
+        if (alreadyProcessing) {
+            _uiState.value = state.copy(
+                showAudioSeparationSheet = false,
+                audioSeparation = null,
+            )
+            return
+        }
         val clientToken = Uuid.random().toString()
         val processingEntry = ProcessingSeparation(
             clientToken = clientToken,
