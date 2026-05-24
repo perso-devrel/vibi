@@ -14,8 +14,17 @@ import kotlinx.coroutines.withContext
 import platform.AVFAudio.AVAudioPlayer
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
+import platform.AVFAudio.AVAudioSessionInterruptionNotification
+import platform.AVFAudio.AVAudioSessionInterruptionTypeBegan
+import platform.AVFAudio.AVAudioSessionInterruptionTypeKey
+import platform.AVFAudio.AVAudioSessionRouteChangeNotification
+import platform.AVFAudio.AVAudioSessionRouteChangeReasonKey
+import platform.AVFAudio.AVAudioSessionRouteChangeReasonOldDeviceUnavailable
 import platform.AVFAudio.setActive
+import platform.Foundation.NSNotificationCenter
+import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
+import platform.darwin.NSObjectProtocol
 
 /**
  * iOS: directive group 별 AVAudioPlayer 사전 prepare + active group 만 play.
@@ -54,6 +63,33 @@ private class IosStemMixerHandle(
      *  init 와 같은 cycle 에 hardware audio unit 경합 → IOWorkLoop overload / Fig parser 에러.
      *  실제 play() 시점에 lazy activate. */
     private var sessionActivated = false
+
+    /** Interruption (전화/Siri 등) 시 자동 pause, Route change (이어폰 분리) 시 자동 pause.
+     *  release() 시 removeObserver. */
+    private val interruptionObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
+        .addObserverForName(
+            name = AVAudioSessionInterruptionNotification,
+            `object` = null,
+            queue = null,
+            usingBlock = { notification ->
+                val type = (notification?.userInfo?.get(AVAudioSessionInterruptionTypeKey)
+                    as? NSNumber)?.unsignedLongValue
+                // Began 만 처리 — Ended 시 자동 resume 안 함. 편집 앱은 사용자 명시 액션 유지.
+                if (type == AVAudioSessionInterruptionTypeBegan) pause()
+            },
+        )
+    private val routeChangeObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
+        .addObserverForName(
+            name = AVAudioSessionRouteChangeNotification,
+            `object` = null,
+            queue = null,
+            usingBlock = { notification ->
+                val reason = (notification?.userInfo?.get(AVAudioSessionRouteChangeReasonKey)
+                    as? NSNumber)?.unsignedLongValue
+                // 이어폰 분리 → 스피커 폭발 방지. iOS HIG 표준.
+                if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) pause()
+            },
+        )
 
     private fun key(groupId: String, stemId: String) = "$groupId/$stemId"
 
@@ -148,7 +184,11 @@ private class IosStemMixerHandle(
     private fun ensureSessionActive() {
         if (sessionActivated) return
         runCatching {
-            AVAudioSession.sharedInstance().setActive(true, null)
+            // Recorder 가 직전에 PlayAndRecord 로 덮어쓰고 종료했을 수 있어 매번 .Playback
+            // 으로 idempotent 회수. category set 은 cheap (no-op when already set).
+            val session = AVAudioSession.sharedInstance()
+            session.setCategory(AVAudioSessionCategoryPlayback, null)
+            session.setActive(true, null)
             sessionActivated = true
         }
     }
@@ -221,5 +261,7 @@ private class IosStemMixerHandle(
         activeGroupId = null
         // session 은 process-lifecycle. 다른 player 가 잡고 있을 수 있으니 setActive(false) 안 함.
         sessionActivated = false
+        NSNotificationCenter.defaultCenter.removeObserver(interruptionObserver)
+        NSNotificationCenter.defaultCenter.removeObserver(routeChangeObserver)
     }
 }

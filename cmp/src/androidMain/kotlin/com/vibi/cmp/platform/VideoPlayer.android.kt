@@ -99,7 +99,9 @@ actual fun VideoPlayer(
                 acc += dur
             }
             onPositionChanged(acc + exoPlayer.currentPosition)
-            delay(200)
+            // 30fps 폴링 — 200ms 면 짧은 영상에서 파형/오디오와 playhead 가 화면 폭의
+            // 5% 이상 어긋나 사용자가 싱크 mismatch 로 인지.
+            delay(33)
         }
     }
 

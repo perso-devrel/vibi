@@ -11,6 +11,7 @@ import com.vibi.shared.platform.currentTimeMillis
 import platform.AVFAudio.AVAudioRecorder
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
+import platform.AVFAudio.AVAudioSessionCategoryPlayback
 import platform.AVFAudio.AVAudioSessionRecordPermissionDenied
 import platform.AVFAudio.AVAudioSessionRecordPermissionGranted
 import platform.darwin.dispatch_async
@@ -147,7 +148,14 @@ actual fun rememberAudioRecorder(
                 val path = outputPath
                 val durationMs = (currentTimeMillis() - startedAt).coerceAtLeast(0L)
                 rec.stop()
-                runCatching { AVAudioSession.sharedInstance().setActive(false, null) }
+                // 녹음 후 카테고리 .Playback 으로 복귀 — Mixer/AVPlayer 가 이후 활성화될 때
+                // PlayAndRecord 잔재로 인한 이어피스 라우팅 사고 방지. setActive(false) 먼저
+                // 호출 후 카테고리 변경 (active 중 reconfiguration 의 hardware glitch 회피).
+                runCatching {
+                    val session = AVAudioSession.sharedInstance()
+                    session.setActive(false, null)
+                    session.setCategory(AVAudioSessionCategoryPlayback, null)
+                }
                 // Diagnostic — m4a 컨테이너 헤더만으로도 600B 이상 → 그 이하면 마이크 hardware
                 // 입력 없이 빈 파일 가까이 생성된 것. macOS 권한 미요청 시 이 케이스 빈번.
                 if (path != null) {

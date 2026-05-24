@@ -63,6 +63,13 @@ import platform.CoreMedia.CMTimeRangeMake
 import platform.CoreMedia.CMTimeSubtract
 import platform.CoreMedia.kCMPersistentTrackID_Invalid
 import platform.Foundation.NSNotificationCenter
+import platform.AVFAudio.AVAudioSessionInterruptionNotification
+import platform.AVFAudio.AVAudioSessionInterruptionTypeBegan
+import platform.AVFAudio.AVAudioSessionInterruptionTypeKey
+import platform.AVFAudio.AVAudioSessionRouteChangeNotification
+import platform.AVFAudio.AVAudioSessionRouteChangeReasonKey
+import platform.AVFAudio.AVAudioSessionRouteChangeReasonOldDeviceUnavailable
+import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplicationWillResignActiveNotification
 import platform.UIKit.UIView
@@ -254,6 +261,33 @@ private fun SingleItemVideoPlayer(
                 onEndedState.value()
             }
         )
+        // 전화/Siri/타이머 interruption 시 pause. AVPlayer 자체도 시스템에서 멈추지만 ViewModel
+        // isPlaying state 와 정합시키기 위해 명시. resume 은 안 함 (영상 편집 앱 — 사용자 명시 액션 유지).
+        val interruptionObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
+            .addObserverForName(
+                name = AVAudioSessionInterruptionNotification,
+                `object` = null,
+                queue = null,
+                usingBlock = { notification ->
+                    val type = (notification?.userInfo?.get(AVAudioSessionInterruptionTypeKey)
+                        as? NSNumber)?.unsignedLongValue
+                    if (type == AVAudioSessionInterruptionTypeBegan) player.pause()
+                },
+            )
+        // 이어폰 분리 → 스피커 폭발 방지 (iOS HIG 표준).
+        val routeChangeObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
+            .addObserverForName(
+                name = AVAudioSessionRouteChangeNotification,
+                `object` = null,
+                queue = null,
+                usingBlock = { notification ->
+                    val reason = (notification?.userInfo?.get(AVAudioSessionRouteChangeReasonKey)
+                        as? NSNumber)?.unsignedLongValue
+                    if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
+                        player.pause()
+                    }
+                },
+            )
         // 초기 seek 도 동일 가드 — polling 첫 tick 이 pre-seek 0 위치를 보고할 위험 차단.
         seekGuardUntilMs = currentTimeMillis() + SEEK_GUARD_MS
         player.seekToTime(
@@ -262,6 +296,8 @@ private fun SingleItemVideoPlayer(
         onDispose {
             NSNotificationCenter.defaultCenter.removeObserver(bgObserver)
             NSNotificationCenter.defaultCenter.removeObserver(endObserver)
+            NSNotificationCenter.defaultCenter.removeObserver(interruptionObserver)
+            NSNotificationCenter.defaultCenter.removeObserver(routeChangeObserver)
             player.pause()
         }
     }
@@ -304,7 +340,10 @@ private fun SingleItemVideoPlayer(
                     lastReportedMs = globalMs
                 }
             }
-            delay(200)
+            // 30fps 폴링 — 200ms 면 4초 영상에서 playhead 가 오디오보다 화면 폭 5%
+            // 늦게 따라와 사용자가 싱크 어긋남으로 인지. lastReportedMs 가드가 같은 값
+            // emit 차단해 idle 시 recomposition 부담 없음.
+            delay(33)
         }
     }
 
@@ -397,9 +436,35 @@ private fun MultiSegmentVideoPlayer(
                 onEndedState.value()
             }
         )
+        // SingleItem 과 동일한 interruption / route change 처리 — 전화/Siri 시 pause,
+        // 이어폰 분리 시 pause. Resume 은 사용자 명시 액션에 위임.
+        val interruptionObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
+            .addObserverForName(
+                name = AVAudioSessionInterruptionNotification,
+                `object` = null,
+                queue = null,
+                usingBlock = { notification ->
+                    val type = (notification?.userInfo?.get(AVAudioSessionInterruptionTypeKey)
+                        as? NSNumber)?.unsignedLongValue
+                    if (type == AVAudioSessionInterruptionTypeBegan) p.pause()
+                },
+            )
+        val routeChangeObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
+            .addObserverForName(
+                name = AVAudioSessionRouteChangeNotification,
+                `object` = null,
+                queue = null,
+                usingBlock = { notification ->
+                    val reason = (notification?.userInfo?.get(AVAudioSessionRouteChangeReasonKey)
+                        as? NSNumber)?.unsignedLongValue
+                    if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) p.pause()
+                },
+            )
         onDispose {
             NSNotificationCenter.defaultCenter.removeObserver(bgObserver)
             NSNotificationCenter.defaultCenter.removeObserver(endObserver)
+            NSNotificationCenter.defaultCenter.removeObserver(interruptionObserver)
+            NSNotificationCenter.defaultCenter.removeObserver(routeChangeObserver)
             p.pause()
         }
     }
@@ -463,7 +528,8 @@ private fun MultiSegmentVideoPlayer(
                     lastReportedMs = globalMs
                 }
             }
-            delay(200)
+            // SingleItem 과 동일한 30fps 폴링 사유 — 파형/오디오/playhead 싱크 가시화.
+            delay(33)
         }
     }
 
