@@ -12,7 +12,7 @@ class ValidateVideoUseCase constructor() {
             "video/quicktime",
             "video/webm"
         )
-        private const val MAX_DURATION_MS = 600_000L
+        private const val MAX_DURATION_MS = 300_000L
         private const val MAX_DIMENSION = 1920
     }
 

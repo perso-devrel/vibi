@@ -48,6 +48,7 @@ import com.vibi.cmp.ui.cupertino.PageScaffold
 import com.vibi.cmp.ui.cupertino.SecondaryText
 import com.vibi.cmp.ui.cupertino.Section
 import com.vibi.cmp.ui.cupertino.SectionRow
+import com.vibi.shared.domain.model.ValidationError
 import com.vibi.shared.domain.model.ValidationResult
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -196,7 +197,7 @@ fun InputScreen(
                     when (val v = state.validationResult) {
                         ValidationResult.Valid -> SectionRow {
                             Text(
-                                "✓  Ready",
+                                "Ready to import",
                                 style = TextStyle(
                                     fontSize = 17.sp,
                                     color = Color(0xFF30D158),
@@ -206,7 +207,7 @@ fun InputScreen(
                         }
                         is ValidationResult.Invalid -> SectionRow {
                             Text(
-                                "✕  ${v.reason.name}",
+                                v.reason.userMessage(),
                                 style = TextStyle(
                                     fontSize = 17.sp,
                                     color = Color(0xFFFF453A),
@@ -441,4 +442,15 @@ private fun GreetingRow(name: String?, credits: Int) {
             }
         }
     }
+}
+
+private fun ValidationError.userMessage(): String = when (this) {
+    ValidationError.UNSUPPORTED_FORMAT ->
+        "Unsupported video format. Please choose an MP4, MOV, or WebM file."
+    ValidationError.DURATION_EXCEEDS_LIMIT ->
+        "Videos must be 5 minutes or shorter."
+    ValidationError.RESOLUTION_EXCEEDS_LIMIT ->
+        "Video resolution can't exceed 1920 pixels on the longest side."
+    ValidationError.METADATA_UNREADABLE ->
+        "We couldn't read this video. Please try a different file."
 }
