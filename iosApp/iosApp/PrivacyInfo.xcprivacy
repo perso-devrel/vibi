@@ -107,10 +107,11 @@
             </array>
         </dict>
 
-        <!-- Other User Content — 채팅창 사용자 입력 (Gemini function calling 으로 전달). -->
+        <!-- Purchase History — StoreKit2 IAP transaction (productId / transactionId / 구매 시각) 을
+             BFF 에 전송해 credit 잔량 reconcile + 구매 이력 영속화. -->
         <dict>
             <key>NSPrivacyCollectedDataType</key>
-            <string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+            <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
             <key>NSPrivacyCollectedDataTypeLinked</key>
             <true/>
             <key>NSPrivacyCollectedDataTypeTracking</key>
