@@ -131,14 +131,16 @@ targets:
         # `--no-configuration-cache` 제거 — gradle.properties 의 cc 옵션을 살려 매 호출 5–10s 절감.
         basedOnDependencyAnalysis: false
         script: |
-          # java 가 실제로 실행 가능한지 체크 (= Xcode Cloud CI 면 brew 의 openjdk@21 으로
-          # JAVA_HOME 잡음). `command -v java` 는 macOS 의 /usr/bin/java stub (Java framework
-          # redirector) 도 true 로 잡아 분기를 잘못 skip 시킴 — 실행성 체크가 정답.
-          # ci_post_clone.sh 가 미리 설치한 가정이지만 build phase 가 별도 sub-shell 이라
-          # post_clone 의 export 가 전파 안 됨 — brew --prefix 로 동적 resolve.
+          # java 실행 가능성 직접 체크 — Xcode Cloud (CI) 면 brew 로 openjdk@21 셋업.
+          # ci_post_clone.sh 가 동일 install 을 먼저 시도하지만, Xcode Cloud workflow 의
+          # ci_scripts 인식 여부가 불확실하므로 build phase 가 자체적으로 install/resolve
+          # 도 책임짐 (brew install 은 멱등 — 이미 깔려 있으면 no-op).
+          # `command -v java` 대신 `java -version` 으로 체크 — macOS 의 /usr/bin/java
+          # stub (Java framework redirector) 이 command -v 에 잡혀 분기를 잘못 skip 시킴.
           # 로컬은 java -version 이 성공하므로 분기 자체 skip.
           if ! java -version >/dev/null 2>&1; then
             if command -v brew >/dev/null 2>&1; then
+              brew list openjdk@21 >/dev/null 2>&1 || brew install --quiet openjdk@21
               JDK_HOME="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home"
               if [ -x "$JDK_HOME/bin/java" ]; then
                 export JAVA_HOME="$JDK_HOME"
