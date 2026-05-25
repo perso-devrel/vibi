@@ -131,12 +131,19 @@ targets:
         # `--no-configuration-cache` 제거 — gradle.properties 의 cc 옵션을 살려 매 호출 5–10s 절감.
         basedOnDependencyAnalysis: false
         script: |
-          # Xcode Cloud 는 JDK 미설치 — ci_post_clone.sh 가 brew 로 openjdk@21 설치 후
-          # 이 phase 에서 JAVA_HOME 을 명시적으로 잡음 (build phase 는 별도 sub-shell 이라
-          # post_clone 의 export 가 전파 안 됨). 로컬은 JAVA_HOME 이 이미 잡혀 있으므로 skip.
-          if [ -z "${JAVA_HOME:-}" ] && [ -d "/opt/homebrew/opt/openjdk@21" ]; then
-            export JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
-            export PATH="$JAVA_HOME/bin:$PATH"
+          # java 가 PATH 에 없으면 (= Xcode Cloud CI) brew 의 openjdk@21 으로 JAVA_HOME 잡음.
+          # ci_post_clone.sh 가 미리 설치한 가정이지만, build phase 가 별도 sub-shell 이라
+          # post_clone 의 export 가 전파 안 됨 — brew --prefix 로 동적 resolve.
+          # 로컬은 java 가 이미 잡혀 있으므로 분기 자체 skip.
+          if ! command -v java >/dev/null 2>&1; then
+            if command -v brew >/dev/null 2>&1; then
+              JDK_HOME="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home"
+              if [ -x "$JDK_HOME/bin/java" ]; then
+                export JAVA_HOME="$JDK_HOME"
+                export PATH="$JAVA_HOME/bin:$PATH"
+              fi
+            fi
           fi
+          java -version
           cd "$SRCROOT/.."
           ./gradlew :cmp:embedAndSignAppleFrameworkForXcode :shared:embedAndSignAppleFrameworkForXcode
