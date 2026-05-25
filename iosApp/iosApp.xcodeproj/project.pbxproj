@@ -197,7 +197,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# java 가 PATH 에 없으면 (= Xcode Cloud CI) brew 의 openjdk@21 으로 JAVA_HOME 잡음.\n# ci_post_clone.sh 가 미리 설치한 가정이지만, build phase 가 별도 sub-shell 이라\n# post_clone 의 export 가 전파 안 됨 — brew --prefix 로 동적 resolve.\n# 로컬은 java 가 이미 잡혀 있으므로 분기 자체 skip.\nif ! command -v java >/dev/null 2>&1; then\n  if command -v brew >/dev/null 2>&1; then\n    JDK_HOME=\"$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home\"\n    if [ -x \"$JDK_HOME/bin/java\" ]; then\n      export JAVA_HOME=\"$JDK_HOME\"\n      export PATH=\"$JAVA_HOME/bin:$PATH\"\n    fi\n  fi\nfi\njava -version\ncd \"$SRCROOT/..\"\n./gradlew :cmp:embedAndSignAppleFrameworkForXcode :shared:embedAndSignAppleFrameworkForXcode\n";
+			shellScript = "# java 가 실제로 실행 가능한지 체크 (= Xcode Cloud CI 면 brew 의 openjdk@21 으로\n# JAVA_HOME 잡음). `command -v java` 는 macOS 의 /usr/bin/java stub (Java framework\n# redirector) 도 true 로 잡아 분기를 잘못 skip 시킴 — 실행성 체크가 정답.\n# ci_post_clone.sh 가 미리 설치한 가정이지만 build phase 가 별도 sub-shell 이라\n# post_clone 의 export 가 전파 안 됨 — brew --prefix 로 동적 resolve.\n# 로컬은 java -version 이 성공하므로 분기 자체 skip.\nif ! java -version >/dev/null 2>&1; then\n  if command -v brew >/dev/null 2>&1; then\n    JDK_HOME=\"$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home\"\n    if [ -x \"$JDK_HOME/bin/java\" ]; then\n      export JAVA_HOME=\"$JDK_HOME\"\n      export PATH=\"$JAVA_HOME/bin:$PATH\"\n    fi\n  fi\nfi\njava -version\ncd \"$SRCROOT/..\"\n./gradlew :cmp:embedAndSignAppleFrameworkForXcode :shared:embedAndSignAppleFrameworkForXcode\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

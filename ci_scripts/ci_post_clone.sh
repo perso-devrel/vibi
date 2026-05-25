@@ -1,6 +1,7 @@
 #!/bin/sh
-# Xcode Cloud post-clone hook. Apple docs 상 ci_scripts/ 는 repository root 또는
-# Xcode project 옆에 두면 자동 실행 — repo root 가 가장 표준이라 여기에 둠.
+# Xcode Cloud post-clone hook. Xcode Cloud 는 정확히 repository root 의
+# ci_scripts/ci_post_clone.sh 만 자동 실행 — 이전 빌드 로그가 "Post-Clone
+# script not found at ci_scripts/ci_post_clone.sh" 로 expect path 를 명시함.
 #
 # Xcode Cloud macOS runner 에는 JDK 미설치 → KMP 의 ./gradlew 호출이 fail.
 # brew 로 openjdk@21 (Gradle 9.3.1 호환 LTS) 설치만 담당.
