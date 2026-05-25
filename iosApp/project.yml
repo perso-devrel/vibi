@@ -110,11 +110,12 @@ targets:
     preBuildScripts:
       - name: "Verify Auth xcconfig"
         # xcconfig (gitignore) 누락 시 build 가 silent 하게 빈 plist 생성하고 런타임에 깨짐.
-        # Debug / Release 둘 다 명시적으로 fail 하고 template 로 안내.
+        # 각 configuration 의 baseConfiguration 만 체크 — Xcode Cloud 는 Release archive
+        # 만 돌리고 Auth.xcconfig (Debug) 는 갖고 있지 않으므로 둘 다 강제하면 CI fail.
         basedOnDependencyAnalysis: false
         script: |
           MISSING=""
-          if [ ! -f "$SRCROOT/Configs/Auth.xcconfig" ]; then
+          if [ "$CONFIGURATION" = "Debug" ] && [ ! -f "$SRCROOT/Configs/Auth.xcconfig" ]; then
             MISSING="$MISSING Auth.xcconfig"
           fi
           if [ "$CONFIGURATION" = "Release" ] && [ ! -f "$SRCROOT/Configs/Auth.release.xcconfig" ]; then

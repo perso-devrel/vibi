@@ -178,7 +178,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "MISSING=\"\"\nif [ ! -f \"$SRCROOT/Configs/Auth.xcconfig\" ]; then\n  MISSING=\"$MISSING Auth.xcconfig\"\nfi\nif [ \"$CONFIGURATION\" = \"Release\" ] && [ ! -f \"$SRCROOT/Configs/Auth.release.xcconfig\" ]; then\n  MISSING=\"$MISSING Auth.release.xcconfig\"\nfi\nif [ -n \"$MISSING\" ]; then\n  echo \"error: Missing xcconfig file(s):$MISSING. Copy the matching .template and fill in your Google OAuth client id + BFF base URL.\" >&2\n  exit 1\nfi\n";
+			shellScript = "MISSING=\"\"\nif [ \"$CONFIGURATION\" = \"Debug\" ] && [ ! -f \"$SRCROOT/Configs/Auth.xcconfig\" ]; then\n  MISSING=\"$MISSING Auth.xcconfig\"\nfi\nif [ \"$CONFIGURATION\" = \"Release\" ] && [ ! -f \"$SRCROOT/Configs/Auth.release.xcconfig\" ]; then\n  MISSING=\"$MISSING Auth.release.xcconfig\"\nfi\nif [ -n \"$MISSING\" ]; then\n  echo \"error: Missing xcconfig file(s):$MISSING. Copy the matching .template and fill in your Google OAuth client id + BFF base URL.\" >&2\n  exit 1\nfi\n";
 		};
 		80829C78A007C2795A08CA15 /* Build Kotlin frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
