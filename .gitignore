@@ -36,4 +36,7 @@ xcuserdata/
 iosApp/build-device/
 iosApp/build-simulator/
 # Xcode SwiftPM workspace cache (locally generated)
-**/xcshareddata/swiftpm/
+# Package.resolved 는 Xcode Cloud 가 요구 — lockfile 로 커밋, 나머지 캐시만 ignore.
+# 디렉토리 자체를 ignore 하면 `!` 로 자식을 되살릴 수 없어 `/*` 로 contents 만 ignore.
+**/xcshareddata/swiftpm/*
+!**/xcshareddata/swiftpm/Package.resolved
