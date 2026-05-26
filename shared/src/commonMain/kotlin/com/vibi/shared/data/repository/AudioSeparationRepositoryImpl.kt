@@ -10,12 +10,14 @@ import com.vibi.shared.data.remote.dto.MixStemRequest
 import com.vibi.shared.data.remote.dto.SeparationSpec
 import com.vibi.shared.domain.error.InsufficientCreditsException
 import com.vibi.shared.domain.model.SeparationCost
-import com.vibi.shared.domain.model.SeparationMediaType
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.MixStatus
 import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
+import com.vibi.shared.platform.AudioExtractException
+import com.vibi.shared.platform.AudioExtractor
+import com.vibi.shared.platform.AudioSourceKind
 import com.vibi.shared.platform.readFileBytes
 import com.vibi.shared.platform.saveBytesToCache
 import io.ktor.client.call.body
@@ -25,6 +27,9 @@ import io.ktor.http.HttpStatusCode
 class AudioSeparationRepositoryImpl(
     private val api: BffApi,
     private val bffBaseUrl: String,
+    /** trim + audio extract → m4a 생성. 안드로이드 stub 분기 차단도 본 객체의 `isSupported` 로
+     *  결정 — Android actual 은 `false` 라 진입 전 typed exception 으로 떨어짐. */
+    private val audioExtractor: AudioExtractor,
     /** 402 응답의 권위 잔액으로 로컬 캐시 동기화. null 이면 동기화 skip (테스트). */
     private val creditStore: CreditStore? = null,
     /** 현재 로그인 사용자 식별 — credit cache key. null 이면 동기화 skip. */
@@ -53,39 +58,34 @@ class AudioSeparationRepositoryImpl(
 
     override suspend fun startSeparation(
         sourceUri: String,
-        mediaType: SeparationMediaType,
-        numberOfSpeakers: Int,
+        sourceKind: AudioSourceKind,
         sourceLanguageCode: String,
         trimStartMs: Long?,
         trimEndMs: Long?,
-        editedRenderJobId: String?,
     ): Result<String> = runCatching {
-        val part = if (editedRenderJobId == null) {
-            val (ext, contentType) = when (mediaType) {
-                SeparationMediaType.VIDEO -> "mp4" to "video/mp4"
-                SeparationMediaType.AUDIO -> "mp3" to "audio/mpeg"
-            }
-            val bytes = readFileBytes(sourceUri)
-            BinaryPart(
-                fieldName = "file",
-                filename = "separation.$ext",
-                bytes = bytes,
-                contentType = contentType
-            )
-        } else null
-        val spec = SeparationSpec(
-            mediaType = mediaType.wireName,
-            numberOfSpeakers = numberOfSpeakers,
-            sourceLanguageCode = sourceLanguageCode,
-            trimStartMs = trimStartMs,
-            trimEndMs = trimEndMs,
-            editedRenderJobId = editedRenderJobId,
+        // Repository 단 최종 가드 — UI hide / ViewModel 가드 누락 시에도 안드로이드 stub 호출
+        // 막아 crash 차단. typed exception 이라 UI 가 사용자 메시지로 graceful 매핑.
+        if (!audioExtractor.isSupported) {
+            throw AudioExtractException.Unknown("separation not supported on this platform")
+        }
+
+        val prepared = audioExtractor.prepareSeparationAudio(
+            sourceUri = sourceUri,
+            sourceKind = sourceKind,
+            startMs = trimStartMs,
+            endMs = trimEndMs,
         )
+        val bytes = readFileBytes(prepared.path)
+        val part = BinaryPart(
+            fieldName = "file",
+            filename = "separation.${prepared.ext}",
+            bytes = bytes,
+            contentType = prepared.mimeType,
+        )
+        val spec = SeparationSpec(sourceLanguageCode = sourceLanguageCode)
         try {
             api.startSeparation(file = part, spec = spec).jobId
         } catch (e: ClientRequestException) {
-            // 402 `insufficient_credits` → typed exception 으로 변환. 그 외 ClientRequestException
-            // 은 그대로 throw (runCatching 이 Result.failure 로 wrap).
             throw mapInsufficientCreditsOrRethrow(e)
         }
     }

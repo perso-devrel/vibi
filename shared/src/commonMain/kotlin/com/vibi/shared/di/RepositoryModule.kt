@@ -6,15 +6,17 @@ import com.vibi.shared.data.repository.AudioSeparationRepositoryImpl
 import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.data.repository.BgmClipRepositoryImpl
 import com.vibi.shared.data.repository.EditProjectRepositoryImpl
+import com.vibi.shared.data.remote.AssetKeyCache
+import com.vibi.shared.data.remote.AssetUploadManager
 import com.vibi.shared.data.repository.RemoteRenderExecutor
 import com.vibi.shared.data.repository.SegmentRepositoryImpl
 import com.vibi.shared.data.repository.TextOverlayRepositoryImpl
+import com.vibi.shared.data.repository.V3RenderExecutor
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.TextOverlayRepository
-import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import org.koin.dsl.module
 
 val repositoryModule = module {
@@ -39,12 +41,19 @@ val repositoryModule = module {
         AudioSeparationRepositoryImpl(
             api = get(),
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
+            audioExtractor = get(),
             creditStore = get(),
             userSession = get(),
         )
     }
     single { RemoteRenderExecutor(api = get()) }
-    single<FfmpegExecutor> { get<RemoteRenderExecutor>() }
+    // v3 (asset-by-reference) — iOS 전용 흐름. settings 는 platform 모듈이 주입.
+    single { AssetKeyCache(settings = get()) }
+    single { AssetUploadManager(api = get(), cache = get()) }
+    single { V3RenderExecutor(api = get(), assetUploader = get()) }
+    // FfmpegExecutor 바인딩은 platform 별 module 에서 결정:
+    //   iOS    → V3RenderExecutor (v3 asset-by-reference)
+    //   Android → RemoteRenderExecutor (v2 multipart, sha256/statFile 미구현 회피)
     single<com.vibi.shared.domain.repository.SeparationDirectiveRepository> {
         com.vibi.shared.data.repository.SeparationDirectiveRepositoryImpl(dao = get())
     }

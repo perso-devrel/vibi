@@ -58,7 +58,8 @@ class BffApiTest {
                 contentType(ContentType.Application.Json)
             }
         }
-        return BffApi(client) to captured
+        // r2Client 는 v3 putAssetToR2 만 사용 — 본 테스트는 v2 흐름만 다루므로 동일 client 재사용 OK.
+        return BffApi(client = client, r2Client = client) to captured
     }
 
     private fun jsonHeaders() = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
@@ -155,12 +156,8 @@ class BffApiTest {
         }
 
         val result = api.startSeparation(
-            file = BinaryPart("file", "input.mp4", byteArrayOf(0x10), "video/mp4"),
-            spec = SeparationSpec(
-                mediaType = "VIDEO",
-                numberOfSpeakers = 2,
-                sourceLanguageCode = "auto"
-            )
+            file = BinaryPart("file", "input.m4a", byteArrayOf(0x10), "audio/mp4"),
+            spec = SeparationSpec(sourceLanguageCode = "auto")
         )
 
         assertEquals("api/v2/separate", captured[0].url.encodedPath.trimStart('/'))

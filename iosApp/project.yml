@@ -52,8 +52,12 @@ targets:
         # UILaunchScreen 누락 시 iOS 가 320×480 호환 모드로 앱을 강제 — 화면 작게 잘림.
         UILaunchScreen:
           UIColorName: ""
+        # iPhone X 이후 모델은 OS 차원에서 PortraitUpsideDown 회전 자체를 무시 —
+        # 4방향 모두 선언해도 실제 회전은 3방향만. ASC 90474 (iPad multitasking)
+        # validator 가 device family 와 무관하게 4방향 모두 요구하므로 박아둠.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         # UIScene lifecycle 채택 — iOS 가 곧 강제. AppDelegate 는 앱 단위,
@@ -85,6 +89,16 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibi.ios
+        # iPhone only (1). iPad (2) 포함 시 ASC 90474: iPad multitasking 위해
+        # UISupportedInterfaceOrientations 에 4방향 모두 필요. vibi 는 iPhone 전용
+        # 보이스 쇼케이스라 iPad target 자체 제거 — 90474 원천 차단 + iPhone 에
+        # 불필요한 UIInterfaceOrientationPortraitUpsideDown UX 안 들임.
+        TARGETED_DEVICE_FAMILY: "1"
+        # XcodeGen default 가 deprecated 한 "iPhone Developer" 를 박아 Automatic signing 이
+        # 키체인의 Apple Development / Apple Distribution 과 매칭 실패 → ad-hoc fallback →
+        # archive Info.plist 의 SigningIdentity/Team 이 빈 칸으로 떨어짐. 새 명칭으로 override.
+        # Release 는 아래 configs.Release 에서 Apple Distribution 으로 다시 override.
+        "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Development"
         # Personal Team (무료 Apple ID) 도 development install 가능. Xcode 가 등록된 Apple ID 의
         # Personal Team 을 자동 매칭. Team ID 명시 제거 — 개발자별/머신별로 다름.
         # KMP framework 출력 디렉터리는 link task 별로 다름 (debugFramework / releaseFramework).

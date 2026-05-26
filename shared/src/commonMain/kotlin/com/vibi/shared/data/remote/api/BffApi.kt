@@ -1,12 +1,15 @@
 package com.vibi.shared.data.remote.api
 
 import com.vibi.shared.data.remote.dto.AppleAuthRequestDto
+import com.vibi.shared.data.remote.dto.AssetUploadUrlRequest
+import com.vibi.shared.data.remote.dto.AssetUploadUrlResponse
 import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.data.remote.dto.GoogleAuthRequestDto
 import com.vibi.shared.data.remote.dto.MixJobResponse
 import com.vibi.shared.data.remote.dto.MixRequest
 import com.vibi.shared.data.remote.dto.MixStatusResponse
 import com.vibi.shared.data.remote.dto.RenderConfig
+import com.vibi.shared.data.remote.dto.RenderConfigV3
 import com.vibi.shared.data.remote.dto.RenderJobResponse
 import com.vibi.shared.data.remote.dto.RenderStatusResponse
 import com.vibi.shared.data.remote.dto.SeparationJobResponse
@@ -26,6 +29,7 @@ import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.readRawBytes
 import io.ktor.http.ContentType
@@ -45,6 +49,11 @@ class BinaryPart(
 
 class BffApi(
     private val client: HttpClient,
+    /**
+     * R2 presigned PUT 전용 client. baseUrl/Authorization/contentType default 가 없어야
+     * SigV4 검증 통과. [com.vibi.shared.data.remote.createR2HttpClient] 로 생성된 인스턴스.
+     */
+    private val r2Client: HttpClient,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -134,6 +143,48 @@ class BffApi(
 
     suspend fun downloadRenderResult(jobId: String): ByteArray =
         client.get("api/v2/render/$jobId/download").readRawBytes()
+
+    // --- v3 asset-by-reference 흐름 (모바일이 R2 직접 PUT, RenderConfig 에는 키만 담음) ---
+
+    /**
+     * R2 presigned PUT URL 발급 요청. 응답 [AssetUploadUrlResponse.alreadyExists] 가 true 면
+     * 모바일은 PUT skip 하고 [AssetUploadUrlResponse.assetKey] 만 재사용.
+     */
+    suspend fun requestAssetUploadUrl(request: AssetUploadUrlRequest): AssetUploadUrlResponse =
+        client.post("api/v2/assets/upload-url") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }.body()
+
+    /**
+     * R2 에 직접 PUT. [presignedUrl] 의 SigV4 가 [contentType] + Content-Length 를 sign 했으므로
+     * 동일 값으로 요청해야 한다 — 다른 값이면 R2 가 401. BFF [client] 의 baseUrl/Authorization
+     * default 가 R2 호출에 끼지 않도록 별 [r2Client] 사용.
+     *
+     * @return PUT 성공 (2xx) 여부. expectSuccess=true 라 실패 시 throw 가 우선이지만, 명시적으로
+     *   bool 반환해 호출자가 follow-up 처리 가능.
+     */
+    suspend fun putAssetToR2(
+        presignedUrl: String,
+        bytes: ByteArray,
+        contentType: String,
+    ): Boolean {
+        val resp = r2Client.put(presignedUrl) {
+            contentType(ContentType.parse(contentType))
+            setBody(bytes)
+        }
+        return resp.status.value in 200..299
+    }
+
+    /**
+     * v3 render 잡 제출 — multipart 없이 JSON body 만. segment/BGM 은 [RenderConfigV3] 의
+     * assetKey 로 R2 참조. Cloud Run body 한도 회피.
+     */
+    suspend fun submitRenderJobV3(config: RenderConfigV3): RenderJobResponse =
+        client.post("api/v2/render/v3") {
+            contentType(ContentType.Application.Json)
+            setBody(config)
+        }.body()
 
     /**
      * @param file null 이면 multipart `file` part 자체를 생략. spec.editedRenderJobId 가 non-null 일 때

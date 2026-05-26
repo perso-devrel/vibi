@@ -27,7 +27,8 @@ import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
 import com.vibi.shared.domain.repository.TextOverlayRepository
-import com.vibi.shared.domain.model.SeparationMediaType
+import com.vibi.shared.platform.AudioExtractor
+import com.vibi.shared.platform.AudioSourceKind
 import com.vibi.shared.domain.usecase.bgm.AddBgmClipUseCase
 import com.vibi.shared.domain.usecase.bgm.UpdateBgmClipUseCase
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
@@ -281,6 +282,7 @@ class TimelineViewModel constructor(
     private val audioMetadataExtractor: AudioMetadataExtractor,
     private val startAudioSeparation: StartAudioSeparationUseCase,
     private val pollSeparation: PollSeparationUseCase,
+    private val audioExtractor: AudioExtractor,
     private val audioSeparationRepository: AudioSeparationRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val bffBaseUrl: String,
@@ -302,6 +304,10 @@ class TimelineViewModel constructor(
             "bffBaseUrl 속성이 비어있음 — local.properties 의 BFF_BASE_URL 또는 KoinHelper.initKoin 의 property 누락"
         }
     }
+
+    /** UI 가 분리 진입 entry button hide / disable 판단에 사용. iOS=true, Android=false (Android
+     *  은 iOS 우선 출시 정책). ViewModel + Repository 진입부 가드와 함께 3단 방어 중 첫 번째 단. */
+    val isSeparationSupported: Boolean = audioExtractor.isSupported
 
     private val _navigateBackHome = MutableSharedFlow<Unit>()
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
@@ -2489,6 +2495,7 @@ class TimelineViewModel constructor(
      * Processing 중 같은 클립 재요청은 무시. 다른 BGM 의 분리 작업과 무관 (각자 job).
      */
     fun onToggleBgmBackgroundRemoval(clipId: String) {
+        if (!audioExtractor.isSupported) return
         val state = _uiState.value
         val clip = state.bgmClips.firstOrNull { it.id == clipId } ?: return
         if (state.bgmBackgroundRemovalProgress[clipId] is BgmRemovalProgress.Processing) return
@@ -2527,8 +2534,7 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             val jobResult = startAudioSeparation(
                 sourceUri = originalUri,
-                mediaType = SeparationMediaType.AUDIO,
-                numberOfSpeakers = 2,
+                sourceKind = AudioSourceKind.AUDIO_COMPATIBLE,
             )
             val jobId = jobResult.getOrElse { err ->
                 setRemovalProgress(
@@ -2699,6 +2705,7 @@ class TimelineViewModel constructor(
      * 결과: 사용자가 picked stem 들로 원본 BGM 을 N 개의 stem BGM 클립으로 대체.
      */
     fun onStartBgmSeparation(bgmClipId: String) {
+        if (!audioExtractor.isSupported) return
         val state = _uiState.value
         val bgm = state.bgmClips.firstOrNull { it.id == bgmClipId } ?: return
         bgmSeparationTargetId = bgm.id
@@ -2716,8 +2723,7 @@ class TimelineViewModel constructor(
         bgmSeparationJob = viewModelScope.launch {
             val result = startAudioSeparation(
                 sourceUri = bgm.sourceUri,
-                mediaType = SeparationMediaType.AUDIO,
-                numberOfSpeakers = 2,
+                sourceKind = AudioSourceKind.AUDIO_COMPATIBLE,
             )
             val jobId = result.getOrElse { err ->
                 updateSeparation { it.copy(step = AudioSeparationStep.FAILED, errorMessage = err.message) }
@@ -2936,6 +2942,7 @@ class TimelineViewModel constructor(
     }
 
     fun onStartSeparation() {
+        if (!audioExtractor.isSupported) return
         val state = _uiState.value
         val sep = state.audioSeparation ?: return
         val segment = state.segments.firstOrNull { it.id == sep.segmentId } ?: return
@@ -2990,11 +2997,9 @@ class TimelineViewModel constructor(
             // stem 에 playback/export 단에서 적용.
             val startResult = startAudioSeparation(
                 sourceUri = segment.sourceUri,
-                mediaType = SeparationMediaType.VIDEO,
-                numberOfSpeakers = sep.numberOfSpeakers,
+                sourceKind = AudioSourceKind.VIDEO,
                 trimStartMs = effStart,
                 trimEndMs = effEnd,
-                editedRenderJobId = null,
             )
             val jobId = startResult.getOrElse { err ->
                 // 잔액 부족 (402) 은 일반 에러와 분리 — UI 가 "충전 필요" 분기로 정확한

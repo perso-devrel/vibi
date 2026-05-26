@@ -744,7 +744,7 @@ fun TimelineScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
                 ) {
-                    if (!state.isSegmentEditMode) {
+                    if (!state.isSegmentEditMode && viewModel.isSeparationSupported) {
                         // 탭 후 VM state 가 isRangeSelecting=false 로 emit 되어 row 가 사라지기 전까지
                         // 사용자가 다시 탭하면 같은 구간이 중복 큐잉됨. 첫 탭 즉시 disable 로 가드.
                         var submitting by remember(state.pendingRangeStartMs, state.pendingRangeEndMs) {
@@ -852,6 +852,8 @@ fun TimelineScreen(
                         },
                         onUpdateBgmVolume = { clipId, v -> viewModel.onUpdateBgmVolume(clipId, v) },
                         onApplyBgmSpeed = { clipId, v -> viewModel.onApplyBgmClipSpeed(clipId, v) },
+                        // BGM 분리 trigger — Android stub 환경에서는 ViewModel 진입부의 isSupported
+                        // 가드가 silent return 처리 (3단 방어 중 2단).
                         onRemoveBgmBackground = { clipId -> viewModel.onStartBgmSeparation(clipId) },
                         onDeleteBgm = { clipId -> viewModel.onDeleteBgmClip(clipId) },
                         // 분리/BGM 진입은 위 버튼 row 가 담당 — deck add 슬롯은 사용 안 함.

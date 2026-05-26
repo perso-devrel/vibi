@@ -1,8 +1,8 @@
 package com.vibi.shared.domain.repository
 
 import com.vibi.shared.domain.model.SeparationCost
-import com.vibi.shared.domain.model.SeparationMediaType
 import com.vibi.shared.domain.model.Stem
+import com.vibi.shared.platform.AudioSourceKind
 
 sealed class SeparationStatus {
     abstract val jobId: String
@@ -78,17 +78,18 @@ interface AudioSeparationRepository {
     suspend fun getCost(durationMs: Long): Result<SeparationCost>
 
     /**
-     * @param editedRenderJobId non-null 이면 BFF 가 본 jobId 의 render output 을 source 로 사용 →
-     *   multipart `file` part 자체를 송신하지 않음.
+     * 분리 시작. 모바일이 trim + audio extract 까지 끝낸 audio 를 BFF 로 송신.
+     *
+     * @param sourceUri 영상/오디오 source URI
+     * @param sourceKind 입력 종류 (VIDEO / AUDIO_COMPATIBLE / AUDIO_INCOMPATIBLE)
+     * @param trimStartMs / [trimEndMs] trim 윈도우. null/null 이면 전체 구간.
      */
     suspend fun startSeparation(
         sourceUri: String,
-        mediaType: SeparationMediaType,
-        numberOfSpeakers: Int,
+        sourceKind: AudioSourceKind,
         sourceLanguageCode: String = "auto",
         trimStartMs: Long? = null,
         trimEndMs: Long? = null,
-        editedRenderJobId: String? = null,
     ): Result<String>
 
     suspend fun pollStatus(jobId: String): Result<SeparationStatus>
