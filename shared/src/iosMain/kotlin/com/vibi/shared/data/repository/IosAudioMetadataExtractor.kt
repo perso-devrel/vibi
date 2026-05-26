@@ -22,9 +22,12 @@ class IosAudioMetadataExtractor : AudioMetadataExtractor {
             options = mapOf<Any?, Any>(AVURLAssetPreferPreciseDurationAndTimingKey to true),
         )
         // shared/CLAUDE.md:97 — duration 은 lazy. async load 후 읽기.
+        // resume(Unit) 단일 인자는 kotlinx-coroutines 1.9.0 K/N 의 CancellableContinuation
+        // default param 인식 한계로 컴파일 실패 — 빈 onCancellation lambda 명시 유지.
+        @Suppress("DEPRECATION")
         suspendCancellableCoroutine<Unit> { cont ->
             asset.loadValuesAsynchronouslyForKeys(listOf("duration")) {
-                if (cont.isActive) cont.resume(Unit)
+                if (cont.isActive) cont.resume(Unit) {}
             }
         }
         val durationSec = CMTimeGetSeconds(asset.duration)

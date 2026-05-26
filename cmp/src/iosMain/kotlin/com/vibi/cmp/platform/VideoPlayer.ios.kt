@@ -565,9 +565,13 @@ private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlay
     coroutineScope {
         assetBySourceUri.values.map { asset ->
             async {
+                // resume(Unit) 단일 인자는 kotlinx-coroutines 1.9.0 K/N 의
+                // CancellableContinuation default param 인식 한계로 컴파일 실패 —
+                // 빈 onCancellation lambda 명시 유지 (deprecation warning 수용).
+                @Suppress("DEPRECATION")
                 suspendCancellableCoroutine<Unit> { cont ->
                     asset.loadValuesAsynchronouslyForKeys(listOf("tracks", "duration")) {
-                        if (cont.isActive) cont.resume(Unit)
+                        if (cont.isActive) cont.resume(Unit) {}
                     }
                 }
             }

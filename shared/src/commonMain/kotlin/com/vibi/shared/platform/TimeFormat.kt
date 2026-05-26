@@ -12,8 +12,13 @@ fun formatTimestamp(millis: Long): String {
         .toLocalDateTime(TimeZone.currentSystemDefault())
     return buildString {
         append(ldt.year.toString().padStart(4, '0')).append('-')
-        append(ldt.month.number.toString().padStart(2, '0')).append('-')
-        append(ldt.day.toString().padStart(2, '0')).append(' ')
+        // monthNumber / dayOfMonth 는 kotlinx-datetime 0.7+ 에서 deprecated 이지만
+        // 현 버전 (0.7.1) 의 새 property 가 month.number / day 가 아니라 빌드 실패 —
+        // 정확한 마이그레이션 path 확인 전까지 deprecation warning 수용하고 원본 유지.
+        @Suppress("DEPRECATION")
+        append(ldt.monthNumber.toString().padStart(2, '0')).append('-')
+        @Suppress("DEPRECATION")
+        append(ldt.dayOfMonth.toString().padStart(2, '0')).append(' ')
         append(ldt.hour.toString().padStart(2, '0')).append(':')
         append(ldt.minute.toString().padStart(2, '0'))
     }
