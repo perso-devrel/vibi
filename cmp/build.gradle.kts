@@ -19,15 +19,25 @@ kotlin {
         }
     }
 
-    // 시뮬레이터 + Apple Silicon 실기기.
+    // expect/actual classes 가 Kotlin 2.x 에서 아직 Beta — flag 로 명시 opt-in 해서
+    // PurchaseLauncher 등 sealed/interface expect class 의 Beta 경고 suppress.
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
+    // 시뮬레이터 + Apple Silicon 실기기. binaryOption("bundleId") 미지정 시
+    // K/N 이 baseName ("Cmp") 를 bundle ID 로 fallback → "Cannot infer bundle ID"
+    // 경고. iOS bundle ID 규약 (reverse-DNS) 에 맞춰 명시.
     iosSimulatorArm64().binaries.framework {
         baseName = "Cmp"
         isStatic = true
+        binaryOption("bundleId", "com.vibi.cmp")
         export(project(":shared"))
     }
     iosArm64().binaries.framework {
         baseName = "Cmp"
         isStatic = true
+        binaryOption("bundleId", "com.vibi.cmp")
         export(project(":shared"))
     }
 

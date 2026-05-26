@@ -93,11 +93,15 @@ targets:
         FRAMEWORK_SEARCH_PATHS:
           - "$(SRCROOT)/../cmp/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework"
           - "$(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR)/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework"
-        # destination 별 framework 경로 분기 — Xcode 가 EFFECTIVE_PLATFORM_NAME 을
-        # iphonesimulator / iphoneos 로 자동 set, 우리는 그에 맞는 KMP target 디렉터리를 매핑.
-        KOTLIN_FRAMEWORK_BUILD_TYPE_DIR: $(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_$(EFFECTIVE_PLATFORM_NAME))
-        KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_iphonesimulator: iosSimulatorArm64
-        KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_iphoneos: iosArm64
+        # destination 별 framework 경로 분기 — sdk conditional 로 직접 매핑.
+        # 이전: KOTLIN_FRAMEWORK_BUILD_TYPE_DIR=$(KOTLIN_FRAMEWORK_BUILD_TYPE_DIR_$(EFFECTIVE_PLATFORM_NAME))
+        # → indirect lookup 이 EFFECTIVE_PLATFORM_NAME 미설정 시점 (workspace evaluation 등)
+        # 에 빈 문자열로 resolve 되어 search path 가 `bin//releaseFramework` 로 정규화 →
+        # "Search path not found" 경고. sdk conditional 은 그 시점에 lookup 자체가 conditional
+        # 이라 fail 하지 않음. default 는 device (iosArm64) — archive 안전.
+        KOTLIN_FRAMEWORK_BUILD_TYPE_DIR: iosArm64
+        "KOTLIN_FRAMEWORK_BUILD_TYPE_DIR[sdk=iphoneos*]": iosArm64
+        "KOTLIN_FRAMEWORK_BUILD_TYPE_DIR[sdk=iphonesimulator*]": iosSimulatorArm64
         OTHER_LDFLAGS:
           - "-framework"
           - "Cmp"

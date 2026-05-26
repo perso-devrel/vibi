@@ -12,8 +12,8 @@ fun formatTimestamp(millis: Long): String {
         .toLocalDateTime(TimeZone.currentSystemDefault())
     return buildString {
         append(ldt.year.toString().padStart(4, '0')).append('-')
-        append(ldt.monthNumber.toString().padStart(2, '0')).append('-')
-        append(ldt.dayOfMonth.toString().padStart(2, '0')).append(' ')
+        append(ldt.month.number.toString().padStart(2, '0')).append('-')
+        append(ldt.day.toString().padStart(2, '0')).append(' ')
         append(ldt.hour.toString().padStart(2, '0')).append(':')
         append(ldt.minute.toString().padStart(2, '0'))
     }

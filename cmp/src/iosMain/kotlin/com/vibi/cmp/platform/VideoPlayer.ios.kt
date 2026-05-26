@@ -157,7 +157,11 @@ private fun toFileUrl(s: String): NSURL =
  * 내부 view hierarchy 를 재배치해 AVPlayerLayer 가 블랭크되는 결함이 있어 버리고, raw
  * AVPlayerLayer 직결로 가서 그 영향을 제거.
  */
-@OptIn(ExperimentalForeignApi::class, kotlin.experimental.ExperimentalObjCName::class)
+@OptIn(
+    ExperimentalForeignApi::class,
+    kotlin.experimental.ExperimentalObjCName::class,
+    kotlinx.cinterop.BetaInteropApi::class,
+)
 @ObjCName("VibiAVPlayerHostView")
 internal class AVPlayerHostView constructor(
     frame: CValue<CGRect>,
@@ -563,7 +567,7 @@ private suspend fun buildCompositionPlayer(items: List<VideoPlayerItem>): AVPlay
             async {
                 suspendCancellableCoroutine<Unit> { cont ->
                     asset.loadValuesAsynchronouslyForKeys(listOf("tracks", "duration")) {
-                        if (cont.isActive) cont.resume(Unit) {}
+                        if (cont.isActive) cont.resume(Unit)
                     }
                 }
             }

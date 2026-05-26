@@ -13,14 +13,24 @@ kotlin {
         }
     }
 
+    // expect/actual classes 가 Kotlin 2.x 에서 아직 Beta — flag 로 명시 opt-in 해서
+    // VibiDatabase / KSP-generated VibiDatabaseConstructor 등의 Beta 경고 suppress.
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
     // 시뮬레이터 + Apple Silicon 실기기 (iPhone 16 등). Intel Mac 시뮬레이터는 미지원.
+    // binaryOption("bundleId") 미지정 시 K/N 이 baseName ("Shared") 를 bundle ID 로
+    // fallback → "Cannot infer bundle ID" 경고. iOS bundle ID 규약에 맞춰 명시.
     iosSimulatorArm64().binaries.framework {
         baseName = "Shared"
         isStatic = true
+        binaryOption("bundleId", "com.vibi.shared")
     }
     iosArm64().binaries.framework {
         baseName = "Shared"
         isStatic = true
+        binaryOption("bundleId", "com.vibi.shared")
     }
 
     sourceSets {

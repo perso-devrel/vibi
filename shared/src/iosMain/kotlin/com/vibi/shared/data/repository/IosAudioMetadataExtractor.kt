@@ -24,7 +24,7 @@ class IosAudioMetadataExtractor : AudioMetadataExtractor {
         // shared/CLAUDE.md:97 — duration 은 lazy. async load 후 읽기.
         suspendCancellableCoroutine<Unit> { cont ->
             asset.loadValuesAsynchronouslyForKeys(listOf("duration")) {
-                if (cont.isActive) cont.resume(Unit) {}
+                if (cont.isActive) cont.resume(Unit)
             }
         }
         val durationSec = CMTimeGetSeconds(asset.duration)
