@@ -10,6 +10,9 @@
 .externalNativeBuild
 .cxx
 *.hprof
+# JVM fatal error logs (Kotlin/Native LLVM 백엔드 등 native crash 시 cwd 에 떨어짐)
+hs_err_pid*.log
+replay_pid*.log
 
 # Local config (절대 커밋 금지 — 디바이스/사용자별)
 local.properties
