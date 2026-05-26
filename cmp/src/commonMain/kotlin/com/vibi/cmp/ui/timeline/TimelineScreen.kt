@@ -758,9 +758,12 @@ fun TimelineScreen(
                                 submitting = true
                                 val segId = state.segments.firstOrNull()?.id ?: return@Button
                                 viewModel.onCancelRangeMode()
-                                // 시트 안 띄우고 바로 분리 시작 — Perso 가 화자 자동 감지라 추가 입력 불필요.
+                                // SETUP sheet 만 열고 분리는 시작하지 않음 — 사용자가 비용/잔액
+                                // (CostPreviewRow) 을 보고 sheet 의 Start 버튼으로 명시적 confirm.
+                                // (이전엔 여기서 onStartSeparation 을 자동 호출 → SETUP step 이
+                                // 한 프레임도 안 뜨고 닫혀 "탭이 먹혔는지" 사용자가 모름 → 재탭으로
+                                // 같은 구간 중복 큐잉되는 케이스 신고.)
                                 viewModel.onShowAudioSeparationSheet(segId)
-                                viewModel.onStartSeparation()
                             }
                         ) { Text("Separate this range") }
                         OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("Cancel") }
