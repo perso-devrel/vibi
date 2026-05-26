@@ -2,6 +2,8 @@ package com.vibi.cmp.ui.timeline
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -12,19 +14,25 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +75,7 @@ import kotlinx.coroutines.delay
  * - 내부 phase: Idle → Recording / 파일선택 대기 → Preview → 사용자가 "삽입"/"폐기" 결정.
  * - 위쪽 ~52% 화면은 타임라인이 그대로 보이고, 사용자가 playhead scrub 으로 삽입 위치 조정 가능.
  * - drag-to-resize / drag-to-dismiss 는 미구현 — 명시적 X 또는 footer 버튼으로만 닫힘.
+ * - 색은 LocalVibiColors 의 panel/onBackground/muted/chip 토큰을 따라 light/dark 자동 적응.
  *
  * Modifier 는 BoxScope 내에서 `Modifier.align(Alignment.BottomCenter)` 를 받아 위치 결정.
  */
@@ -109,14 +118,8 @@ private sealed interface Phase {
     data class Preview(val uri: String, val recordedDurationMs: Long) : Phase
 }
 
-/** iPhone Voice Memos 의 record-stop 색. light/dark 무관 항상 동일. */
+/** iPhone Voice Memos 의 record-stop 색. light/dark 무관 항상 동일 — 강조/오류 액센트 전용. */
 private val VoiceMemoRed = Color(0xFFFF453A)
-
-/** Voice Memos 식 다크 surface — light/dark theme 무관 sheet 안쪽만 어둡게. */
-private val SheetSurface = Color(0xFF1C1C1E)
-private val SheetTextPrimary = Color(0xFFF2F2F7)
-private val SheetTextSecondary = Color(0xFFAEAEB2)
-private val SheetSurfaceElevated = Color(0xFF2C2C2E)
 
 @Composable
 private fun AudioInsertSheetBody(
@@ -237,7 +240,7 @@ private fun AudioInsertSheetBody(
             .fillMaxWidth()
             .fillMaxHeight(SHEET_HEIGHT_FRACTION)
             .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-            .background(SheetSurface)
+            .background(tokens.panelBg)
             .clickable(
                 interactionSource = swallowInteraction,
                 indication = null,
@@ -247,6 +250,7 @@ private fun AudioInsertSheetBody(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = VibiSpacing.lg, vertical = VibiSpacing.base),
             verticalArrangement = Arrangement.spacedBy(VibiSpacing.lg),
         ) {
@@ -329,6 +333,7 @@ private fun IdleBody(
     onPick: () -> Unit,
     onRecord: () -> Unit,
 ) {
+    val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
     Column(
         verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
@@ -336,7 +341,7 @@ private fun IdleBody(
     ) {
         Text(
             text = if (mode == AudioInsertMode.Recording) "Preparing mic…" else "Waiting for file…",
-            color = SheetTextSecondary,
+            color = tokens.mutedText,
             style = typo.bodySm,
         )
         OutlinedButton(
@@ -345,7 +350,7 @@ private fun IdleBody(
         ) {
             Text(
                 text = if (mode == AudioInsertMode.Recording) "Start recording" else "Pick another file",
-                color = SheetTextPrimary,
+                color = tokens.onBackgroundPrimary,
                 style = typo.bodySm,
             )
         }
@@ -357,6 +362,7 @@ private fun RecordingBody(
     levels: List<Float>,
     elapsedMs: Long,
 ) {
+    val tokens = LocalVibiColors.current
     Column(
         verticalArrangement = Arrangement.spacedBy(VibiSpacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -364,25 +370,21 @@ private fun RecordingBody(
     ) {
         Text(
             text = formatElapsed(elapsedMs),
-            color = SheetTextPrimary,
+            color = tokens.onBackgroundPrimary,
             fontSize = 56.sp,
             fontWeight = FontWeight.Light,
             fontFamily = FontFamily.Monospace,
         )
-        // 녹음 끝난 후 PreviewBody 의 파형과 완전히 동일한 시각 — 같은 컴포저블, 같은 색상 override.
-        // peaks = 라이브 amplitude 버퍼. duration/progress 모두 0 이라 playhead 안 그림.
-        // levels 가 비어있을 때 (buffer 가 아직 비어있을 때) WaveformPlayBar 가 fallback progress bar
-        // 를 그리는 걸 막기 위해 최소 1 sample 의 0f 를 보장.
+        // iOS 보이스메모식 — 고정 플레이헤드 + 좌측 흘림 + 1초 단위 tick. levels 폴링 주기(50ms)와
+        // LiveRecordingWaveform.sampleIntervalMs 가 일치해야 막대와 시간축이 같은 속도로 흐른다.
         val safeLevels = if (levels.isEmpty()) listOf(0f) else levels
-        WaveformPlayBar(
-            peaks = safeLevels,
-            progressMs = 0L,
-            durationMs = 0L,
-            isPlaying = false,
-            barColorOverride = SheetTextPrimary.copy(alpha = 0.5f),
-            playedColorOverride = SheetTextPrimary,
-            playheadColorOverride = VoiceMemoRed,
-            trackBgOverride = Color.Transparent,
+        LiveRecordingWaveform(
+            levels = safeLevels,
+            elapsedMs = elapsedMs,
+            sampleIntervalMs = 50L,
+            playheadColor = VoiceMemoRed,
+            barColor = tokens.onBackgroundPrimary.copy(alpha = 0.6f),
+            tickColor = tokens.mutedText,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(140.dp),
@@ -399,6 +401,7 @@ private fun PreviewBody(
     isPlaying: Boolean,
     onSeek: ((Long) -> Unit)?,
 ) {
+    val tokens = LocalVibiColors.current
     // previewer 가 play() 호출 전엔 durationMs=0 — recorder 의 wall-clock 시간으로 fallback.
     val displayMs = when {
         isPlaying && durationMs > 0 -> progressMs
@@ -412,7 +415,7 @@ private fun PreviewBody(
     ) {
         Text(
             text = formatElapsed(displayMs),
-            color = SheetTextPrimary,
+            color = tokens.onBackgroundPrimary,
             fontSize = 56.sp,
             fontWeight = FontWeight.Light,
             fontFamily = FontFamily.Monospace,
@@ -423,8 +426,8 @@ private fun PreviewBody(
             durationMs = durationMs,
             isPlaying = isPlaying,
             onSeek = onSeek,
-            barColorOverride = SheetTextPrimary.copy(alpha = 0.5f),
-            playedColorOverride = SheetTextPrimary,
+            barColorOverride = tokens.onBackgroundPrimary.copy(alpha = 0.5f),
+            playedColorOverride = tokens.onBackgroundPrimary,
             playheadColorOverride = VoiceMemoRed,
             trackBgOverride = Color.Transparent,
             modifier = Modifier
@@ -442,6 +445,7 @@ private fun FooterControls(
     onTogglePlay: () -> Unit,
     onInsert: () -> Unit,
 ) {
+    val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
     when (phase) {
         Phase.Idle -> Unit
@@ -468,13 +472,13 @@ private fun FooterControls(
                     modifier = Modifier
                         .size(64.dp)
                         .clip(CircleShape)
-                        .background(SheetSurfaceElevated),
+                        .background(tokens.chipBgDisabled),
                     onClick = onTogglePlay,
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = SheetTextPrimary,
+                        tint = tokens.onBackgroundPrimary,
                     )
                 }
                 Button(
@@ -489,13 +493,14 @@ private fun FooterControls(
 
 @Composable
 private fun VoiceMemoStopButton(onClick: () -> Unit) {
+    val tokens = LocalVibiColors.current
     Box(
         modifier = Modifier
             .size(88.dp)
             .clip(CircleShape)
             .border(
                 width = 4.dp,
-                color = SheetTextPrimary.copy(alpha = 0.4f),
+                color = tokens.onBackgroundPrimary.copy(alpha = 0.4f),
                 shape = CircleShape,
             )
             .clickable(onClick = onClick),
@@ -512,6 +517,7 @@ private fun VoiceMemoStopButton(onClick: () -> Unit) {
 
 @Composable
 private fun SheetHeader(onDismiss: () -> Unit) {
+    val tokens = LocalVibiColors.current
     Box(
         modifier = Modifier.fillMaxWidth().height(32.dp),
         contentAlignment = Alignment.Center,
@@ -522,7 +528,7 @@ private fun SheetHeader(onDismiss: () -> Unit) {
                 .width(40.dp)
                 .height(5.dp)
                 .clip(RoundedCornerShape(2.5.dp))
-                .background(SheetTextSecondary.copy(alpha = 0.5f)),
+                .background(tokens.mutedText.copy(alpha = 0.5f)),
         )
         IconButton(
             onClick = onDismiss,
@@ -531,7 +537,7 @@ private fun SheetHeader(onDismiss: () -> Unit) {
             Icon(
                 imageVector = Icons.Filled.Close,
                 contentDescription = "Close",
-                tint = SheetTextPrimary,
+                tint = tokens.onBackgroundPrimary,
             )
         }
     }
@@ -551,5 +557,148 @@ private fun formatElapsed(ms: Long): String {
 /** ~45% 의 화면 영역은 타임라인을 그대로 노출 — peek 모드. 큰 시간 + 큰 파형 + 큰 정지 버튼 호흡감. */
 private const val SHEET_HEIGHT_FRACTION = 0.55f
 
-/** 50ms 폴링 * 240 = 12초 윈도우. WaveformPlayBar 가 이 버퍼를 canvas 폭으로 리샘플. */
+/** 50ms 폴링 * 240 = 12초 윈도우. LiveRecordingWaveform 가 sampleIntervalMs 간격 막대로 시간축 매핑. */
 private const val LIVE_BUFFER_CAP = 240
+
+/**
+ * 음원 삽입 진입 액션 시트 — Material3 DropdownMenu 대신 후속 [AudioInsertSheet] 와 같은
+ * panel 톤·슬라이드 모션으로 통일한 mini bottom-sheet. Record / Upload 두 큰 카드만
+ * 노출, 카드 탭 → [onSelect] 발사. wrap-content height 라 후속 시트보다 훨씬 낮음.
+ *
+ * 풀스크린 scrim 으로 시트 바깥 영역 탭 → dismiss. scrim 은 fade, sheet 는 slide 로 별도 모션.
+ *
+ * Modifier 는 부모 BoxScope 의 정렬을 받지만 내부에서 fillMaxSize 로 오버레이를 깔기 때문에
+ * `.align(...)` 은 무의미 — 부모 Box 안에 직접 호출하면 됨.
+ */
+@Composable
+fun AudioInsertEntrySheet(
+    expanded: Boolean,
+    modifier: Modifier = Modifier,
+    onSelect: (AudioInsertMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // Scrim — 시트 바깥 영역 탭 시 dismiss. 시트보다 z 아래라 후속 AudioInsertSheet 가 뜨면 가려짐.
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(animationSpec = tween(durationMillis = 220)),
+            exit = fadeOut(animationSpec = tween(durationMillis = 180)),
+        ) {
+            val scrimInteraction = remember { MutableInteractionSource() }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.32f))
+                    .clickable(
+                        interactionSource = scrimInteraction,
+                        indication = null,
+                        onClick = onDismiss,
+                    ),
+            )
+        }
+        // Sheet — 하단에서 슬라이드 업. 같은 expanded 신호로 scrim 과 함께 진입/퇴장.
+        AnimatedVisibility(
+            visible = expanded,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(animationSpec = tween(durationMillis = 220)) { it },
+            exit = slideOutVertically(animationSpec = tween(durationMillis = 180)) { it },
+        ) {
+            AudioInsertEntrySheetBody(onSelect = onSelect, onDismiss = onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun AudioInsertEntrySheetBody(
+    onSelect: (AudioInsertMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val tokens = LocalVibiColors.current
+    // sheet 빈 영역 탭이 뒤쪽 SoundDeck 으로 pass-through 되는 것 차단 — 후속 시트와 동일 패턴.
+    val swallowInteraction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+            .background(tokens.panelBg)
+            .clickable(
+                interactionSource = swallowInteraction,
+                indication = null,
+                onClick = {},
+            ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = VibiSpacing.lg)
+                .padding(bottom = VibiSpacing.lg),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.base),
+        ) {
+            SheetHeader(onDismiss = onDismiss)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(VibiSpacing.sm),
+            ) {
+                EntryCard(
+                    icon = Icons.Filled.Mic,
+                    iconTint = VoiceMemoRed,
+                    label = "Record now",
+                    onClick = { onSelect(AudioInsertMode.Recording) },
+                    modifier = Modifier.weight(1f),
+                )
+                EntryCard(
+                    icon = Icons.Filled.UploadFile,
+                    iconTint = tokens.onBackgroundPrimary,
+                    label = "Upload file",
+                    onClick = { onSelect(AudioInsertMode.Picker) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EntryCard(
+    icon: ImageVector,
+    iconTint: Color,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(tokens.chipBgDisabled)
+            .clickable(onClick = onClick)
+            .padding(vertical = VibiSpacing.lg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+        ) {
+            // 배경 없이 아이콘만 — outer chip 톤이 light/dark 양쪽에서 자체 elevated affordance.
+            // inner 동그라미 배경을 두면 Light 에선 outer < inner, Dark 에선 outer > inner 로 명도
+            // 관계가 반대라 시각 일관성이 깨짐. 48dp 영역만 확보해 label 간격 유지.
+            Box(
+                modifier = Modifier.size(48.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            Text(
+                label,
+                style = typo.bodyStrong,
+                color = tokens.onBackgroundPrimary,
+            )
+        }
+    }
+}

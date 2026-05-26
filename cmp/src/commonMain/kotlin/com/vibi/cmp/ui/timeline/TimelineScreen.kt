@@ -73,7 +73,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.material3.DropdownMenu
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.theme.LocalVibiTypography
 import com.vibi.cmp.theme.SpeakerPalette
@@ -84,7 +83,6 @@ import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.hasNonTrivialEdits
 import com.vibi.shared.ui.timeline.AudioSeparationStep
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -155,8 +153,10 @@ fun TimelineScreen(
     val state by viewModel.uiState.collectAsState()
 
 
-    // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. 드롭다운 두 항목이 진입 mode 결정.
+    // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. Entry sheet 의 두 카드가 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
+    // 진입 액션 시트 (Record / Upload 두 카드) — IconLabelCard 트리거가 토글, AudioInsertSheet 와 같은 BottomCenter 위치에 렌더.
+    var audioEntryOpen by remember { mutableStateOf(false) }
 
     // SoundDeck 의 분리 구간 펼침 상태 — UnifiedTimelineBar 파형의 화자별 색 표시와 같은 진실 공유.
     // 펼치면 화자 색, 닫히면 단일 highlight.
@@ -772,8 +772,6 @@ fun TimelineScreen(
                     AutoJobStatus.FAILED -> "Retry"
                     else -> "Separate audio"
                 }
-                // 녹음/파일선택/미리듣기 는 AudioInsertSheet 가 흡수 — 본 scope 에선 메뉴만 띄움.
-                var audioMenuOpen by remember { mutableStateOf(false) }
                 // 영상 다듬기 / BGM 선택 편집 액션은 화면 하단의 통합 하단바로 이동 — 본 scope inline 폐기.
                 // 음원 분리 — IconLabelCard 패턴 (영상 다듬기 카드와 동일). 설명 텍스트는 의도적으로 생략.
                 com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
@@ -800,42 +798,22 @@ fun TimelineScreen(
                         modifier = Modifier.size(16.dp),
                     )
                 }
-                // 음원 삽입 — IconLabelCard + DropdownMenu (Box anchor). 설명 텍스트는 의도적으로 생략.
-                Box {
-                    com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
-                        label = if (state.isAddingBgm) "Adding…" else "Add audio",
-                        description = null,
-                        // 영상편집 모드 가드 제거 — deselect 후 stuck disabled 되던 회귀 fix.
-                        // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
-                        enabled = !state.isAddingBgm,
-                        onClick = { audioMenuOpen = true },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = tokens.onBackgroundPrimary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = audioMenuOpen,
-                        onDismissRequest = { audioMenuOpen = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Upload file") },
-                            onClick = {
-                                audioMenuOpen = false
-                                audioInsertMode = AudioInsertMode.Picker
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Record now") },
-                            onClick = {
-                                audioMenuOpen = false
-                                audioInsertMode = AudioInsertMode.Recording
-                            },
-                        )
-                    }
+                // 음원 삽입 — IconLabelCard 트리거. 탭 시 화면 하단 AudioInsertEntrySheet (Record / Upload 두 카드)
+                // 가 슬라이드 업. 설명 텍스트는 의도적으로 생략.
+                com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
+                    label = if (state.isAddingBgm) "Adding…" else "Add audio",
+                    description = null,
+                    // 영상편집 모드 가드 제거 — deselect 후 stuck disabled 되던 회귀 fix.
+                    // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
+                    enabled = !state.isAddingBgm,
+                    onClick = { audioEntryOpen = true },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MusicNote,
+                        contentDescription = null,
+                        tint = tokens.onBackgroundPrimary,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
                 // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
@@ -1039,6 +1017,18 @@ fun TimelineScreen(
         state = state,
         viewModel = viewModel,
         modifier = Modifier.align(Alignment.BottomCenter),
+    )
+
+    // 음원 삽입 진입 시트 — Add audio 카드 탭 시 슬라이드 업, 두 큰 카드 (Record / Upload) 노출.
+    // 카드 탭 → entry close + audioInsertMode set → 같은 BottomCenter 위치에서 AudioInsertSheet 가 이어 슬라이드 업.
+    AudioInsertEntrySheet(
+        expanded = audioEntryOpen,
+        modifier = Modifier.align(Alignment.BottomCenter),
+        onSelect = { mode ->
+            audioEntryOpen = false
+            audioInsertMode = mode
+        },
+        onDismiss = { audioEntryOpen = false },
     )
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — 하단 ~48% peek. 위쪽 타임라인은 그대로 노출.
