@@ -8,6 +8,7 @@ import com.vibi.shared.platform.currentTimeMillis
 import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.Stem
+import com.vibi.shared.domain.model.StemKind
 import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
@@ -2548,13 +2549,15 @@ class TimelineViewModel constructor(
                         is SeparationStatus.Processing -> { /* keep Processing state */ }
                         is SeparationStatus.Ready -> {
                             val baseTrim = bffBaseUrl.trimEnd('/')
+                            // 화자 1명이면 BFF 가 voice_all 을 skip (speaker_0 와 동일이라 중복 제거).
+                            // 그 케이스를 위해 voice_all → 첫 SPEAKER stem 순으로 fallback. 둘 다 없으면 fail.
                             val voiceStem = status.stems.firstOrNull {
                                 it.stemId == Stem.STEM_ID_VOICE_ALL
-                            }
+                            } ?: status.stems.firstOrNull { it.kind == StemKind.SPEAKER }
                             if (voiceStem == null) {
                                 setRemovalProgress(
                                     clipId,
-                                    BgmRemovalProgress.Failed("voice_all stem 없음"),
+                                    BgmRemovalProgress.Failed("voice stem 없음"),
                                 )
                                 return@collect
                             }
