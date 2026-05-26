@@ -3,17 +3,16 @@
 package com.vibi.shared.platform
 
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import platform.Foundation.NSFileManager
-import platform.Foundation.NSFileModificationDate
-import platform.Foundation.NSFileSize
-import platform.Foundation.NSDate
 import platform.Foundation.NSInputStream
-import platform.Foundation.NSNumber
 import platform.Foundation.inputStreamWithFileAtPath
+import platform.posix.stat
 import platform.posix.uint8_tVar
 
 private const val CHUNK_BYTES = 64 * 1024
@@ -42,10 +41,18 @@ actual suspend fun sha256HexOfFile(path: String): String = withContext(Dispatche
 
 actual suspend fun statFile(path: String): FileStat = withContext(Dispatchers.Default) {
     val resolved = resolveStoredUriToPath(path) ?: path
-    val attrs = NSFileManager.defaultManager.attributesOfItemAtPath(resolved, null)
-        ?: error("statFile: cannot read attrs of $path (resolved=$resolved)")
-    val size = (attrs[NSFileSize] as NSNumber).longLongValue
-    val modDate = attrs[NSFileModificationDate] as? NSDate
-    val mtime = ((modDate?.timeIntervalSince1970 ?: 0.0) * 1000.0).toLong()
-    FileStat(sizeBytes = size, lastModifiedMs = mtime)
+    // Kotlin/Native 2.2.x 의 platform.Foundation.NSDate 가 `timeIntervalSince1970` property 를
+    // 해석 못 하는 회귀가 있어 NSFileManager.attributesOfItemAtPath 우회. POSIX stat(2) 는
+    // Darwin (iOS/macOS) 에 안정적으로 노출되고 sandbox 내 path 에 자유롭게 동작.
+    memScoped {
+        val st = alloc<stat>()
+        val rc = stat(resolved, st.ptr)
+        if (rc != 0) error("statFile: stat(2) failed for $path (resolved=$resolved)")
+        // darwin 의 mod-time field 는 st_mtimespec (timespec). Linux 의 st_mtim 과 다름.
+        val ts = st.st_mtimespec
+        FileStat(
+            sizeBytes = st.st_size.toLong(),
+            lastModifiedMs = ts.tv_sec * 1_000L + (ts.tv_nsec / 1_000_000L),
+        )
+    }
 }
