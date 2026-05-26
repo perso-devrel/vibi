@@ -127,6 +127,25 @@ class BffApiTest {
     // ───────────────────── separation ─────────────────────
 
     @Test
+    fun `getCreditCost passes durationMs query param and parses response`() = runTest {
+        val (api, captured) = buildApi { _ ->
+            respond(
+                content = """{"durationMs":120000,"credits":2,"balance":5,"sufficient":true}""",
+                status = HttpStatusCode.OK,
+                headers = jsonHeaders()
+            )
+        }
+
+        val result = api.getCreditCost(durationMs = 120_000L)
+
+        assertEquals("api/v2/credits/cost", captured[0].url.encodedPath.trimStart('/'))
+        assertEquals("120000", captured[0].url.parameters["durationMs"])
+        assertEquals(2, result.credits)
+        assertEquals(5, result.balance)
+        assertTrue(result.sufficient)
+    }
+
+    @Test
     fun `startSeparation sends file plus spec`() = runTest {
         val (api, captured) = buildApi { _ ->
             respond(

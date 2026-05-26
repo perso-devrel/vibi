@@ -15,8 +15,10 @@ import com.vibi.shared.data.remote.dto.SeparationStatusResponse
 import com.vibi.shared.data.remote.dto.TestdataSeparationFolderDto
 import com.vibi.shared.data.remote.dto.AdminGrantRequest
 import com.vibi.shared.data.remote.dto.CreditBalanceResponse
+import com.vibi.shared.data.remote.dto.CreditCostResponse
 import com.vibi.shared.data.remote.dto.CreditPurchaseRequest
 import com.vibi.shared.data.remote.dto.CreditPurchaseResponse
+import io.ktor.client.request.parameter
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -75,6 +77,15 @@ class BffApi(
     /** 현재 사용자의 크레딧 잔액. row 가 없으면 0. */
     suspend fun getCreditBalance(): CreditBalanceResponse =
         client.get("api/v2/credits").body()
+
+    /**
+     * 음원 분리 비용 견적 — "이 구간 X 크레딧 사용, 진행할까요?" 확인 팝업 표시 전 호출.
+     * BFF 가 비용 (분당 1, 올림, 최소 1) + 잔액 + 충분 여부를 한 번에 반환.
+     */
+    suspend fun getCreditCost(durationMs: Long): CreditCostResponse =
+        client.get("api/v2/credits/cost") {
+            parameter("durationMs", durationMs)
+        }.body()
 
     /**
      * IAP 영수증 가산. (platform, transactionId) UNIQUE 로 BFF 가 중복 호출 방어 —

@@ -167,6 +167,14 @@ fun TimelineScreen(
         viewModel.navigateBackHome.collect { onSaved() }
     }
 
+    // 분리 시작 시 잔액 부족이면 ViewModel 이 navigateToBuyCredits emit — UserMenu sheet 띄워
+    // CreditPurchaseSheet 흐름으로 자연스럽게 분기. 충전 후 사용자가 sheet 닫으면 다시
+    // AudioSeparationSheet 의 FAILED step 가 노출돼 재시도 가능 (사용자가 Start 다시 누름).
+    var showUserMenuForCredits by remember { mutableStateOf(false) }
+    LaunchedEffect(viewModel) {
+        viewModel.navigateToBuyCredits.collect { showUserMenuForCredits = true }
+    }
+
     // ── 분리된 stem 동시 재생 mixer (Phase 2) ──
     // 첫 directive 의 selections 기준으로 stem 들을 ExoPlayer (Android) 다중 인스턴스에 로드하고,
     // 영상 재생/일시정지/seek 에 동기화. directive range 밖 위치에서는 mute 효과 (volume 0).
@@ -1074,6 +1082,20 @@ fun TimelineScreen(
             onConfirmMix = { viewModel.onConfirmStemMix() },
             onDismiss = { viewModel.onDismissAudioSeparationSheet() },
             onDelete = { viewModel.onDeleteCurrentSeparation() },
+            onBuyCredits = { viewModel.onRequestBuyCredits() },
+        )
+    }
+
+    // 잔액 부족 분기로 띄워지는 UserMenu — 안에 CreditPurchaseSheet 가 내장돼 있어 사용자가
+    // BuyCreditsRow 를 탭하면 IAP 흐름 진입. sign out / delete account 도 노출되지만 사용자가
+    // timeline 안에서 의도적으로 누르는 케이스라 그대로 진행 — 로그아웃 시 onBack 으로 빠짐.
+    if (showUserMenuForCredits) {
+        com.vibi.cmp.ui.account.UserMenuSheet(
+            onDismiss = { showUserMenuForCredits = false },
+            onSignedOut = {
+                showUserMenuForCredits = false
+                onBack()
+            },
         )
     }
 

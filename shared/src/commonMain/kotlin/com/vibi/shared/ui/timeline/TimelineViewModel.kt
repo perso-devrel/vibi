@@ -325,6 +325,14 @@ class TimelineViewModel constructor(
     val navigateBackHome: SharedFlow<Unit> = _navigateBackHome.asSharedFlow()
 
     /**
+     * 잔액 부족으로 분리 시작이 막혔을 때 사용자가 "충전하기" 를 누르면 emit. UI 가 collect 해
+     * UserMenu/CreditPurchaseSheet 로 navigate. SharedFlow 라 화면 회전 등으로 collect 가 끊겨도
+     * 다음 진입에서 다시 받지 않음 (1회성 명령).
+     */
+    private val _navigateToBuyCredits = MutableSharedFlow<Unit>()
+    val navigateToBuyCredits: SharedFlow<Unit> = _navigateToBuyCredits.asSharedFlow()
+
+    /**
      * 메인 timeline undo 스택 — 모든 편집(영상 segment / BGM / 분리 directive / frame /
      * text overlay / image clip) 이 같은 스택을 공유.
      *
@@ -2986,6 +2994,55 @@ class TimelineViewModel constructor(
             showAudioSeparationSheet = true,
             isPlaying = false,
         )
+        // sheet 열린 직후 비용 견적 prefetch — 사용자가 Start 누르기 전에 "X 크레딧 사용,
+        // 잔액 Y" 가 표시되도록. fire-and-forget — 실패해도 sheet 진입 자체는 막지 않고,
+        // BFF 가 startSeparation 단계에서 권위 검증 (insufficient 시 402 매핑) 으로 폴백.
+        prefetchSeparationCost(seg, rangeStart, rangeEnd)
+    }
+
+    /**
+     * 분리 비용 미리보기 — BFF `/credits/cost` 호출 후 [AudioSeparationUiState.costPreview] 갱신.
+     * trim 윈도우가 있으면 그 길이, 없으면 segment 의 effective duration 사용 (BFF 와 동일 산정 방식).
+     */
+    private fun prefetchSeparationCost(
+        segment: Segment,
+        rangeStartMs: Long?,
+        rangeEndMs: Long?,
+    ) {
+        val durationMs = when {
+            rangeStartMs != null && rangeEndMs != null -> (rangeEndMs - rangeStartMs).coerceAtLeast(0L)
+            segment.trimStartMs > 0L || segment.trimEndMs > 0L ->
+                (segment.effectiveTrimEndMs - segment.trimStartMs).coerceAtLeast(0L)
+            else -> segment.durationMs.coerceAtLeast(0L)
+        }
+        viewModelScope.launch {
+            audioSeparationRepository.getCost(durationMs)
+                .onSuccess { cost ->
+                    _uiState.update { current ->
+                        // sheet 가 그새 닫혔거나 다른 segment 로 바뀌었으면 무시 (stale fetch).
+                        val sep = current.audioSeparation
+                        if (sep == null || sep.segmentId != segment.id) return@update current
+                        current.copy(
+                            audioSeparation = sep.copy(
+                                costPreview = CreditCostPreview(
+                                    durationMs = cost.durationMs,
+                                    credits = cost.credits,
+                                    balance = cost.balance,
+                                    sufficient = cost.sufficient,
+                                ),
+                            )
+                        )
+                    }
+                }
+            // 실패는 silent — 사용자에게 미리보기는 부가 정보, BFF 권위 검증이 폴백.
+        }
+    }
+
+    /**
+     * 잔액 부족 FAILED 상태에서 사용자가 "충전하기" 누르면 emit — UI 가 collect 해 UserMenu 진입.
+     */
+    fun onRequestBuyCredits() {
+        viewModelScope.launch { _navigateToBuyCredits.emit(Unit) }
     }
 
     /**
@@ -3131,7 +3188,13 @@ class TimelineViewModel constructor(
                 editedRenderJobId = null,
             )
             val jobId = startResult.getOrElse { err ->
-                handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
+                // 잔액 부족 (402) 은 일반 에러와 분리 — UI 가 "충전 필요" 분기로 정확한
+                // 다음 단계 안내. 다른 에러는 generic 메시지.
+                if (err is com.vibi.shared.domain.error.InsufficientCreditsException) {
+                    handleSeparationInsufficientCredits(clientToken, err)
+                } else {
+                    handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
+                }
                 return@launch
             }
             updateProcessingSeparationEntry(clientToken) { it.copy(jobId = jobId) }
@@ -3162,6 +3225,52 @@ class TimelineViewModel constructor(
             pollSeparationFlow(clientToken, jobId)
         }
         separationJobs[clientToken] = job
+    }
+
+    /**
+     * 잔액 부족 (402) 으로 분리 시작이 거부됐을 때 처리. handleSeparationFailure 와 동일한 sheet
+     * reopen 패턴이지만 `insufficientCredits=true` 플래그로 UI 가 "충전 필요" 분기 + "Buy credits"
+     * 버튼을 표시하도록 한다. EditProject 의 separationStatus 는 FAILED 로 마킹하되 error 텍스트는
+     * 별도 — 일반 실패 (Perso 5xx 등) 와 추적 분리.
+     *
+     * costPreview 도 BFF 응답 값으로 갱신 — 사용자가 충전 후 돌아왔을 때 fresh balance 가 즉시
+     * 보이도록.
+     */
+    private suspend fun handleSeparationInsufficientCredits(
+        clientToken: String,
+        cause: com.vibi.shared.domain.error.InsufficientCreditsException,
+    ) {
+        val entry = _uiState.value.processingSeparations.firstOrNull { it.clientToken == clientToken }
+        removeProcessingSeparationEntry(clientToken)
+        _uiState.update { state ->
+            state.copy(
+                audioSeparation = AudioSeparationUiState(
+                    segmentId = entry?.segmentId ?: "",
+                    step = AudioSeparationStep.FAILED,
+                    numberOfSpeakers = entry?.numberOfSpeakers ?: 2,
+                    muteOriginalSegmentAudio = entry?.muteOriginalSegmentAudio ?: true,
+                    rangeStartMs = entry?.rangeStartMs,
+                    rangeEndMs = entry?.rangeEndMs,
+                    jobId = entry?.jobId,
+                    errorMessage = ERROR_INSUFFICIENT_CREDITS,
+                    insufficientCredits = true,
+                    costPreview = CreditCostPreview(
+                        durationMs = entry?.let { (it.rangeEndMs ?: 0L) - (it.rangeStartMs ?: 0L) } ?: 0L,
+                        credits = cause.required,
+                        balance = cause.balance,
+                        sufficient = false,
+                    ),
+                ),
+                showAudioSeparationSheet = true,
+            )
+        }
+        editProjectRepository.getProject(projectId)?.let { p ->
+            val cleaned = entry?.jobId?.let { p.removeProcessingSeparation(it) } ?: p
+            editProjectRepository.updateProject(
+                cleaned.copy(separationStatus = AutoJobStatus.FAILED, separationError = ERROR_INSUFFICIENT_CREDITS),
+                touchActivity = false,
+            )
+        }
     }
 
     /**
@@ -3566,6 +3675,9 @@ class TimelineViewModel constructor(
         private const val ERROR_SEPARATION_GENERIC = "Separation failed"
         private const val ERROR_SEPARATION_CONSUMED =
             "This separation has already been finalized and can't be reused"
+        // sheet 의 FAILED 단계가 [AudioSeparationUiState.insufficientCredits]=true 일 때 표시할
+        // 메시지. UI 가 추가로 "Buy credits" 버튼을 렌더해 충전 화면으로 분기 시킨다.
+        private const val ERROR_INSUFFICIENT_CREDITS = "Not enough credits"
         /** 사용자 선택 trim 길이 ↔ stem 실측 길이의 허용 오차. 이 범위 밖이면 보정하지 않고
          * 사용자 선택값을 그대로 유지 (서버 측 측정 이상 가드). BFF TRIM_DURATION_TOLERANCE_MS
          * (100ms) 의 ~2배. */

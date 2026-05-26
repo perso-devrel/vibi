@@ -49,6 +49,7 @@ import com.vibi.cmp.theme.VibiSpacing
 import com.vibi.shared.domain.model.Stem
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import com.vibi.shared.ui.timeline.AudioSeparationUiState
+import com.vibi.shared.ui.timeline.CreditCostPreview
 import com.vibi.shared.ui.timeline.localizeProgressReason
 import com.vibi.shared.ui.timeline.stemDisplayLabel
 
@@ -78,6 +79,9 @@ fun AudioSeparationSheet(
     onConfirmMix: () -> Unit,
     onDismiss: () -> Unit,
     onDelete: (() -> Unit)? = null,
+    /** 잔액 부족 시 "Buy credits" 버튼 → UserMenu/CreditPurchaseSheet 진입. null 이면 버튼 미표시
+     *  (테스트 / dev). 운영 TimelineScreen 은 항상 주입. */
+    onBuyCredits: (() -> Unit)? = null,
 ) {
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
@@ -163,7 +167,11 @@ fun AudioSeparationSheet(
             }
             Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm)) {
                 when (state.step) {
-                    AudioSeparationStep.SETUP -> Unit  // Perso 자동 감지 — 사용자 입력 불필요
+                    AudioSeparationStep.SETUP -> {
+                        // 비용 미리보기 — costPreview null 이면 fetch 미완료, 도착 후 자동 갱신.
+                        // 사용자가 Start 누르기 전에 차감액 + 잔액 + 부족 여부를 명시.
+                        CostPreviewRow(state.costPreview)
+                    }
 
                     AudioSeparationStep.PROCESSING -> {
                         Text(localizeProgressReason(state.progressReason), style = typo.bodyMd)
@@ -321,8 +329,25 @@ fun AudioSeparationSheet(
                     }
 
                     AudioSeparationStep.FAILED -> {
-                        Text("Failed", color = MaterialTheme.colorScheme.error, style = typo.bodyMd)
-                        state.errorMessage?.let { Text(it, style = typo.bodySm) }
+                        if (state.insufficientCredits) {
+                            // 잔액 부족 분기 — 사용자가 다음에 할 일은 "재시도" 가 아니라 "충전".
+                            // costPreview 가 있으면 정확한 부족분 표시, 없으면 일반 안내.
+                            Text(
+                                "Not enough credits to start",
+                                color = MaterialTheme.colorScheme.error,
+                                style = typo.bodyMd,
+                            )
+                            state.costPreview?.let { preview ->
+                                Text(
+                                    "This separation needs ${preview.credits} credits, " +
+                                        "but you have ${preview.balance}.",
+                                    style = typo.bodySm,
+                                )
+                            }
+                        } else {
+                            Text("Failed", color = MaterialTheme.colorScheme.error, style = typo.bodyMd)
+                            state.errorMessage?.let { Text(it, style = typo.bodySm) }
+                        }
                     }
                 }
             }
@@ -344,24 +369,60 @@ fun AudioSeparationSheet(
                 TextButton(onClick = dismissAndCleanup) { Text("Cancel") }
                 Spacer(Modifier.weight(1f))
                 when (state.step) {
-                    AudioSeparationStep.SETUP -> Button(
-                        enabled = state.canStart,
-                        onClick = onStart,
-                    ) { Text("Start") }
+                    AudioSeparationStep.SETUP -> {
+                        val insufficient = state.costPreview?.sufficient == false
+                        if (insufficient && onBuyCredits != null) {
+                            // 부족 → Start 대신 Buy credits 로 분기. onBuyCredits 미주입 시 fallback
+                            // 으로 disabled Start 그대로 표시 (테스트 호환).
+                            Button(onClick = onBuyCredits) { Text("Buy credits") }
+                        } else {
+                            Button(
+                                enabled = state.canStart,
+                                onClick = onStart,
+                            ) { Text("Start") }
+                        }
+                    }
 
                     AudioSeparationStep.PICK_STEMS -> Button(
                         enabled = state.canMix,
                         onClick = onConfirmMix,
                     ) { Text("Apply") }
 
-                    AudioSeparationStep.DONE,
-                    AudioSeparationStep.FAILED -> Button(onClick = dismissAndCleanup) { Text("Close") }
+                    AudioSeparationStep.DONE -> Button(onClick = dismissAndCleanup) { Text("Close") }
+
+                    AudioSeparationStep.FAILED -> {
+                        if (state.insufficientCredits && onBuyCredits != null) {
+                            Button(onClick = onBuyCredits) { Text("Buy credits") }
+                        } else {
+                            Button(onClick = dismissAndCleanup) { Text("Close") }
+                        }
+                    }
 
                     else -> Unit
                 }
             }
         }
     }
+}
+
+/**
+ * SETUP 단계 비용 미리보기 — "이 구간 분리에 X 크레딧 사용 (잔액 Y)" 한 줄. preview null (fetch
+ * 미완료) 이면 placeholder 한 줄 — sheet 가 즉시 떠도 자리 잡힌 채로 정보가 채워지도록.
+ */
+@Composable
+private fun CostPreviewRow(preview: CreditCostPreview?) {
+    val typo = LocalVibiTypography.current
+    val tokens = LocalVibiColors.current
+    if (preview == null) {
+        Text("Checking credit balance…", style = typo.bodySm, color = tokens.mutedText)
+        return
+    }
+    val color = if (preview.sufficient) tokens.onBackgroundPrimary else MaterialTheme.colorScheme.error
+    Text(
+        text = "This separation will use ${preview.credits} credits (balance: ${preview.balance}).",
+        style = typo.bodySm,
+        color = color,
+    )
 }
 
 @Composable

@@ -1,5 +1,6 @@
 package com.vibi.shared.domain.repository
 
+import com.vibi.shared.domain.model.SeparationCost
 import com.vibi.shared.domain.model.SeparationMediaType
 import com.vibi.shared.domain.model.Stem
 
@@ -70,6 +71,12 @@ data class StemSelection(
 )
 
 interface AudioSeparationRepository {
+    /**
+     * 분리 시작 전 비용 견적. AudioSeparationSheet 가 SETUP 단계에 표시 + Start 버튼 분기.
+     * BFF 권위 잔액도 같이 받아 [com.vibi.shared.data.local.CreditStore] 동기화 가능 (구현에 위임).
+     */
+    suspend fun getCost(durationMs: Long): Result<SeparationCost>
+
     /**
      * @param editedRenderJobId non-null 이면 BFF 가 본 jobId 의 render output 을 source 로 사용 →
      *   multipart `file` part 자체를 송신하지 않음.

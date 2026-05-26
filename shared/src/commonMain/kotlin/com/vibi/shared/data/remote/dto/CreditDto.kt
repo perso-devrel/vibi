@@ -9,6 +9,37 @@ data class CreditBalanceResponse(
 )
 
 /**
+ * GET /api/v2/credits/cost?durationMs=N 응답.
+ *
+ * 음원 분리 시작 전 "이 구간 X 크레딧 사용, 잔액 Y. 진행할까요?" 팝업 표시용. BFF 공식:
+ * `ceil(durationMs / 60000)` 분당 1 크레딧, 최소 1 — 모바일이 동일 공식으로 fallback 추정도
+ * 가능하지만 BFF 응답이 정식 source (network 무료 / 인증 잔액 동기화).
+ *
+ * - [durationMs] — 요청 echo back.
+ * - [credits]    — 실제 차감될 크레딧 수.
+ * - [balance]    — 호출 시점 잔액.
+ * - [sufficient] — balance >= credits. false 면 모바일은 충전 화면 분기.
+ */
+@Serializable
+data class CreditCostResponse(
+    val durationMs: Long,
+    val credits: Int,
+    val balance: Int,
+    val sufficient: Boolean,
+)
+
+/**
+ * BFF 표준 에러 응답. `/separate` 의 402 `insufficient_credits` 등에서 detail 필드에
+ * "required=N balance=M" 형식. AudioSeparationRepository 가 그 필드를 파싱해 typed
+ * [com.vibi.shared.domain.error.InsufficientCreditsException] 으로 변환.
+ */
+@Serializable
+data class BffErrorResponse(
+    val error: String,
+    val detail: String? = null,
+)
+
+/**
  * POST /api/v2/credits/purchase 요청.
  *
  * - [productId] — App Store / Play Store SKU. BFF `CreditCatalog` 와 1:1.

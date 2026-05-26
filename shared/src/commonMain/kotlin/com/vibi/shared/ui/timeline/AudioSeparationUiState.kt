@@ -16,6 +16,18 @@ data class StemSelectionUi(
     val volume: Float
 )
 
+/**
+ * 분리 시작 전 비용 미리보기. BFF `/credits/cost` 응답을 그대로 들고 있고, 부족하면 UI 가
+ * Start 버튼 disable + "충전 필요" 분기를 한다. null = 아직 fetch 안 됨 (sheet 막 열린 직후
+ * 짧은 window — 그 동안은 Start 버튼이 "Loading…" 으로 표시).
+ */
+data class CreditCostPreview(
+    val durationMs: Long,
+    val credits: Int,
+    val balance: Int,
+    val sufficient: Boolean,
+)
+
 data class AudioSeparationUiState(
     val segmentId: String,
     val step: AudioSeparationStep = AudioSeparationStep.SETUP,
@@ -36,9 +48,24 @@ data class AudioSeparationUiState(
      * 재진입) 시 자연스럽게 false 로 리셋됨.
      */
     val userDismissed: Boolean = false,
+    /**
+     * SETUP 단계에서 BFF /credits/cost 로 미리 받아둔 비용/잔액 정보. null = fetch 아직 안 됨
+     * (sheet 막 열린 직후 / fetch 실패 시 fallback). UI 가 "X 크레딧 사용" 표시 + 부족 시
+     * Start 분기에 사용. FAILED 단계에선 [insufficientCredits] 와 함께 표시.
+     */
+    val costPreview: CreditCostPreview? = null,
+    /**
+     * FAILED 단계에서 사유가 잔액 부족인지. true 면 UI 가 "충전 필요" 메시지 + Buy credits
+     * 버튼 노출. 일반 실패 (네트워크/Perso 에러) 와 분리 — 사용자에게 정확한 다음 단계 안내.
+     */
+    val insufficientCredits: Boolean = false,
 ) {
     val canStart: Boolean
-        get() = step == AudioSeparationStep.SETUP && numberOfSpeakers in 1..10
+        get() = step == AudioSeparationStep.SETUP &&
+            numberOfSpeakers in 1..10 &&
+            // costPreview 가 still null 이면 일단 허용 (fetch 미완료 사이의 startup race — BFF 가
+            // 권위 검증 후 402 매핑되어 충전 UI 로 자연 폴백). sufficient=false 가 명시되면 차단.
+            (costPreview?.sufficient != false)
 
     val canMix: Boolean
         get() = step == AudioSeparationStep.PICK_STEMS &&

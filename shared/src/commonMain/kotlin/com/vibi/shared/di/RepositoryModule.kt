@@ -40,7 +40,12 @@ val repositoryModule = module {
     single<TextOverlayRepository> { TextOverlayRepositoryImpl(get()) }
     single<BgmClipRepository> { BgmClipRepositoryImpl(get()) }
     single<AudioSeparationRepository> {
-        AudioSeparationRepositoryImpl(get(), getProperty<String>("bffBaseUrl"))
+        AudioSeparationRepositoryImpl(
+            api = get(),
+            bffBaseUrl = getProperty<String>("bffBaseUrl"),
+            creditStore = get(),
+            userSession = get(),
+        )
     }
     single { RemoteRenderExecutor(api = get()) }
     single<FfmpegExecutor> { get<RemoteRenderExecutor>() }
