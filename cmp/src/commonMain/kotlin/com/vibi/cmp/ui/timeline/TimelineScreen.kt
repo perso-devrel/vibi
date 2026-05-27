@@ -87,6 +87,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -488,7 +489,9 @@ fun TimelineScreen(
             }
             Text(
                 text = "Edit",
-                style = typo.displaySm,
+                // displaySm 은 EB Garamond (serif display) — 화면 다른 텍스트가 모두 Inter (body)
+                // 라 혼자 튀어보임. body family 의 titleLg 기반에 displaySm 크기(20sp) + Bold 유지.
+                style = typo.titleLg.copy(fontSize = 20.sp),
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = tokens.onBackgroundPrimary,
                 modifier = Modifier.weight(1f),
@@ -1103,6 +1106,47 @@ fun TimelineScreen(
             onDismiss = { viewModel.onDismissAudioSeparationSheet() },
             onDelete = { viewModel.onDeleteCurrentSeparation() },
             onBuyCredits = { viewModel.onRequestBuyCredits() },
+        )
+    }
+
+    // BGM "배경음 제거" 첫 분리 비용 confirmation — 영상 구간 "Separate this range" 와 동일 UX.
+    // 캐시된 voice-only 토글 (restore↔isolate) 은 비용 없음 → prompt 안 띄움 (VM 에서 분기 처리).
+    state.bgmRemovalCostPrompt?.let { prompt ->
+        val preview = prompt.costPreview
+        val insufficient = preview?.sufficient == false
+        AlertDialog(
+            onDismissRequest = { viewModel.onDismissBgmRemovalCost() },
+            title = { Text("Isolate vocals") },
+            text = {
+                Text(
+                    text = when {
+                        preview == null -> "Checking credit balance…"
+                        insufficient ->
+                            "This separation needs ${preview.credits} credits, " +
+                                "but you only have ${preview.balance}."
+                        else -> "This separation will use ${preview.credits} credits " +
+                            "(balance: ${preview.balance})."
+                    },
+                    color = if (insufficient) MaterialTheme.colorScheme.error
+                    else LocalContentColor.current,
+                )
+            },
+            confirmButton = {
+                if (insufficient) {
+                    TextButton(onClick = {
+                        viewModel.onDismissBgmRemovalCost()
+                        viewModel.onRequestBuyCredits()
+                    }) { Text("Buy credits") }
+                } else {
+                    TextButton(
+                        enabled = preview != null,  // fetch 미완료 동안 confirm 잠시 disable
+                        onClick = { viewModel.onConfirmBgmRemovalCost() },
+                    ) { Text("Confirm") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onDismissBgmRemovalCost() }) { Text("Cancel") }
+            },
         )
     }
 

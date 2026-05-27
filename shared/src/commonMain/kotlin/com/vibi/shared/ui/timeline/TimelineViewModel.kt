@@ -227,6 +227,11 @@ data class TimelineUiState(
      * sourceUri / voiceOnlyUri 비교로 토글 라벨 결정. Processing 동안 같은 클립 재요청은 무시.
      */
     val bgmBackgroundRemovalProgress: Map<String, BgmRemovalProgress> = emptyMap(),
+    /**
+     * BGM "배경음 제거" 첫 분리 비용 confirmation. null = prompt 없음 (이미 분리 캐시 있는 토글은
+     * prompt 안 띄움). 사용자가 Confirm 누르면 실제 separation job 시작 + 본 필드 null 화.
+     */
+    val bgmRemovalCostPrompt: BgmRemovalCostPrompt? = null,
     val audioSeparation: AudioSeparationUiState? = null,
     val showAudioSeparationSheet: Boolean = false,
     val processingSeparations: List<ProcessingSeparation> = emptyList(),
@@ -2477,7 +2482,52 @@ class TimelineViewModel constructor(
             return
         }
 
-        // 3. 첫 분리 — 백그라운드 separation job 띄움 (sheet 없이).
+        // 3. 첫 분리 — 영상 구간 "Separate this range" 와 동일하게 비용 confirmation 먼저.
+        //    사용자가 차감액/잔액 확인 후 명시 confirm → [onConfirmBgmRemovalCost] 가 실제 시작.
+        val durationMs = clip.sourceDurationMs.coerceAtLeast(0L)
+        _uiState.update {
+            it.copy(bgmRemovalCostPrompt = BgmRemovalCostPrompt(clipId = clipId, durationMs = durationMs))
+        }
+        prefetchBgmRemovalCost(clipId, durationMs)
+    }
+
+    /** BGM 분리 cost prefetch — 응답 도착 시 prompt 가 여전히 같은 clipId 면 costPreview 갱신. */
+    private fun prefetchBgmRemovalCost(clipId: String, durationMs: Long) {
+        viewModelScope.launch {
+            audioSeparationRepository.getCost(durationMs)
+                .onSuccess { cost ->
+                    _uiState.update { current ->
+                        val prompt = current.bgmRemovalCostPrompt
+                        if (prompt == null || prompt.clipId != clipId) return@update current
+                        current.copy(
+                            bgmRemovalCostPrompt = prompt.copy(
+                                costPreview = CreditCostPreview(
+                                    durationMs = cost.durationMs,
+                                    credits = cost.credits,
+                                    balance = cost.balance,
+                                    sufficient = cost.sufficient,
+                                ),
+                            )
+                        )
+                    }
+                }
+            // 실패는 silent — BFF 권위 검증이 폴백 (start 호출 시 402 mapping).
+        }
+    }
+
+    fun onDismissBgmRemovalCost() {
+        _uiState.update { it.copy(bgmRemovalCostPrompt = null) }
+    }
+
+    /** Confirm 후 실제 separation job 시작. 잔액 부족 케이스는 호출자가 [onRequestBuyCredits] 로 분기. */
+    fun onConfirmBgmRemovalCost() {
+        val prompt = _uiState.value.bgmRemovalCostPrompt ?: return
+        _uiState.update { it.copy(bgmRemovalCostPrompt = null) }
+        startBgmBackgroundRemoval(prompt.clipId)
+    }
+
+    private fun startBgmBackgroundRemoval(clipId: String) {
+        val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return
         setRemovalProgress(clipId, BgmRemovalProgress.Processing)
         val originalUri = clip.sourceUri
         viewModelScope.launch {
@@ -2498,11 +2548,21 @@ class TimelineViewModel constructor(
                         is SeparationStatus.Processing -> { /* keep Processing state */ }
                         is SeparationStatus.Ready -> {
                             val baseTrim = bffBaseUrl.trimEnd('/')
-                            // 화자 1명이면 BFF 가 voice_all 을 skip (speaker_0 와 동일이라 중복 제거).
-                            // 그 케이스를 위해 voice_all → 첫 SPEAKER stem 순으로 fallback. 둘 다 없으면 fail.
-                            val voiceStem = status.stems.firstOrNull {
-                                it.stemId == Stem.STEM_ID_VOICE_ALL
-                            } ?: status.stems.firstOrNull { it.kind == StemKind.SPEAKER }
+                            // Perso 분리 결과 화자 수 기반 voice 트랙 선택:
+                            //   - 1명: speaker_0 — voice_all 은 의미상 동일하지만 BFF 가 1명 케이스에선
+                            //     아예 skip. Perso 가 reactions 를 별도 화자로 분리하지 않은 케이스라
+                            //     voice_all 사용 시 reactions 가 BGM 에 잔존 → BGM 슬라이더로 못 잡음.
+                            //     speaker_0 만 쓰면 Perso voice 분류 그대로 들음.
+                            //   - 2명+: voice_all (모든 SPEAKER amix) — 화자별 단일 선택 시 다른 화자
+                            //     누락. reactions 가 별 SPEAKER 로 빠지는 케이스라 voice_all 이 깨끗.
+                            val speakers = status.stems.filter { it.kind == StemKind.SPEAKER }
+                            val voiceStem = when {
+                                speakers.size >= 2 -> status.stems.firstOrNull {
+                                    it.stemId == Stem.STEM_ID_VOICE_ALL
+                                } ?: speakers.first()
+                                speakers.size == 1 -> speakers.first()
+                                else -> null
+                            }
                             if (voiceStem == null) {
                                 setRemovalProgress(
                                     clipId,

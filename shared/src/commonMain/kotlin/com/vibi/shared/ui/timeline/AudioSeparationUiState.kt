@@ -17,6 +17,17 @@ data class StemSelectionUi(
 )
 
 /**
+ * BGM "배경음 제거" 첫 분리 confirmation prompt. clipId 별로 1개씩만 활성 (한 번에 한 dialog).
+ * costPreview null = fetch 미완료 ("Checking balance…" placeholder), 도착 후 UI 가 자동 갱신.
+ * 이미 voice-only 캐시가 있어 restore↔isolate 토글하는 경우엔 prompt 띄우지 않음 (재분리 없음).
+ */
+data class BgmRemovalCostPrompt(
+    val clipId: String,
+    val durationMs: Long,
+    val costPreview: CreditCostPreview? = null,
+)
+
+/**
  * 분리 시작 전 비용 미리보기. BFF `/credits/cost` 응답을 그대로 들고 있고, 부족하면 UI 가
  * Start 버튼 disable + "충전 필요" 분기를 한다. null = 아직 fetch 안 됨 (sheet 막 열린 직후
  * 짧은 window — 그 동안은 Start 버튼이 "Loading…" 으로 표시).
