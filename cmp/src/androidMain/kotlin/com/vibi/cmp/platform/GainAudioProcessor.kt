@@ -3,6 +3,7 @@ package com.vibi.cmp.platform
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
+import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -14,6 +15,7 @@ import java.nio.ByteOrder
  * gain 은 @Volatile — UI thread (slider) 가 즉시 변경, audio thread (queueInput) 가 즉시 읽음.
  * sample 단위 atomicity 는 불필요 (값이 바뀌는 frame 경계에서 잠깐 섞여도 사람 귀엔 무의미).
  */
+@UnstableApi
 class GainAudioProcessor : BaseAudioProcessor() {
 
     @Volatile

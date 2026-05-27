@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package com.vibi.cmp.platform
 
 import androidx.compose.runtime.Composable
@@ -32,6 +34,7 @@ import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 import platform.darwin.NSObjectProtocol
 import kotlin.math.log10
+import kotlin.time.Clock
 
 /**
  * iOS: AVAudioEngine 기반 mixer. stem 마다 PlayerNode → TimePitch → EQ → mainMixer chain.
@@ -135,7 +138,8 @@ private class IosStemMixerHandle(
         node.eq.globalGain = if (clamped > 1f) (20.0 * log10(clamped.toDouble())).toFloat() else 0f
     }
 
-    private fun nowMs(): Long = (platform.Foundation.NSDate().timeIntervalSince1970 * 1000.0).toLong()
+    // Kotlin/Native 2.2.x 의 NSDate.timeIntervalSince1970 인터롭 회귀 회피 (commit 3d16b11 참조).
+    private fun nowMs(): Long = Clock.System.now().toEpochMilliseconds()
 
     /** group 의 "이 시각 현재 재생 추정 위치(ms)". seekTo drift 가드용. */
     private fun estimatedPositionMs(groupId: String): Long {

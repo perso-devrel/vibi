@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
@@ -23,6 +24,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink.DefaultAudioProcessorCha
  * 동기화 정밀도는 system 의 audio output buffering 한계까지 — 영상은 별도 ExoPlayer 가
  * 재생하므로 100% sample 정렬은 불가능하지만 사용자 체감은 충분.
  */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 actual fun rememberStemMixer(): StemMixerHandle {
     val context = LocalContext.current.applicationContext
@@ -33,6 +35,7 @@ actual fun rememberStemMixer(): StemMixerHandle {
     return handle
 }
 
+@UnstableApi
 private class AndroidStemMixerHandle(
     private val context: Context,
 ) : StemMixerHandle {

@@ -1,14 +1,13 @@
 package com.vibi.cmp.platform
 
-import android.app.Activity
 import android.content.pm.ActivityInfo
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalContext
 
 @Composable
 actual fun LockLandscape(enabled: Boolean) {
-    val activity = LocalContext.current as? Activity ?: return
+    val activity = LocalActivity.current ?: return
     DisposableEffect(enabled) {
         val previous = activity.requestedOrientation
         if (enabled) {
