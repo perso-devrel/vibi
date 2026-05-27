@@ -62,6 +62,8 @@ fun SoundCard(
     isPreviewing: Boolean,
     onToggle: () -> Unit,
     onUpdateVolume: (Float) -> Unit,
+    /** Slider 드래그 종료 시 1회. null 이면 미사용 (예: stem 분리 결과 — 별도 undo policy). */
+    onUpdateVolumeFinished: (() -> Unit)? = null,
     onTogglePreview: () -> Unit,
     onDelete: (() -> Unit)?,
     onApplySpeed: ((Float) -> Unit)? = null,
@@ -171,6 +173,7 @@ fun SoundCard(
                         modifier = Modifier.weight(1f),
                         value = model.volume.coerceIn(0f, 2f),
                         onValueChange = { if (!disabled) onUpdateVolume(it) },
+                        onValueChangeFinished = onUpdateVolumeFinished,
                         valueRange = 0f..2f,
                         enabled = !disabled && model.selected,
                         colors = mutedSliderColors(tokens.mutedText),

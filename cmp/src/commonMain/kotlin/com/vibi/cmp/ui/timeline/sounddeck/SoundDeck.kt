@@ -56,6 +56,8 @@ fun SoundDeck(
     onToggleStem: (directiveId: String, stemId: String, selected: Boolean) -> Unit,
     onUpdateStemVolume: (directiveId: String, stemId: String, volume: Float) -> Unit,
     onUpdateBgmVolume: (clipId: String, volume: Float) -> Unit,
+    /** BGM 슬라이더 드래그 종료 / 1-shot mute 토글 직후 호출 — undo entry 1 회 push. */
+    onCommitBgmEditUndo: () -> Unit,
     onApplyBgmSpeed: (clipId: String, value: Float) -> Unit,
     onRemoveBgmBackground: (clipId: String) -> Unit,
     onDeleteBgm: (clipId: String) -> Unit,
@@ -81,6 +83,8 @@ fun SoundDeck(
                 is SoundCardSource.Bgm -> {
                     val next = if (card.volume > 0f) 0f else 1f
                     onUpdateBgmVolume(src.clipId, next)
+                    // 1-shot 액션 — 슬라이더 onValueChangeFinished 경로가 없으므로 즉시 snapshot.
+                    onCommitBgmEditUndo()
                 }
             }
         },
@@ -91,6 +95,10 @@ fun SoundDeck(
                 is SoundCardSource.Bgm ->
                     onUpdateBgmVolume(src.clipId, v)
             }
+        },
+        onUpdateVolumeFinished = when (card.source) {
+            is SoundCardSource.Bgm -> onCommitBgmEditUndo
+            is SoundCardSource.SeparationStem -> null
         },
         onTogglePreview = {
             val url = card.audioUrl
@@ -203,6 +211,7 @@ fun SoundDeck(
 private data class SoundCardCallbacks(
     val onToggle: () -> Unit,
     val onUpdateVolume: (Float) -> Unit,
+    val onUpdateVolumeFinished: (() -> Unit)?,
     val onTogglePreview: () -> Unit,
     val onDelete: (() -> Unit)?,
     val onApplySpeed: ((Float) -> Unit)?,
@@ -222,6 +231,7 @@ private fun SoundCardRow(
         isPreviewing = isPreviewing,
         onToggle = callbacks.onToggle,
         onUpdateVolume = callbacks.onUpdateVolume,
+        onUpdateVolumeFinished = callbacks.onUpdateVolumeFinished,
         onTogglePreview = callbacks.onTogglePreview,
         onDelete = callbacks.onDelete,
         onApplySpeed = callbacks.onApplySpeed,

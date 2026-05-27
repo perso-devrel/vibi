@@ -11,7 +11,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import platform.AVFAudio.AVAudioPlayer
+import platform.AVFAudio.AVAudioEngine
+import platform.AVFAudio.AVAudioFile
+import platform.AVFAudio.AVAudioFrameCount
+import platform.AVFAudio.AVAudioFramePosition
+import platform.AVFAudio.AVAudioPlayerNode
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
 import platform.AVFAudio.AVAudioSessionInterruptionNotification
@@ -20,15 +24,24 @@ import platform.AVFAudio.AVAudioSessionInterruptionTypeKey
 import platform.AVFAudio.AVAudioSessionRouteChangeNotification
 import platform.AVFAudio.AVAudioSessionRouteChangeReasonKey
 import platform.AVFAudio.AVAudioSessionRouteChangeReasonOldDeviceUnavailable
+import platform.AVFAudio.AVAudioUnitEQ
+import platform.AVFAudio.AVAudioUnitTimePitch
 import platform.AVFAudio.setActive
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 import platform.darwin.NSObjectProtocol
+import kotlin.math.log10
 
 /**
- * iOS: directive group 별 AVAudioPlayer 사전 prepare + active group 만 play.
- * directive 전환 시 다운로드/init 끊김 없음 — 모든 group 의 player 가 이미 ready.
+ * iOS: AVAudioEngine 기반 mixer. stem 마다 PlayerNode → TimePitch → EQ → mainMixer chain.
+ *
+ *  - 0..1 볼륨: PlayerNode.volume (linear)
+ *  - 1..2 부스트: EQ.globalGain (dB) — AVAudioPlayer 시절 silent no-op 이던 영역. render path
+ *    (ffmpeg volume filter 0..2) 와 동일 amplitude scaling 으로 preview-render 대칭.
+ *  - 속도: TimePitch.rate (pitch-corrected stretch) — 영상 segment.speedScale 와 sync.
+ *
+ * directive group 별 chain 사전 attach + active group 만 play. directive 전환 시 다운로드/init 끊김 없음.
  */
 @OptIn(ExperimentalForeignApi::class)
 @Composable
@@ -46,26 +59,41 @@ private class IosStemMixerHandle(
     private val scope: CoroutineScope,
 ) : StemMixerHandle {
 
-    /** key = "groupId/stemId" — 같은 stemId 라도 다른 group 이면 별도 player. */
-    private val players = mutableMapOf<String, AVAudioPlayer>()
-    /** key = composite (위와 동일), value = (groupId, stemId). */
-    private val groupOfPlayer = mutableMapOf<String, String>()
-    /** stemId → 적용된 마지막 volume. 새 player 생성 시 적용. */
+    /** 모든 stem 이 공유하는 단일 engine. mainMixerNode 가 자동으로 multi-input format 변환. */
+    private val engine = AVAudioEngine()
+    private var engineStarted = false
+
+    private class StemNode(
+        val playerNode: AVAudioPlayerNode,
+        val timePitch: AVAudioUnitTimePitch,
+        val eq: AVAudioUnitEQ,
+        val file: AVAudioFile,
+    )
+
+    /** key = "groupId/stemId" — 같은 stemId 라도 다른 group 이면 별도 node chain. */
+    private val nodes = mutableMapOf<String, StemNode>()
+    /** key → groupId. */
+    private val groupOfNode = mutableMapOf<String, String>()
+    /** stemId → 적용된 마지막 volume (0..2). 새 node 생성 시 적용. */
     private val pendingVolumes = mutableMapOf<String, Float>()
-    /** groupId → 마지막 seek 위치(ms). 새 player 가 download 후 올바른 offset 에서 시작. */
+    /** groupId → 마지막 seek 위치(ms). 새 node 가 download 후 올바른 offset 에서 시작. */
     private val pendingSeekByGroup = mutableMapOf<String, Long>()
-    /** 이미 prepareToPlay() 호출된 player key. inactive group 은 미준비 상태로 유지. */
-    private val preparedKeys = mutableSetOf<String>()
+    /** 적용된 마지막 rate. 새 node 도 동일 속도로 시작. 1.0 = 원본. */
+    private var pendingRate: Float = 1f
+    /** 이미 schedule 된 key — 신규 schedule 필요 여부 판단. */
+    private val scheduledKeys = mutableSetOf<String>()
     private var activeGroupId: String? = null
     private var playing = false
     private var loadGen = 0
-    /** AVAudioSession.setActive(true) 가 호출됐는지. load 시 즉시 활성화하면 영상 AVPlayer
-     *  init 와 같은 cycle 에 hardware audio unit 경합 → IOWorkLoop overload / Fig parser 에러.
-     *  실제 play() 시점에 lazy activate. */
+
+    /** group 별 "현재 재생 epoch" 추적 — seekTo drift 가드. */
+    private val epochOriginMsByGroup = mutableMapOf<String, Long>()
+    private val epochClockMsByGroup = mutableMapOf<String, Long>()
+
+    /** AVAudioSession.setActive(true) 가 호출됐는지. load 시 즉시 활성화하면 영상 AVPlayer init 와
+     *  같은 cycle 에 hardware audio unit 경합 → IOWorkLoop overload. play() 시점에 lazy activate. */
     private var sessionActivated = false
 
-    /** Interruption (전화/Siri 등) 시 자동 pause, Route change (이어폰 분리) 시 자동 pause.
-     *  release() 시 removeObserver. */
     private val interruptionObserver: NSObjectProtocol = NSNotificationCenter.defaultCenter
         .addObserverForName(
             name = AVAudioSessionInterruptionNotification,
@@ -74,7 +102,6 @@ private class IosStemMixerHandle(
             usingBlock = { notification ->
                 val type = (notification?.userInfo?.get(AVAudioSessionInterruptionTypeKey)
                     as? NSNumber)?.unsignedLongValue
-                // Began 만 처리 — Ended 시 자동 resume 안 함. 편집 앱은 사용자 명시 액션 유지.
                 if (type == AVAudioSessionInterruptionTypeBegan) pause()
             },
         )
@@ -86,7 +113,6 @@ private class IosStemMixerHandle(
             usingBlock = { notification ->
                 val reason = (notification?.userInfo?.get(AVAudioSessionRouteChangeReasonKey)
                     as? NSNumber)?.unsignedLongValue
-                // 이어폰 분리 → 스피커 폭발 방지. iOS HIG 표준.
                 if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) pause()
             },
         )
@@ -95,31 +121,49 @@ private class IosStemMixerHandle(
 
     /** key → audioUrl. 같은 key 라도 url 이 변하면 (token refresh 등) 재다운로드. */
     private val urlByKey = mutableMapOf<String, String>()
-    /** key → 임시 파일 path. release / url refresh 시 삭제로 caches 누적 회수. */
     private val tempPathByKey = mutableMapOf<String, String>()
 
     private fun deleteTemp(key: String) {
         tempPathByKey.remove(key)?.let { deleteCachedAudio(it) }
     }
 
+    /** 0..1 → playerNode.volume, 1..2 → eq.globalGain dB. 동시에 둘 다 갱신해 일관성 유지. */
+    private fun applyVolume(node: StemNode, v: Float) {
+        val clamped = v.coerceIn(0f, 2f)
+        node.playerNode.volume = clamped.coerceAtMost(1f)
+        // log10(0) = -∞ 회피 + clamped <= 1 일 땐 EQ 통과 (0 dB).
+        node.eq.globalGain = if (clamped > 1f) (20.0 * log10(clamped.toDouble())).toFloat() else 0f
+    }
+
+    private fun nowMs(): Long = (platform.Foundation.NSDate().timeIntervalSince1970 * 1000.0).toLong()
+
+    /** group 의 "이 시각 현재 재생 추정 위치(ms)". seekTo drift 가드용. */
+    private fun estimatedPositionMs(groupId: String): Long {
+        val origin = epochOriginMsByGroup[groupId] ?: return pendingSeekByGroup[groupId] ?: 0L
+        val clock = epochClockMsByGroup[groupId] ?: return origin
+        return if (playing) {
+            origin + ((nowMs() - clock) * pendingRate).toLong()
+        } else {
+            origin
+        }
+    }
+
+    private fun cycleEpoch(groupId: String, positionMs: Long) {
+        epochOriginMsByGroup[groupId] = positionMs
+        epochClockMsByGroup[groupId] = nowMs()
+    }
+
     override fun load(sources: List<StemMixerSource>) {
-        // category 만 미리 설정 (idempotent). setActive(true) 는 play() 시점에 lazy —
-        // 진입 시 영상 AVPlayer init 와 같은 cycle 에 audio hardware 잡지 않도록.
         runCatching {
             AVAudioSession.sharedInstance().setCategory(AVAudioSessionCategoryPlayback, null)
         }
-
-        // 누적 cache — 기존 player 는 release 안 하고 keep. caller 가 activeDirective 의 sources 만
-        // 매번 load 해도 다른 directive 의 player 는 cache 에 남아있어 재진입 시 즉시 활성.
-        // 1. group mapping 갱신 (이미 player 있는 source 도 group 이 바뀌었을 수 있음).
         sources.forEach { src ->
             val k = key(src.groupId, src.stemId)
-            groupOfPlayer[k] = src.groupId
+            groupOfNode[k] = src.groupId
         }
-        // 3. 추가/url 변경된 source 만 다운로드.
         val toFetch = sources.filter {
             val k = key(it.groupId, it.stemId)
-            urlByKey[k] != it.audioUrl  // 신규 또는 url refresh
+            urlByKey[k] != it.audioUrl
         }
         if (toFetch.isEmpty()) {
             applyActiveState()
@@ -137,37 +181,48 @@ private class IosStemMixerHandle(
                 }.awaitAll()
             }
             if (gen != loadGen) {
-                // stale 결과 — 임시 파일 누수 회수.
                 prepared.filterNotNull().forEach { p -> deleteCachedAudio(p.tempPath) }
                 return@launch
             }
             prepared.filterNotNull().forEach { p ->
-                val player = runCatching {
-                    AVAudioPlayer(contentsOfURL = NSURL.fileURLWithPath(p.tempPath), error = null)
+                val file = runCatching {
+                    AVAudioFile(forReading = NSURL.fileURLWithPath(p.tempPath), error = null)
                 }.getOrNull() ?: run {
                     deleteCachedAudio(p.tempPath)
                     return@forEach
                 }
-                player.numberOfLoops = 0
-                player.volume = pendingVolumes[p.stemId] ?: 1.0f
-                // prepareToPlay() 는 applyActiveState() 에서 active group 의 player 에만 호출.
-                // 모든 player 가 동시에 prepare 하면 hardware audio unit 경합으로 IOWorkLoop overload.
+                val playerNode = AVAudioPlayerNode()
+                val timePitch = AVAudioUnitTimePitch().apply {
+                    rate = pendingRate
+                    pitch = 0f
+                }
+                val eq = AVAudioUnitEQ(numberOfBands = 0uL)
+                val stem = StemNode(playerNode, timePitch, eq, file)
+                applyVolume(stem, pendingVolumes[p.stemId] ?: 1.0f)
+
+                engine.attachNode(playerNode)
+                engine.attachNode(timePitch)
+                engine.attachNode(eq)
+                val fmt = file.processingFormat
+                engine.connect(playerNode, to = timePitch, format = fmt)
+                engine.connect(timePitch, to = eq, format = fmt)
+                engine.connect(eq, to = engine.mainMixerNode, format = fmt)
+
                 val k = key(p.groupId, p.stemId)
-                // 이미 있는 player (url refresh) 면 release + 옛 임시 파일 삭제 후 교체.
-                players.remove(k)?.let {
-                    it.delegate = null
-                    it.stop()
+                nodes.remove(k)?.let { old ->
+                    runCatching {
+                        old.playerNode.stop()
+                        engine.detachNode(old.playerNode)
+                        engine.detachNode(old.timePitch)
+                        engine.detachNode(old.eq)
+                    }
                 }
                 deleteTemp(k)
-                preparedKeys.remove(k)
-                players[k] = player
-                groupOfPlayer[k] = p.groupId
+                scheduledKeys.remove(k)
+                nodes[k] = stem
+                groupOfNode[k] = p.groupId
                 urlByKey[k] = p.audioUrl
                 tempPathByKey[k] = p.tempPath
-                // download 완료 전에 seekTo 가 호출됐다면 그 위치에서 시작.
-                pendingSeekByGroup[p.groupId]?.let { posMs ->
-                    player.currentTime = posMs.coerceAtLeast(0L) / 1000.0
-                }
             }
             applyActiveState()
         }
@@ -184,8 +239,6 @@ private class IosStemMixerHandle(
     private fun ensureSessionActive() {
         if (sessionActivated) return
         runCatching {
-            // Recorder 가 직전에 PlayAndRecord 로 덮어쓰고 종료했을 수 있어 매번 .Playback
-            // 으로 idempotent 회수. category set 은 cheap (no-op when already set).
             val session = AVAudioSession.sharedInstance()
             session.setCategory(AVAudioSessionCategoryPlayback, null)
             session.setActive(true, null)
@@ -193,79 +246,148 @@ private class IosStemMixerHandle(
         }
     }
 
+    private fun ensureEngineStarted() {
+        if (engineStarted) return
+        runCatching {
+            engine.prepare()
+            engine.startAndReturnError(null)
+            engineStarted = true
+        }
+    }
+
+    private fun scheduleFromOffset(k: String, node: StemNode, positionMs: Long) {
+        val sampleRate = node.file.processingFormat.sampleRate
+        val startFrame: AVAudioFramePosition =
+            (positionMs.coerceAtLeast(0L) * sampleRate / 1000.0).toLong()
+        val total: AVAudioFramePosition = node.file.length
+        val remaining = (total - startFrame).coerceAtLeast(0L)
+        if (remaining == 0L) return
+        val frameCount: AVAudioFrameCount = remaining.toUInt()
+        // stop() 으로 이전 schedule drop 후 새 segment schedule. 재생 중이었으면 호출자가 play() 호출.
+        node.playerNode.stop()
+        node.playerNode.scheduleSegment(
+            node.file,
+            startingFrame = startFrame,
+            frameCount = frameCount,
+            atTime = null,
+            completionHandler = null,
+        )
+        scheduledKeys.add(k)
+    }
+
     private fun applyActiveState() {
-        // active group player 만 playing 상태에 따라 play/pause, 나머지는 항상 pause.
-        // 첫 활성화 시 lazy prepareToPlay — inactive group 은 미준비 유지로 audio unit 경합 회피.
-        players.forEach { (k, p) ->
-            val isActive = groupOfPlayer[k] == activeGroupId
+        val active = activeGroupId
+        nodes.forEach { (k, stem) ->
+            val isActive = groupOfNode[k] == active
             if (isActive) {
-                if (preparedKeys.add(k)) p.prepareToPlay()
+                if (k !in scheduledKeys) {
+                    val pos = pendingSeekByGroup[active] ?: 0L
+                    scheduleFromOffset(k, stem, pos)
+                }
                 if (playing) {
                     ensureSessionActive()
-                    p.play()
+                    ensureEngineStarted()
+                    if (!stem.playerNode.isPlaying()) stem.playerNode.play()
                 } else {
-                    p.pause()
+                    if (stem.playerNode.isPlaying()) stem.playerNode.pause()
                 }
             } else {
-                p.pause()
+                if (stem.playerNode.isPlaying()) stem.playerNode.pause()
             }
+        }
+        if (active != null && playing) {
+            cycleEpoch(active, pendingSeekByGroup[active] ?: epochOriginMsByGroup[active] ?: 0L)
         }
     }
 
     override fun setVolume(stemId: String, volume: Float) {
+        // 0..2 그대로 보존. >1.0 은 EQ globalGain (dB) 로 부스트 — render path (ffmpeg) 와 동일 amplitude.
         val v = volume.coerceIn(0f, 2f)
         pendingVolumes[stemId] = v
-        // 같은 stemId 가 여러 group 에 있을 수 있어 모두 적용.
-        players.entries
+        nodes.entries
             .filter { (k, _) -> k.endsWith("/$stemId") }
-            .forEach { (_, p) -> p.volume = v }
+            .forEach { (_, stem) -> applyVolume(stem, v) }
+    }
+
+    override fun setRate(rate: Float) {
+        // TimePitch.rate 유효 범위 1/32..32 (Apple doc) 이나 UI 슬라이더와 일관되게 0.5..2.0 클램프.
+        val r = rate.coerceIn(0.5f, 2.0f)
+        if (pendingRate == r) return
+        // rate 변경 시점에 epoch 도 갱신 — estimated position 이 새 rate 로 진행되도록.
+        activeGroupId?.let { g ->
+            val est = estimatedPositionMs(g)
+            cycleEpoch(g, est)
+        }
+        pendingRate = r
+        nodes.values.forEach { it.timePitch.rate = r }
     }
 
     override fun play() {
         if (playing) return
         playing = true
         ensureSessionActive()
+        ensureEngineStarted()
         applyActiveState()
     }
 
     override fun pause() {
         if (!playing) return
+        // pause 시점 위치 캡처 — 다음 play 시 epoch 가 그 지점부터 카운트.
+        activeGroupId?.let { g ->
+            val est = estimatedPositionMs(g)
+            cycleEpoch(g, est)
+            pendingSeekByGroup[g] = est
+        }
         playing = false
-        players.values.forEach { it.pause() }
+        nodes.values.forEach { if (it.playerNode.isPlaying()) it.playerNode.pause() }
     }
 
     override fun seekTo(positionMs: Long) {
-        val seconds = positionMs.coerceAtLeast(0L) / 1000.0
+        val pos = positionMs.coerceAtLeast(0L)
         val active = activeGroupId ?: return
-        pendingSeekByGroup[active] = positionMs.coerceAtLeast(0L)
-        players.forEach { (k, p) ->
-            if (groupOfPlayer[k] != active) return@forEach
-            // drift > 50ms 일 때만 실제 set — UI 가 polling 33ms 마다 호출해도
-            // 자기 위치와 거의 일치하면 무의미 set 으로 인한 audio glitch 회피.
-            // BgmPlaybackSync 의 0.3s 보다 짧은 50ms — stem 은 video 와 정밀 sync 필요.
-            if (kotlin.math.abs(p.currentTime - seconds) > 0.05) {
-                p.currentTime = seconds
+        // 매 33ms tick 마다 호출되어도 자기 위치와 거의 일치하면 reschedule skip — audio glitch 회피.
+        val est = estimatedPositionMs(active)
+        if (kotlin.math.abs(pos - est) <= 50L) return
+        pendingSeekByGroup[active] = pos
+        cycleEpoch(active, pos)
+        val wasPlaying = playing
+        nodes.forEach { (k, stem) ->
+            if (groupOfNode[k] != active) return@forEach
+            scheduleFromOffset(k, stem, pos)
+            if (wasPlaying) {
+                ensureSessionActive()
+                ensureEngineStarted()
+                stem.playerNode.play()
             }
         }
     }
 
     override fun release() {
         loadGen++
-        players.values.forEach {
-            it.delegate = null
-            it.stop()
+        nodes.values.forEach { stem ->
+            runCatching {
+                stem.playerNode.stop()
+                engine.detachNode(stem.playerNode)
+                engine.detachNode(stem.timePitch)
+                engine.detachNode(stem.eq)
+            }
         }
-        players.clear()
-        groupOfPlayer.clear()
+        nodes.clear()
+        groupOfNode.clear()
         urlByKey.clear()
-        preparedKeys.clear()
+        scheduledKeys.clear()
         pendingSeekByGroup.clear()
-        // 모든 임시 파일 회수.
+        epochOriginMsByGroup.clear()
+        epochClockMsByGroup.clear()
+        pendingVolumes.clear()
         tempPathByKey.values.forEach { deleteCachedAudio(it) }
         tempPathByKey.clear()
         playing = false
         activeGroupId = null
-        // session 은 process-lifecycle. 다른 player 가 잡고 있을 수 있으니 setActive(false) 안 함.
+        if (engineStarted) {
+            runCatching { engine.stop() }
+            engineStarted = false
+        }
         sessionActivated = false
         NSNotificationCenter.defaultCenter.removeObserver(interruptionObserver)
         NSNotificationCenter.defaultCenter.removeObserver(routeChangeObserver)

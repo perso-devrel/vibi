@@ -291,6 +291,30 @@ fun TimelineScreen(
         stemMixer.seekTo(offset)
     }
 
+    // video segment 의 speedScale 을 stem mixer 에 그대로 sync — 영상이 1.5x 면 stem 도 1.5x.
+    // 미수정 시 영상만 빨라지고 stem 은 1.0x 로 흘러 즉시 desync. derivedStateOf 로 playbackPositionMs
+    // tick 마다의 재계산은 허용하되 결과(rate) 변화 시점에만 effect 발화 — 33ms polling churn 회피.
+    val activeStemRate by remember(state.segments) {
+        derivedStateOf {
+            val pos = state.playbackPositionMs
+            var accum = 0L
+            var rate = 1f
+            for (seg in state.segments) {
+                if (seg.type != com.vibi.shared.domain.model.SegmentType.VIDEO) continue
+                val end = accum + seg.effectiveDurationMs
+                if (pos < end) {
+                    rate = if (seg.speedScale > 0f) seg.speedScale else 1f
+                    break
+                }
+                accum = end
+            }
+            rate
+        }
+    }
+    LaunchedEffect(activeStemRate) {
+        stemMixer.setRate(activeStemRate)
+    }
+
     // EditAudio (편집·음원) 단계는 자동 segment edit 모드 진입을 하지 않는다 —
     // 사용자가 BGM 작업 + 영상 segment 작업을 자유롭게 섞을 수 있도록. segment 편집은
     // 영상 위 우상단 연필 버튼(onEnterSegmentEditMode) 명시 진입.
@@ -854,6 +878,7 @@ fun TimelineScreen(
                             viewModel.onSetStemVolumeForDirective(directiveId, stemId, volume)
                         },
                         onUpdateBgmVolume = { clipId, v -> viewModel.onUpdateBgmVolume(clipId, v) },
+                        onCommitBgmEditUndo = { viewModel.commitBgmEditUndo() },
                         onApplyBgmSpeed = { clipId, v -> viewModel.onApplyBgmClipSpeed(clipId, v) },
                         // BGM 분리 trigger — Android stub 환경에서는 ViewModel 진입부의 isSupported
                         // 가드가 silent return 처리 (3단 방어 중 2단).
@@ -2429,13 +2454,15 @@ private fun BoxScope.TimelineActionBottomBar(
                             title = "",
                             volume = clip.volumeScale,
                             speed = clip.speedScale,
-                            // BGM 은 토글 슬라이더가 곧 commit (영상 range 처럼 별도 apply 버튼 없음) —
-                            // change/apply 둘 다 같은 VM 콜에 위임. update* 가 즉시 DB write + Flow emit
-                            // 하므로 슬라이더 놓는 순간 timeline 도 따라옴.
+                            // BGM 은 슬라이더가 곧 commit — Apply 버튼 redundant 라 null 로 숨김.
+                            // update* 가 즉시 DB write + Flow emit. undo snapshot 만 드래그 종료 시점에
+                            // commitBgmEditUndo 로 한 번 push (드래그 중 60Hz pushUndoState 폭주 회피).
                             onVolumeChange = { viewModel.onUpdateBgmVolume(clip.id, it) },
                             onSpeedChange = { viewModel.onUpdateBgmSpeed(clip.id, it) },
-                            onApplyVolume = { viewModel.onUpdateBgmVolume(clip.id, it) },
-                            onApplySpeed = { viewModel.onUpdateBgmSpeed(clip.id, it) },
+                            onApplyVolume = null,
+                            onApplySpeed = null,
+                            onVolumeChangeFinished = { viewModel.commitBgmEditUndo() },
+                            onSpeedChangeFinished = { viewModel.commitBgmEditUndo() },
                             // secondary = 복제 (원본 끝에 동일 속성 새 클립 추가)
                             secondaryActionIcon = Icons.Filled.ContentCopy,
                             secondaryActionContentDescription = "BGM 복제",

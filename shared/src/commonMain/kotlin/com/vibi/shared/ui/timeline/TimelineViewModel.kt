@@ -2369,11 +2369,16 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * BGM volume/speed 슬라이더는 드래그 중 60Hz 가까이 호출 — pushUndoState 를 매 호출에 두면
+     * undo 스택이 한 번의 드래그로 수십 entry 폭주, 사용자가 그 만큼 ↶ 눌러야 원위치. 본 함수는
+     * DB write 만 수행하고, undo snapshot 은 호출자가 드래그 종료 시점 ([commitBgmEditUndo]) 또는
+     * 1-shot 액션 직후에 명시 호출.
+     */
     fun onUpdateBgmSpeed(clipId: String, newSpeed: Float) {
         viewModelScope.launch {
             try {
                 updateBgmClip(clipId, speedScale = newSpeed)
-                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(bgmError = e.message)
             }
@@ -2384,11 +2389,15 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             try {
                 updateBgmClip(clipId, volumeScale = newVolume)
-                pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(bgmError = e.message)
             }
         }
+    }
+
+    /** 드래그 종료(Slider onValueChangeFinished) 또는 1-shot mute 토글 직후 호출. undo entry 1 개 push. */
+    fun commitBgmEditUndo() {
+        pushUndoState()
     }
 
     /**

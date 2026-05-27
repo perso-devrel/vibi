@@ -57,8 +57,11 @@ fun EditActionsPanel(
     speed: Float,
     onVolumeChange: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
-    onApplyVolume: (Float) -> Unit,
-    onApplySpeed: (Float) -> Unit,
+    /** null 이면 Apply 버튼 미렌더 — onValueChange 가 곧 commit 인 호출자(예: BGM)용. */
+    onApplyVolume: ((Float) -> Unit)?,
+    onApplySpeed: ((Float) -> Unit)?,
+    onVolumeChangeFinished: (() -> Unit)? = null,
+    onSpeedChangeFinished: (() -> Unit)? = null,
     secondaryActionIcon: ImageVector,
     secondaryActionContentDescription: String,
     onSecondaryAction: () -> Unit,
@@ -214,7 +217,9 @@ fun EditActionsPanel(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text("Volume ${(sliderVal * 100).toInt()}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplyVolume(sliderVal) }) { Text("Apply") }
+                    if (onApplyVolume != null) {
+                        TextButton(onClick = { onApplyVolume(sliderVal) }) { Text("Apply") }
+                    }
                 }
                 Slider(
                     value = sliderVal,
@@ -223,18 +228,16 @@ fun EditActionsPanel(
                         sliderVal = it
                         onVolumeChange(it)
                     },
+                    onValueChangeFinished = onVolumeChangeFinished,
                     modifier = Modifier.fillMaxWidth(),
                     colors = mutedSliderColors(tokens.mutedText),
                 )
             }
         }
 
-        // 속도 — 0.25..4. BGM 호출 측은 onSpeedChange 가 no-op (commit 비용 큼 — applyBgmRangeSpeed
-        // 가 lane re-pack + 다른 BGM 들의 startMs 조정 동반). 그렇다고 onValueChange 를 그대로
-        // no-op 으로 두면 controlled Slider 라 value prop 이 안 바뀌어 슬라이더가 시각적으로
-        // 움직이지 않음 → 사용자 입장에서 "조절이 안됨". local state 로 시각만 즉시 갱신, parent
-        // 의 onSpeedChange 는 그대로 호출해 (live preview 원하는 호출은 그쪽에서 처리), 실제
-        // commit 은 "적용" 의 onApplySpeed(sliderVal) 가 담당.
+        // 속도 — 0.25..4. BGM 은 onSpeedChange 가 즉시 commit (DB + Flow), Apply 버튼 null (호출자가
+        // 미전달 시 미렌더). onSpeedChangeFinished 시점에 commitBgmEditUndo() 가 undo snapshot 1 회.
+        // Video range 등 pending pattern 호출자는 onSpeedChange = pending state 만, Apply 가 실제 commit.
         if (expanded == "speed") {
             var sliderVal by remember(expanded, speed) { mutableStateOf(speed) }
             Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
@@ -245,7 +248,9 @@ fun EditActionsPanel(
                 ) {
                     val pct = (sliderVal * 100).toInt()
                     Text("Speed ${pct}%", style = typo.bodySm, color = tokens.mutedText)
-                    TextButton(onClick = { onApplySpeed(sliderVal) }) { Text("Apply") }
+                    if (onApplySpeed != null) {
+                        TextButton(onClick = { onApplySpeed(sliderVal) }) { Text("Apply") }
+                    }
                 }
                 Slider(
                     value = sliderVal,
@@ -254,6 +259,7 @@ fun EditActionsPanel(
                         sliderVal = it
                         onSpeedChange(it)
                     },
+                    onValueChangeFinished = onSpeedChangeFinished,
                     modifier = Modifier.fillMaxWidth(),
                     colors = mutedSliderColors(tokens.mutedText),
                 )

@@ -30,8 +30,15 @@ interface StemMixerHandle {
     /** active group 만 [play]/[pause]/[seekTo] 영향 받음. null 이면 전부 pause. */
     fun setActiveGroup(groupId: String?)
 
-    /** stem 볼륨 0f~2f. 같은 stemId 가 여러 group 에 있으면 모두 해당. */
+    /** stem 볼륨. 같은 stemId 가 여러 group 에 있으면 모두 해당.
+     *  AVAudioPlayer / ExoPlayer 모두 1.0 하드 클램프 — 미리듣기에서 >1.0 부스트는 불가.
+     *  render path (ffmpeg) 는 0..2 게인을 그대로 적용하므로 UI 슬라이더는 0..2f 유지. */
     fun setVolume(stemId: String, volume: Float)
+
+    /** 재생 속도. video segment.speedScale 와 sync. 1.0 = 원본. AVAudioPlayer.enableRate /
+     *  ExoPlayer.PlaybackParameters 로 pitch-corrected stretch. 같은 stemId 의 모든 group player
+     *  에 적용 (group 별 다른 속도 시나리오 없음 — 현재 활성 directive 의 속도만 의미). */
+    fun setRate(rate: Float)
 
     /** 현재 active group 의 stems 만 동시 재생. */
     fun play()
