@@ -161,12 +161,12 @@ class V3RenderExecutor(
         val ratio = span / 100f
         while (currentCoroutineContext().isActive) {
             if (currentTimeMillis() - startTime > maxPollMs) {
-                throw RuntimeException("렌더링 시간 초과 (15분)")
+                throw RuntimeException("Render timed out (15 min)")
             }
             val status = api.getRenderStatus(jobId)
             when (status.status) {
                 "COMPLETED" -> { onProgress(completedProgress); return }
-                "FAILED" -> throw RuntimeException(status.error ?: "서버 렌더링 실패")
+                "FAILED" -> throw RuntimeException(status.error ?: "Server render failed")
                 else -> {
                     val mapped = pollStartProgress + (status.progress * ratio).toInt()
                     onProgress(mapped.coerceIn(pollStartProgress, pollEndProgress))

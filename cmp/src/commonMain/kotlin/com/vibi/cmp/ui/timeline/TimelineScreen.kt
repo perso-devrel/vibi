@@ -2519,7 +2519,7 @@ private fun BoxScope.TimelineActionBottomBar(
                             onSpeedChangeFinished = { viewModel.commitBgmEditUndo() },
                             // secondary = 복제 (원본 끝에 동일 속성 새 클립 추가)
                             secondaryActionIcon = Icons.Filled.ContentCopy,
-                            secondaryActionContentDescription = "BGM 복제",
+                            secondaryActionContentDescription = "Duplicate BGM",
                             onSecondaryAction = { viewModel.onDuplicateBgmClip(clip.id) },
                             onDelete = { viewModel.onDeleteBgmClip(clip.id) },
                             // tertiary = 배경음 제거 ↔ 원래대로 토글

@@ -130,7 +130,7 @@ fun LoginScreen(
             Spacer(Modifier.height(20.dp))
             // App Store 가이드라인 5.1.1 데이터 수집 고지.
             Text(
-                text = "Sign In 시 이용약관 및 개인정보 처리방침에 동의하는 것으로 간주됩니다.",
+                text = "By signing in, you agree to our Terms of Service and Privacy Policy.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

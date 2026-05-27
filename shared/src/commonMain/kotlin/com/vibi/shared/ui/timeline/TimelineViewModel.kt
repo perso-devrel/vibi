@@ -2136,11 +2136,11 @@ class TimelineViewModel constructor(
         val state = _uiState.value
         val text = state.pendingOverlayText.trim()
         if (text.isEmpty()) {
-            _uiState.value = state.copy(textOverlayError = "Text는 비어있을 수 없음")
+            _uiState.value = state.copy(textOverlayError = "Text cannot be empty")
             return
         }
         if (state.pendingOverlayEndMs <= state.pendingOverlayStartMs) {
-            _uiState.value = state.copy(textOverlayError = "End는 Start보다 커야 함")
+            _uiState.value = state.copy(textOverlayError = "End must be greater than Start")
             return
         }
         viewModelScope.launch {
@@ -2339,7 +2339,7 @@ class TimelineViewModel constructor(
             } catch (e: IllegalArgumentException) {
                 _uiState.value = _uiState.value.copy(
                     isAddingBgm = false,
-                    bgmError = "BGM을 추가하지 못함"
+                    bgmError = "Failed to add BGM"
                 )
             }
         }
@@ -2414,7 +2414,7 @@ class TimelineViewModel constructor(
                 pushUndoState()
             } catch (e: IllegalArgumentException) {
                 _uiState.update {
-                    it.copy(bgmTrimRequest = null, bgmError = "BGM을 추가하지 못함")
+                    it.copy(bgmTrimRequest = null, bgmError = "Failed to add BGM")
                 }
             }
         }
@@ -2656,7 +2656,7 @@ class TimelineViewModel constructor(
                             if (voiceStem == null) {
                                 setRemovalProgress(
                                     clipId,
-                                    BgmRemovalProgress.Failed("voice stem 없음"),
+                                    BgmRemovalProgress.Failed("voice stem missing"),
                                 )
                                 return@collect
                             }
