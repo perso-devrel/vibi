@@ -503,22 +503,28 @@ fun TimelineScreen(
             val sharing = state.shareStatus is ShareStatus.RUNNING
             val sharingPercent = (state.shareStatus as? ShareStatus.RUNNING)?.progress ?: 0
             var exportSheetOpen by remember { mutableStateOf(false) }
-            // 내보내기 진입점 — 텍스트 라벨 버튼. 진행 중이면 라벨 자리에 progress percent 노출.
-            OutlinedButton(
+            // 내보내기 진입점 — accent 배경 CTA. 분리 진행 중엔 버튼만 비활성(라벨 "Export" 유지),
+            // 저장·공유 중엔 라벨 자리에 진행 % 노출.
+            Button(
                 enabled = !sharing && !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
                 onClick = { exportSheetOpen = true },
                 shape = VibiShape.lg,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = tokens.accent,
+                    contentColor = tokens.backgroundPrimary,
+                    disabledContainerColor = tokens.chipBg,
+                    disabledContentColor = tokens.chipContentDisabled,
+                ),
+                elevation = null,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.sm, vertical = 0.dp),
                 modifier = Modifier.height(VibiSpacing.xxl),
             ) {
                 val label = when {
                     saving -> "${savingPercent}%"
                     sharing -> "${sharingPercent}%"
-                    state.audioSeparation?.step == AudioSeparationStep.PROCESSING ||
-                        state.processingSeparations.isNotEmpty() -> "Separating…"
                     else -> "Export"
                 }
-                Text(label, style = typo.bodySm, color = tokens.onBackgroundPrimary)
+                Text(label, style = typo.bodySm)
             }
             if (exportSheetOpen) {
                 ExportOptionsSheet(
@@ -1255,6 +1261,38 @@ private object TimelineBarSpec {
     val RulerLabelTargetSpacing = 80.dp
     val RulerMajorTickHeight = 6.dp
     val RulerMinorTickHeight = 3.dp
+    /** 진행 중(음원분리/BGM 제거) 구간 위 중앙 로딩 스피너 지름. */
+    val ProcessingSpinnerSize = 16.dp
+    /** 스피너 링 두께. */
+    val ProcessingSpinnerStroke = 2.dp
+    /** 구간 폭이 이보다 좁으면 스피너 생략 (겹침/넘침 방지) — 색만 유지. */
+    val ProcessingSpinnerMinWidth = 22.dp
+    /** BGM 컬러 블록용 backing 원 패딩 — 지름 = Size + Pad. */
+    val ProcessingSpinnerBackingPad = 8.dp
+}
+
+/**
+ * 진행 중(음원분리/BGM 배경음 제거) 구간 위 중앙 무한 회전 스피너. 기존 fill/scrim 색 위에 얹어
+ * "처리 중" 을 모션으로 표시. [backing] 은 BGM 처럼 채도 있는 블록 위에 올릴 때만 지정 —
+ * 스피너 뒤에 대비용 원을 깐다 (중립 파형 위인 음원분리는 불필요).
+ */
+@Composable
+private fun ProcessingSpinner(color: Color, backing: Color? = null) {
+    Box(contentAlignment = Alignment.Center) {
+        if (backing != null) {
+            Box(
+                modifier = Modifier
+                    .size(TimelineBarSpec.ProcessingSpinnerSize + TimelineBarSpec.ProcessingSpinnerBackingPad)
+                    .clip(CircleShape)
+                    .background(backing)
+            )
+        }
+        CircularProgressIndicator(
+            modifier = Modifier.size(TimelineBarSpec.ProcessingSpinnerSize),
+            color = color,
+            strokeWidth = TimelineBarSpec.ProcessingSpinnerStroke,
+        )
+    }
 }
 
 /**
@@ -1651,7 +1689,8 @@ private fun UnifiedTimelineBar(
                 }
             }
 
-            // 진행 중 음원분리 overlay — 반투명 fill 단독 (테두리/진행 막대 없음, 사용자 요청).
+            // 진행 중 음원분리 overlay — 반투명 fill + 중앙 무한 회전 스피너 (사용자 요청). 좁은 구간은
+            // 스피너 생략하고 fill 만 (넘침 방지).
             if (totalMs > 0L) {
                 val procFillHeight = TimelineBarSpec.WaveformHeight
                 processingSeparations.forEach { p ->
@@ -1666,8 +1705,13 @@ private fun UnifiedTimelineBar(
                             .width(pWidthDp)
                             .height(procFillHeight)
                             .align(Alignment.CenterStart)
-                            .background(accent.copy(alpha = 0.18f))
-                    )
+                            .background(accent.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (pWidthDp >= TimelineBarSpec.ProcessingSpinnerMinWidth) {
+                            ProcessingSpinner(color = accent)
+                        }
+                    }
                 }
             }
 
@@ -2935,14 +2979,25 @@ private fun BgmClipBlock(
                     .background(accent)
             )
         }
-        // 음원분리(배경음 제거) 진행 중인 클립 — 위에 옅은 scrim 을 덮어 "처리 중" 시각 시그널.
+        // 음원분리(배경음 제거) 진행 중인 클립 — 위에 옅은 scrim + 중앙 무한 회전 스피너로 "처리 중" 표시.
         // 재선택/트림은 호출부에서 막지만 위치 드래그는 유지되므로 scrim 은 가볍게(완전 잠금 인상 회피).
+        // 채도 있는 팔레트 블록 위 가시성 확보를 위해 스피너 뒤에 backgroundPrimary backing 을 깐다
+        // (라이트/다크 모두 accent 와 반대 명도 → 흰-위-흰 안보임 회피). 좁은 클립은 스피너 생략.
         if (locked) {
+            val tokens = LocalVibiColors.current
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .background(markerColor.copy(alpha = 0.22f))
-            )
+                    .background(markerColor.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (widthDp >= TimelineBarSpec.ProcessingSpinnerMinWidth) {
+                    ProcessingSpinner(
+                        color = accent,
+                        backing = tokens.backgroundPrimary.copy(alpha = 0.85f),
+                    )
+                }
+            }
         }
     }
     // (c) 트림 핸들 — 선택된 클립의 좌·우 엣지. bgmRangeMode 면 미렌더 (range 핸들과 충돌 방지).
