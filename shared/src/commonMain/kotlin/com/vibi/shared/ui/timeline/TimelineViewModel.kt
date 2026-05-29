@@ -1413,14 +1413,21 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 영상편집 모드: 전체 timeline [0, totalMs] — sliceGlobalRange 가 다중 segment 자동 처리.
-     * 음원분리 모드: directive-free interval 안으로 clamp.
+     * 이동/리사이즈 clamp 경계.
+     * - 영상편집 모드: *진행 중* 음원분리 구간만 침범 금지(완료 directive 는 인접 영상과 함께 편집 가능).
+     *   현재 선택을 포함하는, 분리중 구간으로 막히지 않은 최대 연속 구간으로 clamp — 초기 선택 규칙
+     *   ([onSelectSegmentInEdit] 의 excludeCompletedDirectives=false)과 동일. sliceGlobalRange 가
+     *   다중 segment 자동 처리.
+     * - 음원분리 모드: directive-free interval(완료 directive + 진행 중 모두 제외) 안으로 clamp.
      */
     private fun rangeBoundsForCurrentMode(): Pair<Long, Long> {
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(0L)
         if (state.isSegmentEditMode) {
-            return 0L to total
+            val frees = freeIntervalsInSegment(0L, total, excludeCompletedDirectives = false)
+            val containing = frees.firstOrNull { state.pendingRangeStartMs in it }
+                ?: frees.firstOrNull { state.pendingRangeEndMs in it }
+            return (containing?.first ?: 0L) to (containing?.last ?: total)
         }
         val freeFromEnd = freeIntervalContaining(state.pendingRangeEndMs)
         return (freeFromEnd?.first ?: 0L) to (freeFromEnd?.last ?: total)
