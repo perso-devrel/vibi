@@ -685,6 +685,12 @@ fun TimelineScreen(
                         ProcessingSeparationOverlay(start, end, p.progress)
                     }
             }
+            // 배경음 제거(음원분리) 진행 중인 BGM 클립 id — 해당 클립은 timeline 에서 선택/드래그/트림 잠금.
+            val separatingBgmClipIds = remember(state.bgmBackgroundRemovalProgress) {
+                state.bgmBackgroundRemovalProgress
+                    .filterValues { it is com.vibi.shared.ui.timeline.BgmRemovalProgress.Processing }
+                    .keys
+            }
             // 단일 통합 타임라인 바 — 재생/구간선택/segment·directive + BGM lane 까지 한 컴포넌트.
             UnifiedTimelineBar(
                 segments = state.segments,
@@ -710,12 +716,16 @@ fun TimelineScreen(
                 primarySourceDurationMs = state.segments.firstOrNull { it.sourceUri == state.videoUri }
                     ?.durationMs ?: state.videoDurationMs,
                 processingSeparations = processingOverlays,
-                onSegmentTap = { viewModel.onSelectSegmentInEdit(it) },
-                onWaveformTapInNeutral = {
+                // 탭 지점 ms 를 함께 넘겨, 영상 다듬기 모드에서도 그 점이 속한 free 구간(음원분리 진행 중
+                // 제외)으로 선택을 좁힌다 — 분리중 구간 위 탭은 무동작. 완료된 directive 는 free 에 포함돼
+                // 인접 영상과 함께 선택. 범위 선택 흐름과 동일 규칙(freeIntervalsInSegment) 공유.
+                onSegmentTap = { segId, tapMs -> viewModel.onSelectSegmentInEdit(segId, tapMs) },
+                onWaveformTapInNeutral = { tapMs ->
                     val segId = state.segments.firstOrNull {
                         it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
                     }?.id
-                    if (segId != null) viewModel.onEnterSegmentEditMode(segId)
+                    // 진입(첫 클릭)도 탭 지점 free 구간으로 스냅 — 분리중 구간 제외가 첫 클릭부터 적용되게.
+                    if (segId != null) viewModel.onEnterSegmentEditMode(segId, tapMs = tapMs)
                 },
                 // directive 탭 시 AudioSeparationSheet 띄우지 않음 — 편집은 SoundDeck 의 stem 카드에서 처리.
                 onDirectiveTap = {},
@@ -729,8 +739,9 @@ fun TimelineScreen(
                 bgmLaneByClipId = bgmDisplayLayout.laneByClipId,
                 bgmDisplayLaneCount = bgmDisplayLayout.laneCount,
                 selectedBgmClipId = state.selectedBgmClipId,
+                separatingBgmClipIds = separatingBgmClipIds,
                 // BGM 블록 탭은 항상 허용 — 모드별로 콜백이 분기됨 (segment edit 면 range 스냅, 그 외엔
-                // 단순 selection → trim 핸들 노출).
+                // 단순 selection → trim 핸들 노출). 단, 분리 진행 중인 클립은 위 set 으로 per-clip 잠금.
                 bgmTapEnabled = true,
                 // segment edit (영상 다듬기) 모드에선 BGM 위치/lane drag + lane 수 조절 pill 모두 잠금.
                 // 영상 편집 중 BGM 이 같이 따라 움직이면 사용자 의도와 어긋나는 사고가 잦아, 다듬기
@@ -1330,9 +1341,9 @@ private fun UnifiedTimelineBar(
     primarySourceDurationMs: Long = 0L,
     /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
     processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
-    onSegmentTap: (String) -> Unit = {},
+    onSegmentTap: (segmentId: String, tapMs: Long) -> Unit = { _, _ -> },
     /** Neutral (range/segment edit 모드 아님) 상태에서 영상 파형 탭 — BGM 클립 탭과 같은 의미로 영상 다듬기 진입. */
-    onWaveformTapInNeutral: () -> Unit = {},
+    onWaveformTapInNeutral: (tapMs: Long) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
     onRangeStartChange: (Long) -> Unit = {},
@@ -1352,6 +1363,8 @@ private fun UnifiedTimelineBar(
     /** 현재 사용 중인 lane 수 (= max(lane) + 1). region 높이 계산 입력. */
     bgmDisplayLaneCount: Int = 1,
     selectedBgmClipId: String? = null,
+    /** 배경음 제거(음원분리) 진행 중인 BGM 클립 id — 해당 클립은 선택/드래그/트림 잠금 + scrim 표시. */
+    separatingBgmClipIds: Set<String> = emptySet(),
     bgmTapEnabled: Boolean = true,
     /** false 면 BGM clip 의 위치 drag + 트림 핸들 disable. 탭(선택)은 분리 — `bgmTapEnabled` 가 담당.
      *  segment edit (영상 다듬기) 모드에서 BGM 트랙을 read-only 로 잠그기 위함. */
@@ -1418,7 +1431,7 @@ private fun UnifiedTimelineBar(
                         val nextAcc = acc + seg.effectiveDurationMs
                         if (ms in acc until nextAcc) {
                             if (seg.type == com.vibi.shared.domain.model.SegmentType.VIDEO) {
-                                onSegmentTap(seg.id)
+                                onSegmentTap(seg.id, ms)
                             }
                             return@detectTapGestures
                         }
@@ -1427,9 +1440,10 @@ private fun UnifiedTimelineBar(
                     return@detectTapGestures
                 }
 
-                // 음원분리: directive / 진행 중 분리 위 ignore, 선택 영역 재탭 → toggle, 그 외 free interval → snap.
-                // committed directive + 진행 중 잡 (processingSeparations) 모두 동일하게 점유로 취급해
-                // 사용자가 분리 중인 구간을 탭/range 로 다시 잡지 못한다.
+                // 음원분리 *추가* 흐름: 진행 중(processing) + 완료된 directive 모두 점유로 취급해 그 위
+                // 탭/range 를 막는다 (이미 분리됐거나 분리 중인 구간 재분리 방지). 그 외 free interval → snap,
+                // 현재 선택 영역 재탭 → toggle. (영상 다듬기 모드는 if(showSegments) 분기에서 별도 처리 —
+                // 완료 구간은 선택 허용.)
                 data class OccupiedRange(val start: Long, val end: Long)
                 val occupied = (
                     directives.map { OccupiedRange(it.rangeStartMs, it.rangeEndMs) } +
@@ -1457,7 +1471,11 @@ private fun UnifiedTimelineBar(
     } else if (totalMs > 0L) {
         // Neutral 상태 — 영상 파형 탭 시 영상 다듬기 진입 (BGM 클립 탭과 같은 진입 의미).
         Modifier.pointerInput(totalMs) {
-            detectTapGestures(onTap = { onWaveformTapInNeutral() })
+            detectTapGestures(onTap = { offset ->
+                val w = size.width.toFloat()
+                val ms = if (w > 0f) ((offset.x / w).coerceIn(0f, 1f) * totalMs).toLong() else 0L
+                onWaveformTapInNeutral(ms)
+            })
         }
     } else Modifier
 
@@ -1842,8 +1860,10 @@ private fun UnifiedTimelineBar(
                             bgmRangeMode = bgmRangeMode,
                             accent = accent,
                             markerColor = markerColor,
-                            bgmTapEnabled = bgmTapEnabled,
+                            // 분리 진행 중인 클립은 재선택(→트림)만 잠금 — 위치 드래그는 유지(막지 않음).
+                            bgmTapEnabled = bgmTapEnabled && clip.id !in separatingBgmClipIds,
                             bgmDragEnabled = bgmDragEnabled,
+                            locked = clip.id in separatingBgmClipIds,
                             onBgmSelectClip = onBgmSelectClip,
                             onBgmUpdateStart = onBgmUpdateStart,
                             onBgmUpdateTrim = onBgmUpdateTrim,
@@ -2676,6 +2696,9 @@ private fun BgmClipBlock(
     markerColor: Color,
     bgmTapEnabled: Boolean,
     bgmDragEnabled: Boolean,
+    /** 음원분리 진행 중 — true 면 위에 옅은 scrim 을 덮어 "처리 중" 시그널. 재선택/트림은 호출부에서
+     *  [bgmTapEnabled] = false 로 막지만, 위치 드래그([bgmDragEnabled])는 유지한다. */
+    locked: Boolean,
     onBgmSelectClip: (String) -> Unit,
     onBgmUpdateStart: (String, Long) -> Unit,
     onBgmUpdateTrim: (clipId: String, sourceTrimStartMs: Long, sourceTrimEndMs: Long, newStartMs: Long?) -> Unit,
@@ -2910,6 +2933,15 @@ private fun BgmClipBlock(
                     .height(TimelineBarSpec.RangeBorderThickness)
                     .align(Alignment.BottomStart)
                     .background(accent)
+            )
+        }
+        // 음원분리(배경음 제거) 진행 중인 클립 — 위에 옅은 scrim 을 덮어 "처리 중" 시각 시그널.
+        // 재선택/트림은 호출부에서 막지만 위치 드래그는 유지되므로 scrim 은 가볍게(완전 잠금 인상 회피).
+        if (locked) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(markerColor.copy(alpha = 0.22f))
             )
         }
     }

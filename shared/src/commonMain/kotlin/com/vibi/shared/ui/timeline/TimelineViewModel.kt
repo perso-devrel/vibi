@@ -1021,22 +1021,29 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 분리 directive 또는 진행 중인 분리 잡 (processingSeparations) 과 겹치지 않는 자유 구간들 —
-     * segment 영역 [segStart, segEnd] 안에서. 빈 리스트면 segment 전체가 이미 점유됨 (range 진입 X).
+     * 점유 구간과 겹치지 않는 자유 구간들 — segment 영역 [segStart, segEnd] 안에서. 빈 리스트면 전체 점유.
      *
-     * 진행 중 잡도 occupied 로 취급해야 사용자가 같은 구간을 중복 분리 요청하거나 진행 중 구간 위로
-     * range 슬라이더를 겹쳐 잡지 못한다.
+     * 점유 기준은 호출 맥락에 따라 다르다 ([excludeCompletedDirectives]):
+     *  - 음원분리 *추가* 흐름(default true): 진행 중 잡 + 완료 directive 모두 점유 — 이미 분리됐거나 분리
+     *    중인 구간을 다시 분리 대상으로 잡지 못하게.
+     *  - 영상 다듬기 흐름(false): 진행 중 잡만 점유 — 완료된 분리 구간은 인접 영상과 함께 선택/편집 가능.
      */
-    private fun freeIntervalsInSegment(segStart: Long, segEnd: Long): List<LongRange> {
-        val state = _uiState.value
-        val committed = state.separationDirectives.map { it.rangeStartMs..it.rangeEndMs }
+    private fun freeIntervalsInSegment(
+        segStart: Long,
+        segEnd: Long,
+        processing: List<ProcessingSeparation> = _uiState.value.processingSeparations,
+        excludeCompletedDirectives: Boolean = true,
+    ): List<LongRange> {
         // rangeStart/End 가 null 이면 전체 영상 분리 — segStart..segEnd 전체를 점유.
-        val processing = state.processingSeparations.map { p ->
+        val processingRanges = processing.map { p ->
             val s = p.rangeStartMs ?: segStart
             val e = p.rangeEndMs ?: segEnd
             s..e
         }
-        val occupied = (committed + processing)
+        val committedRanges = if (excludeCompletedDirectives)
+            _uiState.value.separationDirectives.map { it.rangeStartMs..it.rangeEndMs }
+        else emptyList()
+        val occupied = (processingRanges + committedRanges)
             .filter { it.last > segStart && it.first < segEnd }
             .sortedBy { it.first }
         val free = mutableListOf<LongRange>()
@@ -1095,15 +1102,24 @@ class TimelineViewModel constructor(
     fun onEnterSegmentEditMode(
         segmentId: String,
         targets: Set<EditTarget> = setOf(EditTarget.Video),
+        tapMs: Long? = null,
     ) {
         val state = _uiState.value
         val seg = state.segments.firstOrNull { it.id == segmentId } ?: return
         if (seg.type != SegmentType.VIDEO) return
         val segStart = segmentStartOffsetMs(state.segments, seg.id)
         val segEnd = segStart + seg.effectiveDurationMs
-        // segment 편집은 directive 영역과 무관 — 전체 segment 를 default 로.
+        // 탭으로 진입하면 첫 클릭부터 그 지점의 free 구간(음원분리 *진행 중* 제외, 완료 directive 포함)으로
+        // 선택을 좁힌다 — 진입 시 세그먼트 전체(분리중 포함)가 잡히던 문제 해소. 탭 지점이 분리중이거나
+        // free 구간을 못 찾으면 첫 free 구간, 그것도 없으면 segment 전체. tapMs 없으면(비-탭 진입) 전체.
         // 진입 시 원본 영상으로 강제 reset — 사용자는 편집 결과를 원본 영상에서 확인.
         // 진입 시 음성분리/자막더빙 sheet 들도 같이 닫음 — 영상편집 중엔 노출 금지.
+        val range = if (tapMs != null) {
+            val frees = freeIntervalsInSegment(segStart, segEnd, excludeCompletedDirectives = false)
+            frees.firstOrNull { tapMs in it } ?: frees.firstOrNull() ?: (segStart..segEnd)
+        } else {
+            segStart..segEnd
+        }
         _uiState.value = state.copy(
             isRangeSelecting = true,
             isSegmentEditMode = true,
@@ -1114,8 +1130,8 @@ class TimelineViewModel constructor(
             // 카드 highlight 또는 잠재적 BGM 하단바가 영상 모드와 동시에 잡힘.
             selectedBgmClipId = null,
             selectedTextOverlayId = null,
-            pendingRangeStartMs = segStart,
-            pendingRangeEndMs = segEnd,
+            pendingRangeStartMs = range.first,
+            pendingRangeEndMs = range.last,
             showRangeActionSheet = false,
             pendingRangeVolume = seg.volumeScale,
             pendingRangeSpeed = seg.speedScale,
@@ -1135,12 +1151,29 @@ class TimelineViewModel constructor(
      * 사용자 탭 진입점. 같은 segment 재탭 → 선택 해제 토글. 다른 id → 그 segment 로 select.
      * 시스템(편집 후 자동 reselect) 용 path 는 [selectSegmentInEditInternal] 직접 호출 — 토글 로직 우회.
      */
-    fun onSelectSegmentInEdit(segmentId: String) {
+    fun onSelectSegmentInEdit(segmentId: String, tapMs: Long? = null) {
         val snapshot = _uiState.value
         if (!snapshot.isSegmentEditMode) return
-        // 같은 segment 재탭이면서 range 가 선택돼 있으면 deselect 토글.
+        val seg = snapshot.segments.firstOrNull { it.id == segmentId } ?: return
+        if (seg.type != SegmentType.VIDEO) return
+        val segStart = segmentStartOffsetMs(snapshot.segments, seg.id)
+        val segEnd = segStart + seg.effectiveDurationMs
+        // 탭 지점([tapMs])이 주어지면 그 점이 속한 free 구간(음원분리 *진행 중* 제외)으로 선택을 좁힌다.
+        // 완료된 directive 는 free 에 포함되므로 인접 영상과 함께 선택됨. 진행 중 구간 위 탭이면 무동작
+        // (선택 안 함). tapMs 없으면(시스템 호출 등) segment 전체.
+        val target: LongRange = if (tapMs != null) {
+            // 영상 다듬기 — 진행 중 분리만 제외, 완료 directive 는 선택 가능(free 에 포함).
+            freeIntervalsInSegment(
+                segStart, segEnd, snapshot.processingSeparations,
+                excludeCompletedDirectives = false,
+            ).firstOrNull { tapMs in it } ?: return
+        } else {
+            segStart..segEnd
+        }
+        // 같은 구간 재탭 → deselect 토글.
         if (snapshot.selectedSegmentId == segmentId &&
-            snapshot.pendingRangeEndMs > snapshot.pendingRangeStartMs
+            snapshot.pendingRangeStartMs == target.first &&
+            snapshot.pendingRangeEndMs == target.last
         ) {
             // atomic CAS — Room observe Flow 가 intermediate state 를 emit 하는 윈도우에 click 핸들러의
             // 비-atomic write 가 stale segments 를 박아 넣어 영상편집 결과가 원복되던 race 차단.
@@ -1155,7 +1188,7 @@ class TimelineViewModel constructor(
             }
             return
         }
-        selectSegmentInEditInternal(segmentId)
+        selectSegmentInEditAtRange(segmentId, target.first, target.last)
     }
 
     /**
@@ -1182,6 +1215,32 @@ class TimelineViewModel constructor(
                 pendingRangeSpeed = seg.speedScale,
                 playbackPositionMs = segStart,
                 // 영상 segment 탭 → editTargets 를 Video 로 (BGM 모드였다면 자동 해제).
+                editTargets = setOf(EditTarget.Video),
+            )
+        }
+    }
+
+    /**
+     * 명시적 range 로 segment select — [onSelectSegmentInEdit] 가 탭 지점의 free 구간으로 좁힌 범위를
+     * 넘긴다. range 는 atomic update 안에서 최신 segment bounds 로 clamp (stale snapshot 방어).
+     */
+    private fun selectSegmentInEditAtRange(segmentId: String, rangeStart: Long, rangeEnd: Long) {
+        _uiState.update { state ->
+            if (!state.isSegmentEditMode) return@update state
+            val seg = state.segments.firstOrNull { it.id == segmentId } ?: return@update state
+            if (seg.type != SegmentType.VIDEO) return@update state
+            val segStart = segmentStartOffsetMs(state.segments, seg.id)
+            val segEnd = segStart + seg.effectiveDurationMs
+            val rs = rangeStart.coerceIn(segStart, segEnd)
+            val re = rangeEnd.coerceIn(rs, segEnd)
+            state.copy(
+                rangeTargetSegmentId = seg.id,
+                selectedSegmentId = seg.id,
+                pendingRangeStartMs = rs,
+                pendingRangeEndMs = re,
+                pendingRangeVolume = seg.volumeScale,
+                pendingRangeSpeed = seg.speedScale,
+                playbackPositionMs = rs,
                 editTargets = setOf(EditTarget.Video),
             )
         }
@@ -2619,6 +2678,11 @@ class TimelineViewModel constructor(
     private fun startBgmBackgroundRemoval(clipId: String) {
         val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return
         setRemovalProgress(clipId, BgmRemovalProgress.Processing)
+        // 분리 시작 시 해당 BGM 선택 해제 — 처리 중엔 재선택/트림 불가(위치 드래그는 유지). 선택된 채
+        // 멈춰 trim 핸들이 떠 있던 것 방지.
+        _uiState.update { st ->
+            if (st.selectedBgmClipId == clipId) st.copy(selectedBgmClipId = null) else st
+        }
         val originalUri = clip.sourceUri
         viewModelScope.launch {
             val jobResult = startAudioSeparation(
@@ -2815,6 +2879,8 @@ class TimelineViewModel constructor(
             ),
             showAudioSeparationSheet = true,
             isPlaying = false,
+            // 분리 시작 시 해당 BGM 선택 해제 — 선택된 채 멈춰 trim 핸들이 떠 있던 것 방지.
+            selectedBgmClipId = null,
         )
         bgmSeparationJob?.cancel()
         bgmSeparationJob = viewModelScope.launch {
