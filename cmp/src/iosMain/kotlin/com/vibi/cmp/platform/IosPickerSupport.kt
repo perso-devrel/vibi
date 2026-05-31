@@ -77,11 +77,17 @@ internal fun rootHostViewController(): UIViewController? =
  * @param srcUrl picker 가 넘긴 임시 URL (loadFileRepresentation/documentPicker 콜백 인자)
  * @param relDir Documents 아래 서브디렉터리 ("picker_media" / "picked_audio" 등)
  * @param fallbackExt srcUrl.lastPathComponent 가 null 일 때 생성할 파일명의 확장자 ("mov"/"m4a")
+ * @param move true 면 복사 대신 이동(rename). **우리가 소유한 임시 파일에만 사용** —
+ *   PHPicker `loadFileRepresentation` 의 임시 파일은 콜백 종료 후 시스템이 삭제하므로 move 가
+ *   안전하고, 같은 볼륨이면 rename(O(1)) 이라 대용량 영상 전체 바이트 복사(O(파일크기)) 비용을 없앤다.
+ *   cross-volume 면 move 가 내부적으로 copy+unlink 라 copy 와 동일 — 절대 더 느리지 않다. move 실패 시
+ *   copy 로 폴백. **security-scoped 사용자 파일(documentPicker)** 은 소유권이 없어 move 금지(기본 false).
  */
 internal fun copyToDocumentsRelative(
     srcUrl: NSURL,
     relDir: String,
     fallbackExt: String,
+    move: Boolean = false,
 ): String? {
     val docs = NSSearchPathForDirectoriesInDomains(
         NSDocumentDirectory, NSUserDomainMask, true
@@ -99,10 +105,14 @@ internal fun copyToDocumentsRelative(
 
     NSFileManager.defaultManager.removeItemAtPath(destPath, error = null)
 
-    val ok = NSFileManager.defaultManager.copyItemAtURL(
-        srcURL = srcUrl,
-        toURL = NSURL.fileURLWithPath(destPath),
-        error = null,
-    )
+    val fm = NSFileManager.defaultManager
+    val destUrl = NSURL.fileURLWithPath(destPath)
+    val ok = if (move) {
+        // move 우선 — 실패하면(예: cross-volume edge case) copy 로 폴백해 정확성 보장.
+        fm.moveItemAtURL(srcURL = srcUrl, toURL = destUrl, error = null) ||
+            fm.copyItemAtURL(srcURL = srcUrl, toURL = destUrl, error = null)
+    } else {
+        fm.copyItemAtURL(srcURL = srcUrl, toURL = destUrl, error = null)
+    }
     return if (ok) "$relDir/$name" else null
 }

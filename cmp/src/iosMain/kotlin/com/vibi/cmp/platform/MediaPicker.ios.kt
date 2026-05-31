@@ -98,8 +98,11 @@ private fun presentPhPicker(
                     if (error != null) println("[Picker] loadFileRepresentation error=$error")
                     return@loadFileRepresentationForTypeIdentifier
                 }
-                // PHPicker file URL 은 콜백 종료 후 삭제됨 — 동기 복사 필수.
-                val permanentPath = copyToDocumentsRelative(temp, relDir = "picker_media", fallbackExt = "mov")
+                // PHPicker file URL 은 콜백 종료 후 삭제됨 — 동기 이동 필수. 시스템이 곧 지울
+                // 임시 파일이라 우리가 소유권을 가져오는 move 가 안전하고, 같은 볼륨이면 rename(O(1))
+                // 이라 대용량 영상 전체 복사 비용이 사라져 편집 화면 진입이 빨라짐(실패 시 copy 폴백).
+                val permanentPath =
+                    copyToDocumentsRelative(temp, relDir = "picker_media", fallbackExt = "mov", move = true)
                 if (permanentPath != null) {
                     scope.launch { onPicked(permanentPath) }
                 } else {
