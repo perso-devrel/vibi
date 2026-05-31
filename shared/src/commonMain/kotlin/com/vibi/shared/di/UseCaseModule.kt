@@ -6,6 +6,7 @@ import com.vibi.shared.domain.usecase.draft.ExpireOldDraftsUseCase
 import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.ValidateVideoUseCase
+import com.vibi.shared.domain.usecase.save.ExportRenderCache
 import com.vibi.shared.domain.usecase.save.SaveAllVariantsUseCase
 import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
@@ -28,6 +29,8 @@ val useCaseModule = module {
     factoryOf(::CreateProjectWithInitialVideoSegmentUseCase)
     factoryOf(::SetProjectFrameUseCase)
     factory { ExpireOldDraftsUseCase(get()) }
+    // 단일 인스턴스 — 저장/공유가 같은 캐시를 공유해야 중복 렌더를 막을 수 있다.
+    single { ExportRenderCache() }
     factory {
         SaveAllVariantsUseCase(
             platformAdapter = get(),
@@ -36,6 +39,7 @@ val useCaseModule = module {
             segmentRepository = get(),
             bgmClipRepository = get(),
             separationDirectiveRepository = get(),
+            renderCache = get(),
         )
     }
     factoryOf(::StartAudioSeparationUseCase)

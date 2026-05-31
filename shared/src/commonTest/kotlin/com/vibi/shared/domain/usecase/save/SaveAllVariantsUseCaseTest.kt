@@ -62,6 +62,52 @@ class SaveAllVariantsUseCaseTest {
     }
 
     @Test
+    fun `편집 동일 + 파일 존재 시 캐시 재사용 — render 1회만`() = runTest {
+        // 공유→저장(또는 반복 export) 중복 렌더 제거의 핵심: 같은 편집 상태로 두 번 호출 시 1회만 렌더.
+        val segment = videoSegment(volumeScale = 0.5f)
+        val adapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4")
+        val useCase = useCaseWith(
+            project = projectFor(segment),
+            segments = listOf(segment),
+            adapter = adapter,
+            renderCache = ExportRenderCache(pathExists = { true }),
+        )
+
+        useCase(projectId = "p1", onProgress = { })
+        useCase(projectId = "p1", onProgress = { })
+
+        assertEquals(1, adapter.callCount, "동일 편집 상태 → 두 번째는 캐시 재사용, render 1회만")
+    }
+
+    @Test
+    fun `캐시 산출물 파일이 사라지면 재렌더`() = runTest {
+        val segment = videoSegment(volumeScale = 0.5f)
+        val adapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4")
+        val useCase = useCaseWith(
+            project = projectFor(segment),
+            segments = listOf(segment),
+            adapter = adapter,
+            renderCache = ExportRenderCache(pathExists = { false }),
+        )
+
+        useCase(projectId = "p1", onProgress = { })
+        useCase(projectId = "p1", onProgress = { })
+
+        assertEquals(2, adapter.callCount, "파일이 사라지면 캐시 무효 → 재렌더")
+    }
+
+    @Test
+    fun `exportSignature 는 편집 변경 시 달라지고 동일 상태엔 같다`() {
+        val seg = videoSegment(volumeScale = 0.5f)
+        val proj = projectFor(seg)
+        val sig = exportSignature(proj, listOf(seg), emptyList(), emptyList())
+        val sigSame = exportSignature(proj, listOf(seg), emptyList(), emptyList())
+        val sigDiff = exportSignature(proj, listOf(seg.copy(volumeScale = 0.8f)), emptyList(), emptyList())
+        assertEquals(sig, sigSame, "동일 상태 → 동일 시그니처")
+        assertTrue(sig != sigDiff, "볼륨 변경 → 시그니처 달라야")
+    }
+
+    @Test
     fun `trimEndMs equals durationMs 는 untrimmed sentinel 로 인정 — bypass 진행`() = runTest {
         // Segment.hasNonTrivialEdits 의 SSOT 헬퍼가 trimEndMs == durationMs 를 미트림으로 본다.
         val segment = videoSegment(durationMs = 10_000L, trimEndMs = 10_000L)
@@ -218,6 +264,7 @@ class SaveAllVariantsUseCaseTest {
         textOverlays: List<TextOverlay> = emptyList(),
         adapter: FakeExportPlatformAdapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4"),
         gallerySaver: FakeGallerySaver = FakeGallerySaver(),
+        renderCache: ExportRenderCache = ExportRenderCache(pathExists = { false }),
     ): SaveAllVariantsUseCase = SaveAllVariantsUseCase(
         platformAdapter = adapter,
         gallerySaver = gallerySaver,
@@ -225,6 +272,7 @@ class SaveAllVariantsUseCaseTest {
         segmentRepository = FakeSegmentRepo(segments),
         bgmClipRepository = FakeBgmRepo(bgmClips),
         separationDirectiveRepository = FakeSeparationRepo(separationDirectives),
+        renderCache = renderCache,
     )
 
     // ── fakes (textOverlay 는 use case ctor 에 빠졌으므로 미러용 필요 없음) ──

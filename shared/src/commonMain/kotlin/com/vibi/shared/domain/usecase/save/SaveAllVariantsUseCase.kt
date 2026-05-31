@@ -1,6 +1,10 @@
 package com.vibi.shared.domain.usecase.save
 
+import com.vibi.shared.domain.model.BgmClip
+import com.vibi.shared.domain.model.EditProject
+import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
+import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.isProjectEdited
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
@@ -31,6 +35,7 @@ class SaveAllVariantsUseCase(
     private val segmentRepository: SegmentRepository,
     private val bgmClipRepository: BgmClipRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
+    private val renderCache: ExportRenderCache,
 ) {
 
     @OptIn(ExperimentalUuidApi::class)
@@ -60,20 +65,31 @@ class SaveAllVariantsUseCase(
                 onProgress(100)
                 firstSeg.sourceUri
             } else {
-                val request = ExportRequest(
-                    projectId = "$projectId#${ExportVariant.KEY_ORIGINAL}",
-                    segments = segments,
-                    bgmClips = bgmClips,
-                    separationDirectives = separationDirectives,
-                    frameWidth = project.frameWidth,
-                    frameHeight = project.frameHeight,
-                    backgroundColorHex = project.backgroundColorHex,
-                )
-                platformAdapter.executeExport(request) { p ->
-                    onProgress((p.coerceIn(0, 100) * 90 / 100))
-                }.getOrElse { e ->
-                    if (e is CancellationException) throw e
-                    error("Render failed: ${e.message}")
+                // 편집 상태 시그니처가 같고 직전 산출물이 남아 있으면 재렌더 없이 재사용 —
+                // 공유→저장(또는 반복 export) 의 중복 렌더 제거. 편집이 바뀌면 시그니처가 달라져 자동 재렌더.
+                val signature = exportSignature(project, segments, bgmClips, separationDirectives)
+                val cached = renderCache.get(signature)
+                if (cached != null) {
+                    onProgress(90)
+                    cached
+                } else {
+                    val request = ExportRequest(
+                        projectId = "$projectId#${ExportVariant.KEY_ORIGINAL}",
+                        segments = segments,
+                        bgmClips = bgmClips,
+                        separationDirectives = separationDirectives,
+                        frameWidth = project.frameWidth,
+                        frameHeight = project.frameHeight,
+                        backgroundColorHex = project.backgroundColorHex,
+                    )
+                    val out = platformAdapter.executeExport(request) { p ->
+                        onProgress((p.coerceIn(0, 100) * 90 / 100))
+                    }.getOrElse { e ->
+                        if (e is CancellationException) throw e
+                        error("Render failed: ${e.message}")
+                    }
+                    renderCache.put(signature, out)
+                    out
                 }
             }
 
@@ -100,3 +116,40 @@ data class SavedVariant(
     val languageCode: String,
     val outputPath: String,
 )
+
+/**
+ * 렌더 출력에 영향을 주는 편집 상태 전부를 결정적 문자열로 직렬화 — [ExportRenderCache] 의 키.
+ *
+ * 불변식: **시그니처는 [ExportRequest] 로 실제 전송되는 입력과 정확히 일치**한다(같은 입력 → 같은 출력).
+ * 따라서 ExportRequest 에 들어가는 필드만 넣는다 — projectId·segments·bgmClips·separationDirectives·
+ * frameWidth·frameHeight·backgroundColorHex. videoScale/offset 은 ExportRequest 에 없어(렌더 미전송,
+ * 출력 무관) 제외 — 포함하면 프리뷰 줌/팬만 해도 헛재렌더가 발생. textOverlay/imageClip 도 BFF 렌더
+ * 비처리라 제외. 리스트는 (순서 흔들림 방지) 결정적으로 정렬.
+ */
+internal fun exportSignature(
+    project: EditProject,
+    segments: List<Segment>,
+    bgmClips: List<BgmClip>,
+    directives: List<SeparationDirective>,
+): String = buildString {
+    append("p=").append(project.projectId)
+    append("|frame=").append(project.frameWidth).append('x').append(project.frameHeight)
+        .append('@').append(project.backgroundColorHex)
+    segments.sortedWith(compareBy({ it.order }, { it.id })).forEach { s ->
+        append("|seg=").append(s.sourceUri).append(';').append(s.order).append(';').append(s.type)
+            .append(';').append(s.durationMs).append(';').append(s.trimStartMs).append(';').append(s.trimEndMs)
+            .append(';').append(s.volumeScale).append(';').append(s.speedScale)
+    }
+    bgmClips.sortedBy { it.id }.forEach { c ->
+        append("|bgm=").append(c.sourceUri).append(';').append(c.startMs).append(';').append(c.volumeScale)
+            .append(';').append(c.speedScale).append(';').append(c.sourceTrimStartMs).append(';').append(c.sourceTrimEndMs)
+    }
+    directives.sortedBy { it.id }.forEach { d ->
+        append("|dir=").append(d.rangeStartMs).append(';').append(d.rangeEndMs).append(';').append(d.numberOfSpeakers)
+            .append(';').append(d.muteOriginalSegmentAudio).append(';').append(d.sourceOffsetMs)
+        d.selections.sortedBy { it.stemId }.forEach { sel ->
+            append(";s=").append(sel.stemId).append(',').append(sel.volume)
+                .append(',').append(sel.selected).append(',').append(sel.audioUrl ?: "")
+        }
+    }
+}
