@@ -1,8 +1,10 @@
 package com.vibi.cmp.ui.timeline
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -117,6 +119,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.VideoPlayer
@@ -499,12 +502,10 @@ fun TimelineScreen(
                 modifier = Modifier.weight(1f),
             )
             val saving = state.saveStatus is SaveStatus.RUNNING
-            val savingPercent = (state.saveStatus as? SaveStatus.RUNNING)?.progress ?: 0
             val sharing = state.shareStatus is ShareStatus.RUNNING
-            val sharingPercent = (state.shareStatus as? ShareStatus.RUNNING)?.progress ?: 0
             var exportSheetOpen by remember { mutableStateOf(false) }
-            // 내보내기 진입점 — accent 배경 CTA. 분리 진행 중엔 버튼만 비활성(라벨 "Export" 유지),
-            // 저장·공유 중엔 라벨 자리에 진행 % 노출.
+            // 내보내기 진입점 — accent 배경 CTA. 분리 진행 중이거나 저장·공유 중엔 버튼 비활성.
+            // 진행 표시는 전체화면 원형 링 오버레이(사진 앱 스타일)가 담당 — 버튼 라벨은 항상 "Export".
             Button(
                 enabled = !sharing && !saving && !saveAnyJobRunning && state.segments.isNotEmpty(),
                 onClick = { exportSheetOpen = true },
@@ -519,12 +520,7 @@ fun TimelineScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.sm, vertical = 0.dp),
                 modifier = Modifier.height(VibiSpacing.xxl),
             ) {
-                val label = when {
-                    saving -> "${savingPercent}%"
-                    sharing -> "${sharingPercent}%"
-                    else -> "Export"
-                }
-                Text(label, style = typo.bodySm)
+                Text("Export", style = typo.bodySm)
             }
             if (exportSheetOpen) {
                 ExportOptionsSheet(
@@ -1102,6 +1098,41 @@ fun TimelineScreen(
         },
         onDismiss = { audioInsertMode = null },
     )
+
+    // 저장/공유 진행 오버레이 — iOS 사진 앱 영상편집 "완료" 대기와 동일한 결정형 원형 링.
+    // 실제 진행률(업로드→서버 렌더→다운로드 합산 percent)만큼 회색 트랙 위 호가 시계방향으로 채워진다.
+    // % 텍스트 없이 미니멀. 진행 중 화면을 살짝 dim 처리하고 터치를 차단(하단 UI 오조작 방지).
+    // outer Box 의 마지막 child → 최상단 z-order. 100% 도달 후 status 가 DONE/IDLE 로 바뀌면 자연 사라짐.
+    val exportPercent = (state.saveStatus as? SaveStatus.RUNNING)?.progress
+        ?: (state.shareStatus as? ShareStatus.RUNNING)?.progress
+    if (exportPercent != null) {
+        // 진행률이 단계적으로(0→30 업로드, 40→89 렌더, 90→100 다운로드) 튀므로 보간해 연속적으로 채워지게.
+        val animatedProgress by animateFloatAsState(
+            targetValue = (exportPercent / 100f).coerceIn(0f, 1f),
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = 300),
+            label = "exportProgress",
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(tokens.backgroundPrimary.copy(alpha = 0.55f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.size(56.dp),
+                color = tokens.onBackgroundPrimary,
+                trackColor = tokens.onBackgroundPrimary.copy(alpha = 0.22f),
+                strokeWidth = 3.dp,
+                strokeCap = StrokeCap.Round,
+            )
+        }
+    }
     } // close Box wrapper
 
     // BGM trim 시트 — 영상보다 긴 음원 선택 시 onPickBgmAudio 가 bgmTrimRequest 를 set.
