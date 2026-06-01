@@ -161,6 +161,8 @@ sealed interface BgmRemovalProgress {
 
 data class TimelineUiState(
     val projectId: String = "",
+    /** 사용자가 지정한 프로젝트 제목. null/blank 이면 헤더가 "Untitled" 표시. 에디터 헤더 제목 탭으로 편집. */
+    val projectTitle: String? = null,
     val segments: List<Segment> = emptyList(),
     val selectedSegmentId: String? = null,
     val videoUri: String = "",
@@ -439,6 +441,7 @@ class TimelineViewModel constructor(
                 if (project != null) {
                     _uiState.update { current ->
                         current.copy(
+                            projectTitle = project.title,
                             frameWidth = project.frameWidth,
                             frameHeight = project.frameHeight,
                             backgroundColorHex = project.backgroundColorHex,
@@ -1763,6 +1766,7 @@ class TimelineViewModel constructor(
                             speedScale = bgm.speedScale,
                             lane = bgm.lane,
                             createdAt = currentTimeMillis(),
+                            customName = bgm.customName,
                         )
                     )
                 }
@@ -1857,6 +1861,7 @@ class TimelineViewModel constructor(
                         sourceTrimEndMs = bgm.sourceTrimEndMs,
                         lane = bgm.lane,
                         createdAt = currentTimeMillis(),
+                        customName = bgm.customName,
                     )
                 )
             }
@@ -2566,6 +2571,34 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * 음원·녹음 카드 이름 변경 (카드 연필 탭). blank 면 customName=null 로 되돌려 자동 라벨
+     * (파일명 / "Recording N") 복귀. 길이 상한으로 비정상 입력 차단. undo entry 1 개 push.
+     */
+    fun onRenameBgmClip(clipId: String, newName: String) {
+        viewModelScope.launch {
+            val clip = _uiState.value.bgmClips.firstOrNull { it.id == clipId } ?: return@launch
+            val sanitized = newName.trim().take(MAX_DISPLAY_NAME_LEN).takeIf { it.isNotBlank() }
+            if (sanitized == clip.customName) return@launch
+            bgmClipRepository.updateClip(clip.copy(customName = sanitized))
+            pushUndoState()
+        }
+    }
+
+    /**
+     * 프로젝트 제목 변경 (에디터 헤더 제목 탭). blank 면 title=null 로 되돌려 목록 카드가 createdAt
+     * 타임스탬프로 fallback. touchActivity=true 로 최근 편집 순 정렬 갱신. observeProject 가
+     * projectTitle 을 다시 hydrate 하므로 별도 _uiState write 불필요.
+     */
+    fun onRenameProject(newTitle: String) {
+        viewModelScope.launch {
+            val project = editProjectRepository.getProject(projectId) ?: return@launch
+            val sanitized = newTitle.trim().take(MAX_DISPLAY_NAME_LEN).takeIf { it.isNotBlank() }
+            if (sanitized == project.title) return@launch
+            editProjectRepository.updateProject(project.copy(title = sanitized), touchActivity = true)
+        }
+    }
+
+    /**
      * BGM 단일 클립 복제 — 선택된 클립의 모든 속성(sourceUri/trim/volume/speed/lane + 캐시된
      * originalSourceUri/voiceOnlyUri) 을 그대로 복사하여 원본 끝(startMs + effectiveDuration) 에
      * 새 클립 추가. createdAt 은 새로(= 색·번호 새로) 부여, id 도 새로.
@@ -2589,6 +2622,7 @@ class TimelineViewModel constructor(
                     createdAt = currentTimeMillis(),
                     originalSourceUri = original.originalSourceUri,
                     voiceOnlyUri = original.voiceOnlyUri,
+                    customName = original.customName,
                 )
             )
             pushUndoState()
@@ -3684,6 +3718,9 @@ class TimelineViewModel constructor(
          * 사용자 선택값을 그대로 유지 (서버 측 측정 이상 가드). BFF TRIM_DURATION_TOLERANCE_MS
          * (100ms) 의 ~2배. */
         private const val SEPARATION_DURATION_SNAP_TOLERANCE_MS = 200L
+
+        /** 프로젝트 제목 / 음원·녹음 이름 입력 길이 상한 — 비정상 길이 입력 방어. */
+        private const val MAX_DISPLAY_NAME_LEN = 80
     }
 
     fun onOpenExportOptionsSheet() {

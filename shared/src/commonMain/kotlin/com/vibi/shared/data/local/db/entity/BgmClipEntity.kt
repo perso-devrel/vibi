@@ -17,4 +17,6 @@ data class BgmClipEntity(
     val createdAt: Long = 0L,
     val originalSourceUri: String? = null,
     val voiceOnlyUri: String? = null,
+    /** 사용자가 지정한 표시 이름. null/blank 이면 UI 가 sourceUri 파일명으로 자동 라벨링. */
+    val customName: String? = null,
 )

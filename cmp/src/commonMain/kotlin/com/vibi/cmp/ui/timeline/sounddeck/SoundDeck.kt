@@ -61,6 +61,8 @@ fun SoundDeck(
     onApplyBgmSpeed: (clipId: String, value: Float) -> Unit,
     onRemoveBgmBackground: (clipId: String) -> Unit,
     onDeleteBgm: (clipId: String) -> Unit,
+    /** 음원·녹음 이름 변경 — 카드 연필 탭. */
+    onRenameBgm: (clipId: String) -> Unit,
     onAddSeparation: (() -> Unit)?,
     onAddBgm: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -132,6 +134,10 @@ fun SoundDeck(
         },
         onSecondaryAction = when (val src = card.source) {
             is SoundCardSource.Bgm -> ({ onRemoveBgmBackground(src.clipId) })
+            is SoundCardSource.SeparationStem -> null
+        },
+        onRename = when (val src = card.source) {
+            is SoundCardSource.Bgm -> ({ onRenameBgm(src.clipId) })
             is SoundCardSource.SeparationStem -> null
         },
     )
@@ -220,6 +226,7 @@ private data class SoundCardCallbacks(
     val onDelete: (() -> Unit)?,
     val onApplySpeed: ((Float) -> Unit)?,
     val onSecondaryAction: (() -> Unit)?,
+    val onRename: (() -> Unit)?,
 )
 
 @Composable
@@ -240,6 +247,7 @@ private fun SoundCardRow(
         onDelete = callbacks.onDelete,
         onApplySpeed = callbacks.onApplySpeed,
         onSecondaryAction = callbacks.onSecondaryAction,
+        onRename = callbacks.onRename,
     )
 }
 

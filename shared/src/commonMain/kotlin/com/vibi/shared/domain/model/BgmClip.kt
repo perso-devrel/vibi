@@ -47,6 +47,11 @@ data class BgmClip(
      * 로 쓰는 옛 가정과 동일 한계.
      */
     val voiceOnlyUri: String? = null,
+    /**
+     * 사용자가 지정한 표시 이름. null/blank 이면 UI 가 [sourceUri] 파일명(또는 녹음 → "Recording N")
+     * 으로 자동 라벨링한다 (SoundCard `bgmDisplayLabel`). 음원·녹음 카드의 "이름 옆 연필" 로 편집.
+     */
+    val customName: String? = null,
 ) {
     /** trim 적용된 source 구간 길이 (ms). speed 영향 미반영. */
     val effectiveSourceDurationMs: Long

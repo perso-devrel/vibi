@@ -54,6 +54,7 @@ class BgmClipRepositoryImpl constructor(
         createdAt = createdAt,
         originalSourceUri = originalSourceUri,
         voiceOnlyUri = voiceOnlyUri,
+        customName = customName,
     )
 
     private fun BgmClip.toEntity() = BgmClipEntity(
@@ -69,5 +70,6 @@ class BgmClipRepositoryImpl constructor(
         createdAt = createdAt,
         originalSourceUri = originalSourceUri,
         voiceOnlyUri = voiceOnlyUri,
+        customName = customName,
     )
 }

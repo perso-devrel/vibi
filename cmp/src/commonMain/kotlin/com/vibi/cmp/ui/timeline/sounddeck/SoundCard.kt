@@ -17,6 +17,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -68,6 +69,8 @@ fun SoundCard(
     onDelete: (() -> Unit)?,
     onApplySpeed: ((Float) -> Unit)? = null,
     onSecondaryAction: (() -> Unit)? = null,
+    /** 이름 옆 연필 — null 이면 미표시 (stem 카드). BGM·녹음 카드만 주입해 이름 편집 진입. */
+    onRename: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
@@ -123,6 +126,22 @@ fun SoundCard(
                             rangeStr,
                             style = typo.caption,
                             color = tokens.mutedText,
+                        )
+                    }
+                }
+                // 이름 옆 연필 — BGM·녹음 카드만 (onRename != null). 이름 편집 다이얼로그 진입.
+                // 카드 row 의 combinedClickable 보다 IconButton 자체 클릭이 우선 소비.
+                if (onRename != null) {
+                    IconButton(
+                        onClick = onRename,
+                        enabled = !disabled,
+                        modifier = Modifier.size(VibiSpacing.touchMin),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Rename",
+                            tint = tokens.onBackgroundPrimary.copy(alpha = 0.7f),
+                            modifier = Modifier.size(VibiSpacing.base),
                         )
                     }
                 }

@@ -105,6 +105,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -158,6 +159,11 @@ fun TimelineScreen(
     val viewModel: TimelineViewModel = koinInject { parametersOf(projectId) }
     val state by viewModel.uiState.collectAsState()
 
+    // 이름 변경 다이얼로그 상태 (순수 표시용 — 저장/렌더 동작 무관).
+    //  - 프로젝트 제목: 헤더 제목 탭으로 open.
+    //  - 음원·녹음: SoundDeck 카드 연필 탭으로 대상 clipId set.
+    var renameProjectOpen by remember { mutableStateOf(false) }
+    var renameBgmTargetId by remember { mutableStateOf<String?>(null) }
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. Entry sheet 의 두 카드가 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
@@ -492,14 +498,20 @@ fun TimelineScreen(
             ) {
                 Text("‹", color = tokens.onBackgroundPrimary, style = typo.titleLg)
             }
+            // 헤더 제목 = 프로젝트 이름. 탭하면 이름 변경 다이얼로그. 미지정 시 "Untitled".
+            // 표시용일 뿐 — 저장/렌더/내보내기 파일명과 무관.
             Text(
-                text = "Edit",
+                text = state.projectTitle?.takeIf { it.isNotBlank() } ?: "Untitled",
                 // displaySm 은 EB Garamond (serif display) — 화면 다른 텍스트가 모두 Inter (body)
                 // 라 혼자 튀어보임. body family 의 titleLg 기반에 displaySm 크기(20sp) + Bold 유지.
                 style = typo.titleLg.copy(fontSize = 20.sp),
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = tokens.onBackgroundPrimary,
-                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { renameProjectOpen = true },
             )
             val saving = state.saveStatus is SaveStatus.RUNNING
             val sharing = state.shareStatus is ShareStatus.RUNNING
@@ -902,6 +914,7 @@ fun TimelineScreen(
                         // 가드가 silent return 처리 (3단 방어 중 2단).
                         onRemoveBgmBackground = { clipId -> viewModel.onStartBgmSeparation(clipId) },
                         onDeleteBgm = { clipId -> viewModel.onDeleteBgmClip(clipId) },
+                        onRenameBgm = { clipId -> renameBgmTargetId = clipId },
                         // 분리/BGM 진입은 위 버튼 row 가 담당 — deck add 슬롯은 사용 안 함.
                         onAddSeparation = null,
                         onAddBgm = null,
@@ -1207,6 +1220,35 @@ fun TimelineScreen(
             dismissButton = {
                 TextButton(onClick = { viewModel.onDismissBgmRemovalCost() }) { Text("Cancel") }
             },
+        )
+    }
+
+    // 프로젝트 이름 변경 — 헤더 제목 탭. 표시용일 뿐 저장/렌더 동작과 무관.
+    if (renameProjectOpen) {
+        RenameDialog(
+            title = "Rename project",
+            currentName = state.projectTitle.orEmpty(),
+            placeholder = "Untitled",
+            onConfirm = { newName ->
+                viewModel.onRenameProject(newName)
+                renameProjectOpen = false
+            },
+            onDismiss = { renameProjectOpen = false },
+        )
+    }
+
+    // 음원·녹음 이름 변경 — 카드 연필 탭. 대상 clip 이 (삭제 등으로) 사라졌으면 다이얼로그 미표시.
+    val renameBgmClip = renameBgmTargetId?.let { id -> state.bgmClips.firstOrNull { it.id == id } }
+    if (renameBgmClip != null) {
+        RenameDialog(
+            title = "Rename audio",
+            currentName = renameBgmClip.customName.orEmpty(),
+            placeholder = "Audio name",
+            onConfirm = { newName ->
+                viewModel.onRenameBgmClip(renameBgmClip.id, newName)
+                renameBgmTargetId = null
+            },
+            onDismiss = { renameBgmTargetId = null },
         )
     }
 

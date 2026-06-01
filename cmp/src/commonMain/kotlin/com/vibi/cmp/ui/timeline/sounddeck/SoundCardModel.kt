@@ -165,7 +165,9 @@ fun buildSoundDeckGroups(
         .map { bgm ->
             SoundCardModel(
                 key = "bgm:${bgm.id}",
-                label = bgmDisplayLabel(bgm.sourceUri, recordingOrdinal[bgm.id]),
+                // 사용자가 지정한 이름이 있으면 그것을, 없으면 파일명/"Recording N" 자동 라벨.
+                label = bgm.customName?.takeIf { it.isNotBlank() }
+                    ?: bgmDisplayLabel(bgm.sourceUri, recordingOrdinal[bgm.id]),
                 kind = SoundCardKind.BGM,
                 source = SoundCardSource.Bgm(bgm.id),
                 selected = bgm.volumeScale > 0f,
