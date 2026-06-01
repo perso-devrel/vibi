@@ -69,6 +69,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CircularProgressIndicator
@@ -164,6 +166,13 @@ fun TimelineScreen(
     //  - 음원·녹음: SoundDeck 카드 연필 탭으로 대상 clipId set.
     var renameProjectOpen by remember { mutableStateOf(false) }
     var renameBgmTargetId by remember { mutableStateOf<String?>(null) }
+
+    // 음원분리 취소 흐름.
+    //  - selectedProcessingToken: 진행 중 바를 탭해 취소 UI 를 띄운 대상.
+    //  - cancelWarnToken: 경고 다이얼로그를 띄운 대상 (null = 닫힘).
+    //  - "다시 보지 않기" 는 VM 의 skipSeparationCancelWarning (Settings 영속) 으로 관리.
+    var selectedProcessingToken by remember { mutableStateOf<String?>(null) }
+    var cancelWarnToken by remember { mutableStateOf<String?>(null) }
 
     // 음원 삽입 / 즉시 녹음 통합 peek sheet — null 이면 닫힘. Entry sheet 의 두 카드가 진입 mode 결정.
     var audioInsertMode by remember { mutableStateOf<AudioInsertMode?>(null) }
@@ -696,7 +705,7 @@ fun TimelineScreen(
                         val e = p.rangeEndMs
                         val (start, end) = if (s != null && e != null && e > s) s to e
                         else 0L to state.videoDurationMs
-                        ProcessingSeparationOverlay(start, end, p.progress)
+                        ProcessingSeparationOverlay(start, end, p.progress, p.clientToken)
                     }
             }
             // 배경음 제거(음원분리) 진행 중인 BGM 클립 id — 해당 클립은 timeline 에서 선택/드래그/트림 잠금.
@@ -743,6 +752,8 @@ fun TimelineScreen(
                 },
                 // directive 탭 시 AudioSeparationSheet 띄우지 않음 — 편집은 SoundDeck 의 stem 카드에서 처리.
                 onDirectiveTap = {},
+                // 진행 중 음원분리 바 탭 → 취소 UI 노출 대상 지정.
+                onProcessingTap = { token -> selectedProcessingToken = token },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
                 onRangeStartChange = { viewModel.onSetPendingRangeStart(it) },
                 onRangeEndChange = { viewModel.onSetPendingRangeEnd(it) },
@@ -824,6 +835,58 @@ fun TimelineScreen(
                     }
                 }
                 // SegmentEditActionPanel 은 음원분리/음원삽입 행 아래로 이동 — 사용자 요청.
+            }
+
+            // 진행 중 음원분리 취소 UI — 진행 바 탭으로 selectedProcessingToken 지정 시 노출.
+            // 로딩바(LinearProgress) 바로 옆에 취소 버튼. 잡이 끝나면 LaunchedEffect 가 선택 해제.
+            val selectedProcessing = selectedProcessingToken?.let { tok ->
+                state.processingSeparations.firstOrNull { it.clientToken == tok }
+            }
+            LaunchedEffect(state.processingSeparations, selectedProcessingToken, cancelWarnToken) {
+                val active = state.processingSeparations.mapTo(HashSet()) { it.clientToken }
+                selectedProcessingToken?.let { if (it !in active) selectedProcessingToken = null }
+                cancelWarnToken?.let { if (it !in active) cancelWarnToken = null }
+            }
+            if (selectedProcessing != null) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    ) {
+                        Text("Separating audio…", style = typo.bodySm, color = tokens.onBackgroundPrimary)
+                        LinearProgressIndicator(
+                            progress = { (selectedProcessing.progress / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier.weight(1f),
+                            color = tokens.accent,
+                            trackColor = tokens.chipBg,
+                        )
+                        Text("${selectedProcessing.progress}%", style = typo.bodySm, color = tokens.mutedText)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    ) {
+                        OutlinedButton(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                val token = selectedProcessing.clientToken
+                                if (viewModel.skipSeparationCancelWarning) {
+                                    viewModel.onCancelProcessingSeparation(token)
+                                    selectedProcessingToken = null
+                                } else {
+                                    cancelWarnToken = token
+                                }
+                            },
+                        ) { Text("Cancel separation") }
+                        TextButton(onClick = { selectedProcessingToken = null }) {
+                            Text("Keep processing")
+                        }
+                    }
+                }
             }
         }
 
@@ -1252,6 +1315,59 @@ fun TimelineScreen(
         )
     }
 
+    // 음원분리 취소 경고 — 크레딧 환불 불가 안내 + "다시 보지 않기". 체크 시 Settings 에 영속해
+    // 다음부터는 이 다이얼로그 없이 바로 취소된다.
+    cancelWarnToken?.let { token ->
+        var dontShowAgain by remember(token) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { cancelWarnToken = null },
+            containerColor = tokens.panelBg,
+            titleContentColor = tokens.onBackgroundPrimary,
+            title = { Text("Stop audio separation?", style = typo.titleSm) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
+                    Text(
+                        "Separation will stop and this part keeps its original audio. " +
+                            "Credits already used won't be refunded.",
+                        style = typo.bodySm,
+                        color = tokens.mutedText,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
+                    ) {
+                        Checkbox(
+                            checked = dontShowAgain,
+                            onCheckedChange = { dontShowAgain = it },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = tokens.accent,
+                                uncheckedColor = tokens.mutedText,
+                            ),
+                        )
+                        Text(
+                            "Don't show this again",
+                            style = typo.bodySm,
+                            color = tokens.onBackgroundPrimary,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (dontShowAgain) viewModel.setSkipSeparationCancelWarning(true)
+                    viewModel.onCancelProcessingSeparation(token)
+                    cancelWarnToken = null
+                    selectedProcessingToken = null
+                }) { Text("Stop separation", color = tokens.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { cancelWarnToken = null }) {
+                    Text("Keep processing", color = tokens.mutedText)
+                }
+            },
+        )
+    }
+
     // 잔액 부족 분기로 띄워지는 UserMenu — 안에 CreditPurchaseSheet 가 내장돼 있어 사용자가
     // BuyCreditsRow 를 탭하면 IAP 흐름 진입. sign out / delete account 도 노출되지만 사용자가
     // timeline 안에서 의도적으로 누르는 케이스라 그대로 진행 — 로그아웃 시 onBack 으로 빠짐.
@@ -1416,6 +1532,8 @@ data class ProcessingSeparationOverlay(
     val startMs: Long,
     val endMs: Long,
     val progress: Int,
+    /** 취소 대상 식별자 — 진행 바 탭 시 이 토큰으로 해당 폴링 잡을 취소. */
+    val clientToken: String,
 )
 
 @Composable
@@ -1455,6 +1573,8 @@ private fun UnifiedTimelineBar(
     onSegmentTap: (segmentId: String, tapMs: Long) -> Unit = { _, _ -> },
     /** Neutral (range/segment edit 모드 아님) 상태에서 영상 파형 탭 — BGM 클립 탭과 같은 의미로 영상 다듬기 진입. */
     onWaveformTapInNeutral: (tapMs: Long) -> Unit = {},
+    /** 진행 중인 음원분리 바를 탭 — 해당 clientToken 으로 취소 UI 노출. 다른 탭(파형/구간)보다 우선. */
+    onProcessingTap: (clientToken: String) -> Unit = {},
     onDirectiveTap: (String) -> Unit = {},
     onScrub: (Long) -> Unit,
     onRangeStartChange: (Long) -> Unit = {},
@@ -1526,7 +1646,7 @@ private fun UnifiedTimelineBar(
     // pointerInput key — progress 변경 (1~2초 폴링) 마다 processingSeparations ref 가 새로 생성되지만
     // tap 검출은 start/end 만 보므로 그 둘만 추출. equals 가 stable 이라 polling tick 동안 gesture
     // detector 가 재등록되지 않음.
-    val processingRangesKey = processingSeparations.map { it.startMs to it.endMs }
+    val processingRangesKey = processingSeparations.map { Triple(it.startMs, it.endMs, it.clientToken) }
     val rangeTapModifier = if (showRange && totalMs > 0L) {
         Modifier.pointerInput(showSegments, segments, directives, processingRangesKey, totalMs) {
             detectTapGestures(onTap = { offset ->
@@ -1548,6 +1668,12 @@ private fun UnifiedTimelineBar(
                         }
                         acc = nextAcc
                     }
+                    return@detectTapGestures
+                }
+
+                // 진행 중 음원분리 바 위 탭 → 취소 UI 노출 (점유 no-op 보다 우선).
+                processingSeparations.firstOrNull { ms in it.startMs..it.endMs }?.let {
+                    onProcessingTap(it.clientToken)
                     return@detectTapGestures
                 }
 
@@ -1581,10 +1707,15 @@ private fun UnifiedTimelineBar(
         }
     } else if (totalMs > 0L) {
         // Neutral 상태 — 영상 파형 탭 시 영상 다듬기 진입 (BGM 클립 탭과 같은 진입 의미).
-        Modifier.pointerInput(totalMs) {
+        // 단, 진행 중 음원분리 바 위 탭은 취소 UI 로 분기 (다듬기 진입보다 우선).
+        Modifier.pointerInput(totalMs, processingRangesKey) {
             detectTapGestures(onTap = { offset ->
                 val w = size.width.toFloat()
                 val ms = if (w > 0f) ((offset.x / w).coerceIn(0f, 1f) * totalMs).toLong() else 0L
+                processingSeparations.firstOrNull { ms in it.startMs..it.endMs }?.let {
+                    onProcessingTap(it.clientToken)
+                    return@detectTapGestures
+                }
                 onWaveformTapInNeutral(ms)
             })
         }

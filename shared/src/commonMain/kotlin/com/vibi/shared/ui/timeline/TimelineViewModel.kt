@@ -65,6 +65,8 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import com.russhwolf.settings.Settings
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -298,6 +300,8 @@ class TimelineViewModel constructor(
     private val bffBaseUrl: String,
     private val saveAllVariants: SaveAllVariantsUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
+    /** 멀티플랫폼 영속 설정 — 현재는 "음원분리 취소 경고 다시 보지 않기" 플래그에만 사용. */
+    private val settings: Settings,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState(projectId = projectId))
@@ -3155,6 +3159,39 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * 진행 중 음원분리 취소 (진행 바 탭 → "음원분리 취소"). 서버 잡은 멈출 수 없으므로 **클라가
+     * 폴링만 중단**하고 처리 entry 를 정리한다 — directive 를 만들지 않으니 해당 구간은 원본 음원을
+     * 그대로 쓰고, [TimelineUiState.processingSeparations] 가 비면 점유/export 잠금도 자동 해제된다.
+     * 소모된 크레딧은 환불하지 않는다 (서버 작업이 계속 진행됨 — UI 가 사전 경고창으로 안내).
+     */
+    fun onCancelProcessingSeparation(clientToken: String) {
+        val entry = _uiState.value.processingSeparations.firstOrNull { it.clientToken == clientToken }
+            ?: return
+        // (1) 폴링 코루틴 취소 — removeProcessingSeparationEntry 는 map 에서 빼기만 하므로 먼저 cancel.
+        separationJobs[clientToken]?.cancel()
+        // (2) in-memory entry 제거 → 타임라인 오버레이 사라지고 점유/잠금 해제 (directive 미생성).
+        removeProcessingSeparationEntry(clientToken)
+        // (3) 영속화에서도 해당 잡 제거 + legacy 단일 슬롯 정리 — 재진입/앱 재시작 시 resume 폴링 방지.
+        viewModelScope.launch {
+            editProjectRepository.getProject(projectId)?.let { p ->
+                val cleaned = entry.jobId?.let { p.removeProcessingSeparation(it) } ?: p
+                editProjectRepository.updateProject(cleaned.clearSeparation(), touchActivity = false)
+            }
+        }
+        // 다음 분리 흐름을 위해 gate 재무장 (commit 과 동일).
+        separationGate = TriggerGate.ARMED
+    }
+
+    /** "음원분리 취소" 경고 다이얼로그를 건너뛸지 — 사용자가 "다시 보지 않기" 체크 시 true 로 영속. */
+    val skipSeparationCancelWarning: Boolean
+        get() = settings.getBoolean(KEY_SKIP_SEPARATION_CANCEL_WARNING, false)
+
+    /** "다시 보지 않기" 토글 영속. UI 경고 다이얼로그의 체크박스에서 호출. */
+    fun setSkipSeparationCancelWarning(skip: Boolean) {
+        settings.putBoolean(KEY_SKIP_SEPARATION_CANCEL_WARNING, skip)
+    }
+
     fun onStartSeparation() {
         if (!audioExtractor.isSupported) return
         val state = _uiState.value
@@ -3368,6 +3405,10 @@ class TimelineViewModel constructor(
                         handleSeparationFailure(clientToken, status.progressReason ?: ERROR_SEPARATION_GENERIC)
                 }
             }
+        } catch (e: CancellationException) {
+            // 사용자 취소 (onCancelProcessingSeparation) 로 코루틴이 cancel 된 경우 — 실패가 아니므로
+            // 에러 시트를 띄우지 않고 그대로 전파. entry 정리는 취소 호출부가 이미 처리.
+            throw e
         } catch (e: Exception) {
             handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
         }
@@ -3721,6 +3762,9 @@ class TimelineViewModel constructor(
 
         /** 프로젝트 제목 / 음원·녹음 이름 입력 길이 상한 — 비정상 길이 입력 방어. */
         private const val MAX_DISPLAY_NAME_LEN = 80
+
+        /** "음원분리 취소 경고 다시 보지 않기" 영속 키 (Settings). */
+        private const val KEY_SKIP_SEPARATION_CANCEL_WARNING = "separation.cancel.skipWarning"
     }
 
     fun onOpenExportOptionsSheet() {

@@ -50,6 +50,7 @@ val viewModelModule = module {
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
             saveAllVariants = get(),
             shareSheetLauncher = get(),
+            settings = get(),
         )
     }
     factory { LoginViewModel(authRepository = get()) }
