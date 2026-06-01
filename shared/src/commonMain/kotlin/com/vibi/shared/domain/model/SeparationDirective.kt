@@ -23,6 +23,13 @@ data class SeparationDirective(
     val selections: List<StemSelection>,
     val createdAt: Long,
     /**
+     * 이 directive 를 만든 BFF 분리 잡 id (`sep-...`). 같은 잡이 두 번 commit 돼도 (동시 폴링 race,
+     * actualDuration 스냅으로 range 가 흔들리는 경우 등) 같은 directive 로 upsert 되게 하는 **안정적
+     * dedup 키** — `(rangeStartMs, rangeEndMs)` 정확 일치 기반 dedup 은 스냅 경계에서 미스가 나
+     * "내용이 같은 구간"이 중복 생성되던 회귀가 있었다. legacy row / 수동 split piece 는 null.
+     */
+    val jobId: String? = null,
+    /**
      * Stem audio 파일 안에서 본 directive piece 가 시작하는 offset (ms).
      *
      * 기본 0 = 신규 분리 결과 (stem audio 전체가 이 directive 의 [rangeStartMs..rangeEndMs] 와 1:1 매핑).

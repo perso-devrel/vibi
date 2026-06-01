@@ -66,6 +66,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Timeline "저장" 흐름 상태. headerbar 의 저장 버튼 라벨/snackbar 에 사용.
@@ -3087,6 +3089,15 @@ class TimelineViewModel constructor(
      */
     private val separationJobs: MutableMap<String, kotlinx.coroutines.Job> = mutableMapOf()
 
+    /**
+     * Directive commit 직렬화 락. submit-흐름 폴링과 화면 재진입 resume 폴링이 같은 잡을 동시에
+     * `Ready` 로 받아 둘 다 commit 하면, 각자 `getByProject()` 로 기존 row 를 못 본 채(아직 상대가
+     * insert 전) 둘 다 새 UUID 를 박는 race 가 있었다 — DB 레벨 find→insert 가 atomic 하지 않기 때문.
+     * commit 전체를 이 락으로 감싸 한 번에 하나만 진행하게 해, 두 번째 commit 은 첫 commit 의 row 를
+     * jobId 로 보고 같은 id 로 upsert 하도록 한다.
+     */
+    private val separationCommitMutex = Mutex()
+
     private fun addProcessingSeparationEntry(entry: ProcessingSeparation) {
         _uiState.update { it.copy(processingSeparations = it.processingSeparations + entry) }
     }
@@ -3346,75 +3357,84 @@ class TimelineViewModel constructor(
         val entry = _uiState.value.processingSeparations.firstOrNull { it.clientToken == clientToken }
             ?: return
         try {
-            val state = _uiState.value
-            val segment = state.segments.firstOrNull { it.id == entry.segmentId }
-            val urlByStemId = stems.associate { it.stemId to it.url }
-            val selectionList = selections.values
-                .map { StemSelection(it.stemId, it.volume, urlByStemId[it.stemId], it.selected) }
-            if (selectionList.none { it.selected }) {
-                removeProcessingSeparationEntry(clientToken)
-                // 영속화에서도 제거.
-                editProjectRepository.getProject(projectId)?.let { p ->
-                    entry.jobId?.let {
-                        editProjectRepository.updateProject(p.removeProcessingSeparation(it))
+            // 같은 잡을 두 폴링 흐름이 동시에 commit 하는 race 를 막기 위해 find→add 를 단일 락으로
+            // 직렬화. 두 번째 commit 은 첫 commit 이 박아둔 row 를 jobId 로 보고 같은 id 로 upsert.
+            separationCommitMutex.withLock {
+                val state = _uiState.value
+                val segment = state.segments.firstOrNull { it.id == entry.segmentId }
+                val urlByStemId = stems.associate { it.stemId to it.url }
+                val selectionList = selections.values
+                    .map { StemSelection(it.stemId, it.volume, urlByStemId[it.stemId], it.selected) }
+                if (selectionList.none { it.selected }) {
+                    removeProcessingSeparationEntry(clientToken)
+                    // 영속화에서도 제거.
+                    editProjectRepository.getProject(projectId)?.let { p ->
+                        entry.jobId?.let {
+                            editProjectRepository.updateProject(p.removeProcessingSeparation(it))
+                        }
                     }
+                    return
                 }
-                return
-            }
-            val isWholeVideo = segment == null
-            val segStart = segment?.let { s -> segmentStartOffsetMs(state.segments, s.id) } ?: 0L
-            val directiveStart = when {
-                entry.rangeStartMs != null -> entry.rangeStartMs
-                isWholeVideo -> 0L
-                else -> segStart + segment.trimStartMs
-            }
-            val requestedEnd = when {
-                entry.rangeEndMs != null -> entry.rangeEndMs
-                isWholeVideo -> state.videoDurationMs.coerceAtLeast(1L)
-                else -> directiveStart + (
-                    if (segment.trimEndMs > 0L) segment.trimEndMs - segment.trimStartMs else segment.durationMs
-                )
-            }
-            val requestedDuration = (requestedEnd - directiveStart).coerceAtLeast(0L)
-            val directiveEnd = if (
-                actualDurationMs != null &&
-                kotlin.math.abs(actualDurationMs - requestedDuration) <= SEPARATION_DURATION_SNAP_TOLERANCE_MS
-            ) {
-                directiveStart + actualDurationMs
-            } else {
-                requestedEnd
-            }
-            // Room Flow 첫 emission 이 uiState 에 도달하기 전에 commit 이 돌면 in-memory 가 비어
-            // existing=null → 새 UUID 로 중복 directive 가 생기는 race 가 있었음. repository 직접 조회로
-            // 권위 원본 (Room) 의 최신 상태를 본다.
-            val persisted = separationDirectiveRepository.getByProject(projectId)
-            val existing = entry.editingDirectiveId?.let { id -> persisted.firstOrNull { it.id == id } }
-                ?: persisted.firstOrNull {
-                    it.rangeStartMs == directiveStart && it.rangeEndMs == directiveEnd
+                val isWholeVideo = segment == null
+                val segStart = segment?.let { s -> segmentStartOffsetMs(state.segments, s.id) } ?: 0L
+                val directiveStart = when {
+                    entry.rangeStartMs != null -> entry.rangeStartMs
+                    isWholeVideo -> 0L
+                    else -> segStart + segment.trimStartMs
                 }
-            val effectiveStart = existing?.rangeStartMs ?: directiveStart
-            val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
-            separationDirectiveRepository.add(
-                SeparationDirective(
-                    id = existing?.id ?: Uuid.random().toString(),
-                    projectId = projectId,
-                    rangeStartMs = effectiveStart,
-                    rangeEndMs = effectiveEnd,
-                    numberOfSpeakers = entry.numberOfSpeakers,
-                    muteOriginalSegmentAudio = true,
-                    selections = selectionList,
-                    createdAt = existing?.createdAt ?: currentTimeMillis()
+                val requestedEnd = when {
+                    entry.rangeEndMs != null -> entry.rangeEndMs
+                    isWholeVideo -> state.videoDurationMs.coerceAtLeast(1L)
+                    else -> directiveStart + (
+                        if (segment.trimEndMs > 0L) segment.trimEndMs - segment.trimStartMs else segment.durationMs
+                    )
+                }
+                val requestedDuration = (requestedEnd - directiveStart).coerceAtLeast(0L)
+                val directiveEnd = if (
+                    actualDurationMs != null &&
+                    kotlin.math.abs(actualDurationMs - requestedDuration) <= SEPARATION_DURATION_SNAP_TOLERANCE_MS
+                ) {
+                    directiveStart + actualDurationMs
+                } else {
+                    requestedEnd
+                }
+                // Room Flow 첫 emission 이 uiState 에 도달하기 전에 commit 이 돌면 in-memory 가 비어
+                // existing=null → 새 UUID 로 중복 directive 가 생기는 race 가 있었음. repository 직접
+                // 조회로 권위 원본 (Room) 의 최신 상태를 본다.
+                // dedup 우선순위: ① editingDirectiveId (명시적 재편집 대상) → ② jobId (같은 분리 잡의
+                // 재-commit — range 스냅으로 좌표가 흔들려도 안정적으로 같은 row 매칭) → ③ range 일치
+                // (jobId 가 없던 legacy row 호환 fallback).
+                val persisted = separationDirectiveRepository.getByProject(projectId)
+                val existing = entry.editingDirectiveId?.let { id -> persisted.firstOrNull { it.id == id } }
+                    ?: entry.jobId?.let { jid -> persisted.firstOrNull { it.jobId == jid } }
+                    ?: persisted.firstOrNull {
+                        it.rangeStartMs == directiveStart && it.rangeEndMs == directiveEnd
+                    }
+                val effectiveStart = existing?.rangeStartMs ?: directiveStart
+                val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
+                separationDirectiveRepository.add(
+                    SeparationDirective(
+                        id = existing?.id ?: Uuid.random().toString(),
+                        projectId = projectId,
+                        rangeStartMs = effectiveStart,
+                        rangeEndMs = effectiveEnd,
+                        numberOfSpeakers = entry.numberOfSpeakers,
+                        muteOriginalSegmentAudio = true,
+                        selections = selectionList,
+                        createdAt = existing?.createdAt ?: currentTimeMillis(),
+                        jobId = entry.jobId ?: existing?.jobId,
+                    )
                 )
-            )
-            removeProcessingSeparationEntry(clientToken)
-            // 영속화 리스트에서도 해당 entry 제거 + legacy 단일 슬롯 클리어.
-            editProjectRepository.getProject(projectId)?.let { p ->
-                val cleaned = entry.jobId?.let { p.removeProcessingSeparation(it) } ?: p
-                editProjectRepository.updateProject(cleaned.clearSeparation())
+                removeProcessingSeparationEntry(clientToken)
+                // 영속화 리스트에서도 해당 entry 제거 + legacy 단일 슬롯 클리어.
+                editProjectRepository.getProject(projectId)?.let { p ->
+                    val cleaned = entry.jobId?.let { p.removeProcessingSeparation(it) } ?: p
+                    editProjectRepository.updateProject(cleaned.clearSeparation())
+                }
+                separationGate = TriggerGate.ARMED
+                mainUndoManager.clear()
+                pushUndoState()
             }
-            separationGate = TriggerGate.ARMED
-            mainUndoManager.clear()
-            pushUndoState()
         } catch (e: Exception) {
             handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
         }
@@ -3568,7 +3588,9 @@ class TimelineViewModel constructor(
                         numberOfSpeakers = sep.numberOfSpeakers,
                         muteOriginalSegmentAudio = true,  // 항상 음소거 (사용자 정책).
                         selections = selections,
-                        createdAt = existing?.createdAt ?: currentTimeMillis()
+                        createdAt = existing?.createdAt ?: currentTimeMillis(),
+                        // 기존 directive 편집이면 그 jobId 보존 (dedup 키 유지). 신규면 null.
+                        jobId = existing?.jobId,
                     )
                 )
                 // 음성분리 구간의 원본 음성은 directive range 안에서만 mute — TimelineScreen 의

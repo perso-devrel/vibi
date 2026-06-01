@@ -51,6 +51,7 @@ class SeparationDirectiveRepositoryImpl(
             selections.map { StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected) }
         ),
         createdAt = createdAt,
+        jobId = jobId,
         sourceOffsetMs = sourceOffsetMs,
     )
 
@@ -70,6 +71,7 @@ class SeparationDirectiveRepositoryImpl(
             muteOriginalSegmentAudio = muteOriginalSegmentAudio,
             selections = selections,
             createdAt = createdAt,
+            jobId = jobId,
             sourceOffsetMs = sourceOffsetMs,
         )
     }
