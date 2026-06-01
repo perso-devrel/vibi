@@ -18,10 +18,12 @@ import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -39,6 +41,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
@@ -120,9 +123,11 @@ import androidx.compose.runtime.key
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.scale
@@ -1750,9 +1755,12 @@ private fun UnifiedTimelineBar(
         }
     } else Modifier
 
-    // content 폭을 viewport*zoom 으로 늘리고 horizontalScroll 로 pan — 내부 ms↔px 수식은 그대로 동작.
-    val scrollState = rememberScrollState()
+    // content 폭을 viewport*zoom 으로 늘리고 우리가 직접 든 scrollPx(offset)로 pan — 내부 ms↔px 수식은 그대로 동작.
+    // zoom·scrollPx 둘 다 직접 보유한 float state 라 같은 프레임에 함께 적용됨 → 확대 중 레이아웃 지연으로 인한
+    // 스크롤 클램프 불일치(떨림) 가 없음. (horizontalScroll/ScrollState 는 dispatchRawDelta 가 직전 레이아웃
+    //  기준 maxValue 로 잘려 확대 시 한 프레임 늦게 따라잡아 진동을 일으켰음.)
     var zoom by remember(totalMs) { mutableFloatStateOf(1f) }
+    var scrollPx by remember(totalMs) { mutableFloatStateOf(0f) }
 
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
@@ -1764,12 +1772,26 @@ private fun UnifiedTimelineBar(
         val viewportWidthPx = with(density) { viewportWidthDp.toPx() }
         val contentWidthDp = viewportWidthDp * zoom
         val contentWidthPx = viewportWidthPx * zoom
+        // zoom 을 바꾸는 건 아래 pinch 제스처뿐이고 거기서 scrollPx 를 새 max 로 coerce 하므로
+        // scrollPx 는 항상 [0, maxScroll] 안. offset 적용 시에도 한 번 더 coerce 해 안전망.
+        val maxScroll = (contentWidthPx - viewportWidthPx).coerceAtLeast(0f)
+
+        // 1-finger pan/fling — 직전엔 horizontalScroll 이 담당. scrollable 도 자식이 소비한 제스처엔 양보하므로
+        // range/playhead/BGM drag 핸들러는 그대로 우선. maxScroll 은 매 프레임 갱신되니 rememberUpdatedState 로 최신값 참조.
+        val maxScrollState = rememberUpdatedState(maxScroll)
+        val scrollableState = rememberScrollableState { delta ->
+            val old = scrollPx
+            val target = (old - delta).coerceIn(0f, maxScrollState.value)
+            scrollPx = target
+            old - target
+        }
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(totalHeight)
-                .horizontalScroll(scrollState)
+                .clipToBounds()
+                .scrollable(state = scrollableState, orientation = Orientation.Horizontal)
                 .pointerInput(totalMs) {
                     // 2-finger 만 처리 — 1-finger 는 consume 하지 않아 inner range/playhead/BGM drag
                     // 핸들러가 그대로 받음. detectTransformGestures 는 1-finger pan 도 잡아 충돌.
@@ -1794,17 +1816,13 @@ private fun UnifiedTimelineBar(
                                 val newZoom = (zoom * span / ps)
                                     .coerceIn(TimelineBarSpec.MinZoom, TimelineBarSpec.MaxZoom)
                                 val actualFactor = newZoom / zoom
-                                val panDx = centroid.x - pc.x
-                                val oldScroll = scrollState.value.toFloat()
-                                val maxScroll = (viewportWidthPx * newZoom - viewportWidthPx)
+                                val newMaxScroll = (viewportWidthPx * newZoom - viewportWidthPx)
                                     .coerceAtLeast(0f)
-                                val targetScroll = (actualFactor * (oldScroll + centroid.x) -
-                                    centroid.x - panDx).coerceIn(0f, maxScroll)
-                                val delta = targetScroll - oldScroll
+                                // 직전 centroid(pc.x) 아래 있던 콘텐츠 픽셀을 현재 centroid.x 아래로 고정 →
+                                // 확대 중심이 손가락을 정확히 따라가고(두 손가락 이동분 pan 도 포함), 떨림 없음.
+                                scrollPx = (actualFactor * (scrollPx + pc.x) - centroid.x)
+                                    .coerceIn(0f, newMaxScroll)
                                 zoom = newZoom
-                                if (kotlin.math.abs(delta) > 0.5f) {
-                                    scrollState.dispatchRawDelta(delta)
-                                }
                                 event.changes.forEach { it.consume() }
                             }
                             prevCentroid = centroid
@@ -1815,8 +1833,9 @@ private fun UnifiedTimelineBar(
         ) {
         Box(
             modifier = Modifier
-                .width(contentWidthDp)
+                .requiredWidth(contentWidthDp)
                 .height(totalHeight)
+                .offset { IntOffset(-scrollPx.coerceIn(0f, maxScroll).roundToInt(), 0) }
                 .background(trackColor.copy(alpha = 0.45f))
         ) {
         val totalWidthDp = contentWidthDp
