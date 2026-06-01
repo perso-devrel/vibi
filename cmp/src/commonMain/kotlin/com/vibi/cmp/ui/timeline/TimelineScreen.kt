@@ -1357,7 +1357,26 @@ fun TimelineScreen(
             onDismissRequest = { cancelWarnToken = null },
             containerColor = tokens.panelBg,
             titleContentColor = tokens.onBackgroundPrimary,
-            title = { Text("Stop audio separation?", style = typo.titleSm) },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Stop audio separation?",
+                        style = typo.titleSm,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 우측 상단 X = 기존 "Keep processing" 과 동일하게 그냥 닫기(폴링 유지).
+                    IconButton(
+                        onClick = { cancelWarnToken = null },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Keep processing",
+                            tint = tokens.mutedText,
+                        )
+                    }
+                }
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
                     Text(
@@ -1393,11 +1412,6 @@ fun TimelineScreen(
                     cancelWarnToken = null
                     selectedProcessingToken = null
                 }) { Text("Stop separation", color = tokens.accent) }
-            },
-            dismissButton = {
-                TextButton(onClick = { cancelWarnToken = null }) {
-                    Text("Keep processing", color = tokens.mutedText)
-                }
             },
         )
     }
