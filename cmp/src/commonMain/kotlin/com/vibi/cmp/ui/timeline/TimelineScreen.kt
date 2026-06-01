@@ -1,6 +1,12 @@
 package com.vibi.cmp.ui.timeline
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -128,6 +134,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.scale
@@ -1524,11 +1531,31 @@ private fun ProcessingSpinner(color: Color, backing: Color? = null) {
                     .background(backing)
             )
         }
-        CircularProgressIndicator(
-            modifier = Modifier.size(TimelineBarSpec.ProcessingSpinnerSize),
-            color = color,
-            strokeWidth = TimelineBarSpec.ProcessingSpinnerStroke,
+        // Material3 기본 indeterminate 스피너는 호(arc) 길이가 늘었다 줄었다(sweep 애니) 해서 "선이 길어졌다
+        // 짧아졌다" 보임. 여기선 길이 고정 호를 등속 회전만 시켜 일관된 모양 유지.
+        val transition = rememberInfiniteTransition(label = "processingSpinner")
+        val rotation by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 800, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "processingSpinnerRotation",
         )
+        val strokePx = with(LocalDensity.current) { TimelineBarSpec.ProcessingSpinnerStroke.toPx() }
+        Canvas(modifier = Modifier.size(TimelineBarSpec.ProcessingSpinnerSize)) {
+            val inset = strokePx / 2f
+            drawArc(
+                color = color,
+                startAngle = rotation,
+                sweepAngle = 270f, // 고정 호 길이 (3/4 링) — 회전만, 길이 변화 없음
+                useCenter = false,
+                topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+                size = androidx.compose.ui.geometry.Size(size.width - strokePx, size.height - strokePx),
+                style = Stroke(width = strokePx, cap = StrokeCap.Round),
+            )
+        }
     }
 }
 
