@@ -24,7 +24,6 @@ import com.vibi.shared.domain.model.addProcessingSeparation
 import com.vibi.shared.domain.model.removeProcessingSeparation
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.platform.generateId
-import com.vibi.shared.domain.model.TextOverlay
 import com.vibi.shared.domain.model.clearSeparation
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
@@ -33,13 +32,11 @@ import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.domain.repository.StemSelection
-import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.AudioSourceKind
 import com.vibi.shared.domain.usecase.bgm.AddBgmClipUseCase
 import com.vibi.shared.domain.usecase.bgm.UpdateBgmClipUseCase
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
-import com.vibi.shared.domain.usecase.input.SetProjectFrameUseCase
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
 import com.vibi.shared.domain.usecase.save.ExportVariant
 import com.vibi.shared.domain.usecase.save.PrewarmAssetUploadUseCase
@@ -48,9 +45,6 @@ import com.vibi.shared.domain.usecase.separation.PollSeparationUseCase
 import com.vibi.shared.domain.usecase.separation.StartAudioSeparationUseCase
 import com.vibi.shared.domain.usecase.share.ShareSheetLauncher
 import com.vibi.shared.domain.util.UndoRedoManager
-import com.vibi.shared.domain.usecase.text.AddTextOverlayUseCase
-import com.vibi.shared.domain.usecase.text.DuplicateTextOverlayUseCase
-import com.vibi.shared.domain.usecase.text.UpdateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.DuplicateSegmentRangeUseCase
 import com.vibi.shared.domain.usecase.timeline.MoveSegmentUseCase
@@ -206,31 +200,6 @@ data class TimelineUiState(
     val pendingRangeSpeed: Float = 1.0f,
     val isSegmentEditMode: Boolean = false,
     val editTargets: Set<EditTarget> = setOf(EditTarget.Video),
-    val frameWidth: Int = 0,
-    val frameHeight: Int = 0,
-    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
-    val videoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
-    val videoOffsetXPct: Float = 0f,
-    val videoOffsetYPct: Float = 0f,
-    val showFrameSheet: Boolean = false,
-    val pendingFrameWidth: String = "",
-    val pendingFrameHeight: String = "",
-    val pendingBackgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
-    val pendingVideoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
-    val pendingVideoOffsetXPct: Float = 0f,
-    val pendingVideoOffsetYPct: Float = 0f,
-    val frameError: String? = null,
-    val textOverlays: List<TextOverlay> = emptyList(),
-    val selectedTextOverlayId: String? = null,
-    val showTextOverlaySheet: Boolean = false,
-    val editingTextOverlayId: String? = null,
-    val pendingOverlayText: String = "",
-    val pendingOverlayFontFamily: String = TextOverlay.DEFAULT_FONT_FAMILY,
-    val pendingOverlayFontSizeSp: Float = TextOverlay.DEFAULT_FONT_SIZE_SP,
-    val pendingOverlayColorHex: String = TextOverlay.DEFAULT_COLOR_HEX,
-    val pendingOverlayStartMs: Long = 0L,
-    val pendingOverlayEndMs: Long = 0L,
-    val textOverlayError: String? = null,
     val bgmClips: List<BgmClip> = emptyList(),
     val selectedBgmClipId: String? = null,
     val isAddingBgm: Boolean = false,
@@ -260,30 +229,18 @@ data class TimelineUiState(
     val previewMode: PreviewMode = PreviewMode.MIX,
 ) {
     val effectiveTrimEndMs: Long get() = if (trimEndMs <= 0L) videoDurationMs else trimEndMs
-    val frameAspectRatio: Float
-        get() = if (frameWidth > 0 && frameHeight > 0) {
-            frameWidth.toFloat() / frameHeight.toFloat()
-        } else 0f
 }
 
 data class TimelineSnapshot(
     val segments: List<Segment>,
-    val textOverlays: List<TextOverlay> = emptyList(),
     val bgmClips: List<BgmClip> = emptyList(),
     val separationDirectives: List<SeparationDirective> = emptyList(),
-    val frameWidth: Int = 0,
-    val frameHeight: Int = 0,
-    val backgroundColorHex: String = EditProject.DEFAULT_BACKGROUND_COLOR_HEX,
-    val videoScale: Float = EditProject.DEFAULT_VIDEO_SCALE,
-    val videoOffsetXPct: Float = 0f,
-    val videoOffsetYPct: Float = 0f
 )
 
 class TimelineViewModel constructor(
     private val projectId: String,
     private val segmentRepository: SegmentRepository,
     private val editProjectRepository: EditProjectRepository,
-    private val textOverlayRepository: TextOverlayRepository,
     private val bgmClipRepository: BgmClipRepository,
     private val updateSegmentTrim: UpdateSegmentTrimUseCase,
     private val addVideoSegment: AddVideoSegmentUseCase,
@@ -295,10 +252,6 @@ class TimelineViewModel constructor(
     private val removeSegmentRange: RemoveSegmentRangeUseCase,
     private val updateSegmentVolume: UpdateSegmentVolumeUseCase,
     private val updateSegmentSpeed: UpdateSegmentSpeedUseCase,
-    private val setProjectFrame: SetProjectFrameUseCase,
-    private val addTextOverlay: AddTextOverlayUseCase,
-    private val updateTextOverlay: UpdateTextOverlayUseCase,
-    private val duplicateTextOverlay: DuplicateTextOverlayUseCase,
     private val addBgmClip: AddBgmClipUseCase,
     private val updateBgmClip: UpdateBgmClipUseCase,
     private val videoMetadataExtractor: VideoMetadataExtractor,
@@ -368,7 +321,6 @@ class TimelineViewModel constructor(
     init {
         loadSegments()
         observeProject()
-        observeTextOverlays()
         observeBgmClips()
         observeSeparationDirectives()
     }
@@ -461,12 +413,6 @@ class TimelineViewModel constructor(
                     _uiState.update { current ->
                         current.copy(
                             projectTitle = project.title,
-                            frameWidth = project.frameWidth,
-                            frameHeight = project.frameHeight,
-                            backgroundColorHex = project.backgroundColorHex,
-                            videoScale = project.videoScale,
-                            videoOffsetXPct = project.videoOffsetXPct,
-                            videoOffsetYPct = project.videoOffsetYPct,
                             separationStatus = project.separationStatus,
                         )
                     }
@@ -590,16 +536,6 @@ class TimelineViewModel constructor(
 
     // 자막/더빙 trigger 제거 — separation 만 유지.
 
-    private fun observeTextOverlays() {
-        viewModelScope.launch {
-            textOverlayRepository.observeOverlays(projectId).collect { overlays ->
-                // atomic CAS — 다른 observer / mutation 핸들러와 race 시 stale state read-modify-write
-                // 차단 (다른 observe* 들과 동일 패턴).
-                _uiState.update { it.copy(textOverlays = overlays) }
-            }
-        }
-    }
-
     private fun loadSegments() {
         viewModelScope.launch {
             segmentRepository.observeByProjectId(projectId).collect { segments ->
@@ -688,25 +624,17 @@ class TimelineViewModel constructor(
 
     /**
      * In-memory snapshot — `_uiState.value` 가 이미 모든 repository 의 최신 상태를 반영하고 있으므로
-     * 다시 7-async fan-out 으로 repository 를 .first() 하지 않는다. frame/background 등 EditProject
-     * 필드도 _uiState 에 미러링돼 있어 동기 접근 가능. (observeProject 가 이미 이 필드들을 hydrate)
+     * 다시 async fan-out 으로 repository 를 .first() 하지 않는다.
      *
      * 효과: pushUndoState 가 hot-path (드래그·슬라이더·복제 등) 에서 호출돼도 zero round-trip.
-     * 이전 fan-out 은 매 mutation 마다 6-7개 .first() 콜드 콜렉트 → dispatcher hop 비용이 측정됐다.
+     * 이전 fan-out 은 매 mutation 마다 .first() 콜드 콜렉트 → dispatcher hop 비용이 측정됐다.
      */
     private fun buildSnapshot(): TimelineSnapshot {
         val s = _uiState.value
         return TimelineSnapshot(
             segments = s.segments,
-            textOverlays = s.textOverlays,
             bgmClips = s.bgmClips,
             separationDirectives = s.separationDirectives,
-            frameWidth = s.frameWidth,
-            frameHeight = s.frameHeight,
-            backgroundColorHex = s.backgroundColorHex,
-            videoScale = s.videoScale,
-            videoOffsetXPct = s.videoOffsetXPct,
-            videoOffsetYPct = s.videoOffsetYPct,
         )
     }
 
@@ -743,19 +671,18 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * Single-selection model: at any moment at most one of segment / text-overlay / bgm
-     * may be selected. This helper applies a tap-toggle on the chosen target while clearing
+     * Single-selection model: at any moment at most one of segment / bgm may be selected.
+     * This helper applies a tap-toggle on the chosen target while clearing
      * every other selected*Id.
      */
     private enum class SelectionTarget {
-        Segment, TextOverlay, Bgm
+        Segment, Bgm
     }
 
     private fun selectExclusively(target: SelectionTarget, id: String?) {
         val state = _uiState.value
         val current = when (target) {
             SelectionTarget.Segment -> state.selectedSegmentId
-            SelectionTarget.TextOverlay -> state.selectedTextOverlayId
             SelectionTarget.Bgm -> state.selectedBgmClipId
         }
         val next = if (id != null && id == current) null else id
@@ -765,7 +692,6 @@ class TimelineViewModel constructor(
         val switchingToBgm = target == SelectionTarget.Bgm && next != null
         _uiState.value = state.copy(
             selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
-            selectedTextOverlayId = if (target == SelectionTarget.TextOverlay) next else null,
             selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
@@ -775,22 +701,6 @@ class TimelineViewModel constructor(
             rangeTargetSegmentId = if (switchingToBgm) null else state.rangeTargetSegmentId,
             pendingRangeStartMs = if (switchingToBgm) 0L else state.pendingRangeStartMs,
             pendingRangeEndMs = if (switchingToBgm) 0L else state.pendingRangeEndMs,
-        )
-    }
-
-    /**
-     * Pick the lowest lane number free of time-overlap with existing text overlays —
-     * they share lanes on the merged overlay track.
-     */
-    private fun pickFreeOverlayLane(startMs: Long, endMs: Long): Int {
-        val state = _uiState.value
-        return com.vibi.shared.domain.util.pickLowestFreeLane(
-            existing = state.textOverlays,
-            startMs = startMs,
-            endMs = endMs,
-            laneOf = { it.lane },
-            startOf = { it.startMs },
-            endOf = { it.endMs }
         )
     }
 
@@ -816,33 +726,11 @@ class TimelineViewModel constructor(
         // N+1 insert 회피 — DAO insertAll 한 번 IPC.
         segmentRepository.deleteAllByProjectId(projectId)
         segmentRepository.addSegments(snapshot.segments)
-        textOverlayRepository.deleteAllByProjectId(projectId)
-        textOverlayRepository.addOverlays(snapshot.textOverlays)
         bgmClipRepository.deleteAllByProjectId(projectId)
         bgmClipRepository.addClips(snapshot.bgmClips)
         separationDirectiveRepository.deleteByProject(projectId)
         if (snapshot.separationDirectives.isNotEmpty()) {
             separationDirectiveRepository.addAll(snapshot.separationDirectives)
-        }
-        if (snapshot.frameWidth > 0 && snapshot.frameHeight > 0) {
-            // Frame is restored directly via the repository (not SetProjectFrameUseCase)
-            // because snapshot values already passed validation when first applied;
-            // re-validating could reject a legitimate prior state if validation rules
-            // change in the future.
-            val current = editProjectRepository.getProject(projectId)
-            if (current != null) {
-                editProjectRepository.updateProject(
-                    current.copy(
-                        frameWidth = snapshot.frameWidth,
-                        frameHeight = snapshot.frameHeight,
-                        backgroundColorHex = snapshot.backgroundColorHex,
-                        videoScale = snapshot.videoScale,
-                        videoOffsetXPct = snapshot.videoOffsetXPct,
-                        videoOffsetYPct = snapshot.videoOffsetYPct,
-                        updatedAt = currentTimeMillis()
-                    )
-                )
-            }
         }
     }
 
@@ -1199,10 +1087,9 @@ class TimelineViewModel constructor(
             editTargets = targets.ifEmpty { setOf(EditTarget.Video) },
             rangeTargetSegmentId = seg.id,
             selectedSegmentId = seg.id,
-            // 영상 편집 모드 진입 = 단일 선택 모델상 BGM/텍스트 선택 해제. 안 그러면 deck
+            // 영상 편집 모드 진입 = 단일 선택 모델상 BGM 선택 해제. 안 그러면 deck
             // 카드 highlight 또는 잠재적 BGM 하단바가 영상 모드와 동시에 잡힘.
             selectedBgmClipId = null,
-            selectedTextOverlayId = null,
             pendingRangeStartMs = range.first,
             pendingRangeEndMs = range.last,
             showRangeActionSheet = false,
@@ -1520,7 +1407,6 @@ class TimelineViewModel constructor(
             editTargets = setOf(EditTarget.Bgm(clipId)),
             selectedBgmClipId = clipId,
             selectedSegmentId = null,
-            selectedTextOverlayId = null,
             isVideoSelected = false,
             showVideoVolumeSlider = false,
             rangeTargetSegmentId = null,
@@ -2436,380 +2322,6 @@ class TimelineViewModel constructor(
             acc = next
         }
         return segments.lastOrNull()
-    }
-
-    fun onShowFrameSheet() {
-        val state = _uiState.value
-        // Seed width/height with a sensible default when the project has no
-        // frame yet so Apply doesn't fail with "Width/Height required" if the
-        // user tapped Apply without touching a preset.
-        val basis = state.frameLongestSidePx().coerceAtLeast(MIN_FRAME_DIMENSION)
-        val (defaultW, defaultH) = FramePreset.LANDSCAPE_16_9.toDimensions(basis)
-        _uiState.value = state.copy(
-            showFrameSheet = true,
-            pendingFrameWidth = if (state.frameWidth > 0) state.frameWidth.toString()
-                else defaultW.toString(),
-            pendingFrameHeight = if (state.frameHeight > 0) state.frameHeight.toString()
-                else defaultH.toString(),
-            pendingBackgroundColorHex = state.backgroundColorHex,
-            pendingVideoScale = state.videoScale,
-            pendingVideoOffsetXPct = state.videoOffsetXPct,
-            pendingVideoOffsetYPct = state.videoOffsetYPct,
-            frameError = null
-        )
-    }
-
-    fun onConfirmFrameWithPlacement(
-        scale: Float,
-        offsetXPct: Float,
-        offsetYPct: Float
-    ) {
-        // Single write path: validate + persist in one atomic state update so
-        // UI never observes a half-applied placement (old confirm() re-read
-        // _uiState.value and implicitly depended on copy ordering).
-        val state = _uiState.value
-        val width = state.pendingFrameWidth.toIntOrNull()
-        val height = state.pendingFrameHeight.toIntOrNull()
-        if (width == null || width <= 0 || height == null || height <= 0) {
-            _uiState.value = state.copy(frameError = "Width and height must be positive integers")
-            return
-        }
-        if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
-            _uiState.value = state.copy(frameError = "Max ${MAX_FRAME_DIMENSION}px")
-            return
-        }
-        val color = state.pendingBackgroundColorHex.trim()
-        val clampedScale = scale.coerceIn(
-            EditProject.MIN_VIDEO_SCALE,
-            EditProject.MAX_VIDEO_SCALE
-        )
-        val clampedX = offsetXPct.coerceIn(
-            -EditProject.MAX_VIDEO_OFFSET_PCT,
-            EditProject.MAX_VIDEO_OFFSET_PCT
-        )
-        val clampedY = offsetYPct.coerceIn(
-            -EditProject.MAX_VIDEO_OFFSET_PCT,
-            EditProject.MAX_VIDEO_OFFSET_PCT
-        )
-        viewModelScope.launch {
-            try {
-                setProjectFrame(
-                    projectId = projectId,
-                    width = width,
-                    height = height,
-                    backgroundColorHex = color,
-                    videoScale = clampedScale,
-                    videoOffsetXPct = clampedX,
-                    videoOffsetYPct = clampedY
-                )
-                _uiState.value = _uiState.value.copy(
-                    showFrameSheet = false,
-                    pendingVideoScale = clampedScale,
-                    pendingVideoOffsetXPct = clampedX,
-                    pendingVideoOffsetYPct = clampedY,
-                    frameError = null
-                )
-                pushUndoState()
-            } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(frameError = "Invalid frame")
-            }
-        }
-    }
-
-    fun onDismissFrameSheet() {
-        _uiState.value = _uiState.value.copy(showFrameSheet = false, frameError = null)
-    }
-
-    fun onFrameWidthInputChanged(value: String) {
-        _uiState.value = _uiState.value.copy(pendingFrameWidth = value, frameError = null)
-    }
-
-    fun onFrameHeightInputChanged(value: String) {
-        _uiState.value = _uiState.value.copy(pendingFrameHeight = value, frameError = null)
-    }
-
-    fun onFrameBackgroundColorChanged(value: String) {
-        _uiState.value = _uiState.value.copy(pendingBackgroundColorHex = value, frameError = null)
-    }
-
-    fun onApplyFramePreset(preset: FramePreset) {
-        val state = _uiState.value
-        val basis = state.frameLongestSidePx().coerceAtLeast(MIN_FRAME_DIMENSION)
-        val (w, h) = preset.toDimensions(basis)
-        _uiState.value = state.copy(
-            pendingFrameWidth = w.toString(),
-            pendingFrameHeight = h.toString(),
-            frameError = null
-        )
-    }
-
-    fun onConfirmFrame() {
-        val state = _uiState.value
-        val width = state.pendingFrameWidth.toIntOrNull()
-        val height = state.pendingFrameHeight.toIntOrNull()
-        if (width == null || width <= 0 || height == null || height <= 0) {
-            _uiState.value = state.copy(frameError = "Width and height must be positive integers")
-            return
-        }
-        if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
-            _uiState.value = state.copy(frameError = "Max ${MAX_FRAME_DIMENSION}px")
-            return
-        }
-        val color = state.pendingBackgroundColorHex.trim()
-        viewModelScope.launch {
-            try {
-                setProjectFrame(
-                    projectId = projectId,
-                    width = width,
-                    height = height,
-                    backgroundColorHex = color,
-                    videoScale = state.pendingVideoScale,
-                    videoOffsetXPct = state.pendingVideoOffsetXPct,
-                    videoOffsetYPct = state.pendingVideoOffsetYPct
-                )
-                _uiState.value = _uiState.value.copy(showFrameSheet = false, frameError = null)
-                pushUndoState()
-            } catch (e: IllegalArgumentException) {
-                // SetProjectFrameUseCase is the source of truth for color/dimension
-                // validation; keep its message as-is for the UI.
-                _uiState.value = _uiState.value.copy(frameError = "Invalid frame")
-            }
-        }
-    }
-
-    private fun TimelineUiState.frameLongestSidePx(): Int {
-        val segMax = segments.firstOrNull()?.let { maxOf(it.width, it.height) } ?: 0
-        return maxOf(frameWidth, frameHeight, segMax)
-    }
-
-    fun onShowTextOverlaySheetForNew() {
-        val state = _uiState.value
-        val total = state.videoDurationMs.coerceAtLeast(1L)
-        val playhead = state.playbackPositionMs.coerceIn(0L, (total - 1L).coerceAtLeast(0L))
-        // Avoid stacking on top of an existing overlay at the same start time.
-        // Shift the new clip rightward in 250ms steps until a free spot opens
-        // (or until we run out of timeline).
-        val taken = state.textOverlays.map { it.startMs }.toSet()
-        var start = playhead
-        while (start in taken && start < total - 1L) start += 250L
-        val end = (start + DEFAULT_OVERLAY_DURATION_MS).coerceAtMost(total)
-        _uiState.value = state.copy(
-            showTextOverlaySheet = true,
-            editingTextOverlayId = null,
-            pendingOverlayText = "",
-            pendingOverlayFontFamily = TextOverlay.DEFAULT_FONT_FAMILY,
-            pendingOverlayFontSizeSp = TextOverlay.DEFAULT_FONT_SIZE_SP,
-            pendingOverlayColorHex = TextOverlay.DEFAULT_COLOR_HEX,
-            pendingOverlayStartMs = start,
-            pendingOverlayEndMs = end,
-            textOverlayError = null
-        )
-    }
-
-    fun onShowTextOverlaySheetForEdit(overlayId: String) {
-        val overlay = _uiState.value.textOverlays.firstOrNull { it.id == overlayId } ?: return
-        _uiState.value = _uiState.value.copy(
-            showTextOverlaySheet = true,
-            editingTextOverlayId = overlay.id,
-            pendingOverlayText = overlay.text,
-            pendingOverlayFontFamily = overlay.fontFamily,
-            pendingOverlayFontSizeSp = overlay.fontSizeSp,
-            pendingOverlayColorHex = overlay.colorHex,
-            pendingOverlayStartMs = overlay.startMs,
-            pendingOverlayEndMs = overlay.endMs,
-            textOverlayError = null
-        )
-    }
-
-    fun onDismissTextOverlaySheet() {
-        _uiState.value = _uiState.value.copy(
-            showTextOverlaySheet = false,
-            textOverlayError = null
-        )
-    }
-
-    fun onTextOverlayTextChanged(value: String) {
-        _uiState.value = _uiState.value.copy(pendingOverlayText = value, textOverlayError = null)
-    }
-
-    fun onTextOverlayFontFamilyChanged(family: String) {
-        _uiState.value = _uiState.value.copy(pendingOverlayFontFamily = family, textOverlayError = null)
-    }
-
-    fun onTextOverlayFontSizeChanged(sizeSp: Float) {
-        _uiState.value = _uiState.value.copy(
-            pendingOverlayFontSizeSp = sizeSp.coerceIn(
-                TextOverlay.MIN_FONT_SIZE_SP, TextOverlay.MAX_FONT_SIZE_SP
-            ),
-            textOverlayError = null
-        )
-    }
-
-    fun onTextOverlayColorChanged(colorHex: String) {
-        _uiState.value = _uiState.value.copy(pendingOverlayColorHex = colorHex, textOverlayError = null)
-    }
-
-    fun onConfirmTextOverlay() {
-        val state = _uiState.value
-        val text = state.pendingOverlayText.trim()
-        if (text.isEmpty()) {
-            _uiState.value = state.copy(textOverlayError = "Text cannot be empty")
-            return
-        }
-        if (state.pendingOverlayEndMs <= state.pendingOverlayStartMs) {
-            _uiState.value = state.copy(textOverlayError = "End must be greater than Start")
-            return
-        }
-        viewModelScope.launch {
-            try {
-                if (state.editingTextOverlayId == null) {
-                    addPendingTextOverlay(state, text)
-                } else {
-                    updatePendingTextOverlay(state, state.editingTextOverlayId, text)
-                }
-                _uiState.value = _uiState.value.copy(
-                    showTextOverlaySheet = false,
-                    textOverlayError = null
-                )
-                pushUndoState()
-            } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(
-                    textOverlayError = "Invalid text overlay"
-                )
-            }
-        }
-    }
-
-    private suspend fun addPendingTextOverlay(state: TimelineUiState, text: String) {
-        addTextOverlay(
-            projectId = projectId,
-            text = text,
-            startMs = state.pendingOverlayStartMs,
-            endMs = state.pendingOverlayEndMs,
-            fontFamily = state.pendingOverlayFontFamily,
-            fontSizeSp = state.pendingOverlayFontSizeSp,
-            colorHex = state.pendingOverlayColorHex,
-            lane = pickFreeOverlayLane(state.pendingOverlayStartMs, state.pendingOverlayEndMs)
-        )
-    }
-
-    private suspend fun updatePendingTextOverlay(
-        state: TimelineUiState,
-        editId: String,
-        text: String
-    ) {
-        updateTextOverlay(
-            overlayId = editId,
-            text = text,
-            fontFamily = state.pendingOverlayFontFamily,
-            fontSizeSp = state.pendingOverlayFontSizeSp,
-            colorHex = state.pendingOverlayColorHex,
-            startMs = state.pendingOverlayStartMs,
-            endMs = state.pendingOverlayEndMs
-        )
-    }
-
-    fun onSelectTextOverlay(overlayId: String?) =
-        selectExclusively(SelectionTarget.TextOverlay, overlayId)
-
-    fun onUpdateTextOverlayScreenPosition(overlayId: String, xPct: Float, yPct: Float) {
-        viewModelScope.launch {
-            try {
-                updateTextOverlay(overlayId, xPct = xPct, yPct = yPct)
-            } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
-            }
-        }
-    }
-
-    fun onUpdateTextOverlayFontSize(overlayId: String, fontSizeSp: Float) {
-        viewModelScope.launch {
-            try {
-                updateTextOverlay(overlayId, fontSizeSp = fontSizeSp)
-            } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
-            }
-        }
-    }
-
-    fun onMoveTextOverlay(overlayId: String, newStartMs: Long) {
-        viewModelScope.launch {
-            val overlay = _uiState.value.textOverlays.firstOrNull { it.id == overlayId } ?: return@launch
-            val duration = overlay.endMs - overlay.startMs
-            val total = _uiState.value.videoDurationMs
-            val maxStart = (total - duration).coerceAtLeast(0L)
-            val coercedStart = newStartMs.coerceIn(0L, maxStart)
-            try {
-                updateTextOverlay(
-                    overlayId,
-                    startMs = coercedStart,
-                    endMs = coercedStart + duration
-                )
-                pushUndoState()
-            } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
-            }
-        }
-    }
-
-    fun onResizeTextOverlay(overlayId: String, newEndMs: Long) {
-        viewModelScope.launch {
-            try {
-                updateTextOverlay(overlayId, endMs = newEndMs)
-                pushUndoState()
-            } catch (e: IllegalArgumentException) {
-                _uiState.value = _uiState.value.copy(textOverlayError = e.message)
-            }
-        }
-    }
-
-    fun onDuplicateTextOverlay(overlayId: String) {
-        viewModelScope.launch {
-            val src = textOverlayRepository.getOverlay(overlayId) ?: return@launch
-            // Place duplicate at the same time position; AddTextOverlayUseCase
-            // auto-picks the lowest free lane so the copy lands directly below.
-            try {
-                addTextOverlay(
-                    projectId = projectId,
-                    text = src.text,
-                    startMs = src.startMs,
-                    endMs = src.endMs,
-                    fontFamily = src.fontFamily,
-                    fontSizeSp = src.fontSizeSp,
-                    colorHex = src.colorHex,
-                    xPct = src.xPct,
-                    yPct = src.yPct,
-                    lane = pickFreeOverlayLane(src.startMs, src.endMs)
-                )
-                pushUndoState()
-            } catch (_: IllegalArgumentException) {
-                // overlay disappeared between selection and action; safe to ignore
-            }
-        }
-    }
-
-    fun onChangeTextOverlayLane(overlayId: String, delta: Int) {
-        if (delta == 0) return
-        viewModelScope.launch {
-            val overlay = textOverlayRepository.getOverlay(overlayId) ?: return@launch
-            val newLane = (overlay.lane + delta).coerceAtLeast(0)
-            if (newLane == overlay.lane) return@launch
-            try {
-                updateTextOverlay(overlayId, lane = newLane)
-                pushUndoState()
-            } catch (_: IllegalArgumentException) {
-            }
-        }
-    }
-
-    fun onDeleteTextOverlay(overlayId: String) {
-        viewModelScope.launch {
-            textOverlayRepository.deleteOverlay(overlayId)
-            if (_uiState.value.selectedTextOverlayId == overlayId) {
-                _uiState.value = _uiState.value.copy(selectedTextOverlayId = null)
-            }
-            pushUndoState()
-        }
     }
 
     fun onPickBgmAudio(uri: String) {
@@ -4332,9 +3844,6 @@ class TimelineViewModel constructor(
 
     companion object {
         const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
-        const val MIN_FRAME_DIMENSION = 16
-        const val MAX_FRAME_DIMENSION = 7680
-        const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
         private const val HTTP_NOT_FOUND = 404
         private const val ERROR_SEPARATION_GENERIC = "Separation failed"
         // sheet 의 FAILED 단계가 [AudioSeparationUiState.insufficientCredits]=true 일 때 표시할
@@ -4360,19 +3869,4 @@ class TimelineViewModel constructor(
         _uiState.value = _uiState.value.copy(showExportOptionsSheet = false)
     }
 
-}
-
-enum class FramePreset(val ratioW: Int, val ratioH: Int, val label: String) {
-    PORTRAIT_9_16(9, 16, "9:16"),
-    SQUARE_1_1(1, 1, "1:1"),
-    LANDSCAPE_16_9(16, 9, "16:9"),
-    PORTRAIT_4_5(4, 5, "4:5");
-
-    fun toDimensions(longestSide: Int): Pair<Int, Int> {
-        val maxRatio = maxOf(ratioW, ratioH)
-        val unit = (longestSide.toDouble() / maxRatio).coerceAtLeast(1.0)
-        val w = (unit * ratioW).toInt().coerceAtLeast(1)
-        val h = (unit * ratioH).toInt().coerceAtLeast(1)
-        return w to h
-    }
 }

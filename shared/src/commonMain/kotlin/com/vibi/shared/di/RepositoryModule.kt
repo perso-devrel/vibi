@@ -11,13 +11,11 @@ import com.vibi.shared.data.remote.AssetUploadManager
 import com.vibi.shared.data.remote.AssetUploader
 import com.vibi.shared.data.repository.RemoteRenderExecutor
 import com.vibi.shared.data.repository.SegmentRepositoryImpl
-import com.vibi.shared.data.repository.TextOverlayRepositoryImpl
 import com.vibi.shared.data.repository.V3RenderExecutor
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.SegmentRepository
-import com.vibi.shared.domain.repository.TextOverlayRepository
 import org.koin.dsl.module
 
 val repositoryModule = module {
@@ -29,14 +27,12 @@ val repositoryModule = module {
             database = get(),
             dao = get(),
             segmentDao = get(),
-            textOverlayDao = get(),
             bgmClipDao = get(),
             separationDirectiveDao = get(),
             userSession = get(),
         )
     }
     single<SegmentRepository> { SegmentRepositoryImpl(get()) }
-    single<TextOverlayRepository> { TextOverlayRepositoryImpl(get()) }
     single<BgmClipRepository> { BgmClipRepositoryImpl(get()) }
     single<AudioSeparationRepository> {
         AudioSeparationRepositoryImpl(

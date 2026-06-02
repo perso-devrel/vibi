@@ -5,12 +5,10 @@ import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.model.SeparationDirective
-import com.vibi.shared.domain.model.TextOverlay
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
 import com.vibi.shared.domain.repository.SegmentRepository
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
-import com.vibi.shared.domain.repository.TextOverlayRepository
 import com.vibi.shared.domain.usecase.share.GallerySaver
 import com.vibi.shared.ui.export.ExportPlatformAdapter
 import com.vibi.shared.ui.export.ExportRequest
@@ -146,30 +144,6 @@ class SaveAllVariantsUseCaseTest {
     }
 
     @Test
-    fun `textOverlay 추가는 bypass 막지 않음 — render 도 처리 안 함 preview 전용`() = runTest {
-        // isProjectEdited 도메인 SSOT 가 명시: image/text overlay 는 export 출력에 영향 없음.
-        val segment = videoSegment()
-        val overlay = TextOverlay(
-            id = "t1", projectId = "p1", text = "hi",
-            startMs = 0L, endMs = 1_000L, lane = 0,
-            fontFamily = "Default", fontSizeSp = 16f,
-            colorHex = "#FFFFFF",
-        )
-        val adapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4")
-        val useCase = useCaseWith(
-            project = projectFor(segment),
-            segments = listOf(segment),
-            textOverlays = listOf(overlay),
-            adapter = adapter,
-        )
-
-        val result = useCase(projectId = "p1", onProgress = { })
-
-        assertTrue(result.isSuccess)
-        assertEquals(0, adapter.callCount, "overlay 는 bypass 가드에서 무시 — render skip")
-    }
-
-    @Test
     fun `render 실패 시 Result_failure 반환 + Throwable 보존`() = runTest {
         val segment = videoSegment(volumeScale = 0.5f) // render 강제
         val adapter = FakeExportPlatformAdapter(failure = RuntimeException("bff timeout"))
@@ -261,7 +235,6 @@ class SaveAllVariantsUseCaseTest {
         segments: List<Segment>,
         bgmClips: List<BgmClip> = emptyList(),
         separationDirectives: List<SeparationDirective> = emptyList(),
-        textOverlays: List<TextOverlay> = emptyList(),
         adapter: FakeExportPlatformAdapter = FakeExportPlatformAdapter(success = "/tmp/rendered.mp4"),
         gallerySaver: FakeGallerySaver = FakeGallerySaver(),
         renderCache: ExportRenderCache = ExportRenderCache(pathExists = { false }),
