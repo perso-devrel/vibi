@@ -4,6 +4,7 @@ import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
 import com.vibi.shared.platform.IapBridge
 import com.vibi.shared.platform.IapTransactionReconciler
+import com.vibi.shared.platform.OnDeviceVideoExportBridge
 import org.koin.dsl.module
 import org.koin.mp.KoinPlatform
 
@@ -15,12 +16,14 @@ import org.koin.mp.KoinPlatform
  * @param googleSignInBridge Swift `GoogleSignInBridgeImpl` 인스턴스.
  * @param appleSignInBridge Swift `AppleSignInBridgeImpl` 인스턴스.
  * @param iapBridge Swift `IapBridgeImpl` (StoreKit2) 인스턴스.
+ * @param onDeviceVideoExportBridge Swift `OnDeviceVideoExportBridgeImpl` (AVFoundation 온디바이스 인코딩) 인스턴스.
  */
 fun initKoinIos(
     bffBaseUrl: String,
     googleSignInBridge: GoogleSignInBridge,
     appleSignInBridge: AppleSignInBridge,
     iapBridge: IapBridge,
+    onDeviceVideoExportBridge: OnDeviceVideoExportBridge,
 ) {
     initKoin(
         bffBaseUrl = bffBaseUrl,
@@ -30,6 +33,7 @@ fun initKoinIos(
                 single<GoogleSignInBridge> { googleSignInBridge }
                 single<AppleSignInBridge> { appleSignInBridge }
                 single<IapBridge> { iapBridge }
+                single<OnDeviceVideoExportBridge> { onDeviceVideoExportBridge }
             },
         ),
     )

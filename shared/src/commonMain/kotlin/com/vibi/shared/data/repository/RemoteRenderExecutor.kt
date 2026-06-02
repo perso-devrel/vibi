@@ -13,13 +13,9 @@ import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
 import com.vibi.shared.domain.usecase.export.SeparationDirectiveInput
-import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.readFileBytes
 import com.vibi.shared.platform.saveBytesToCache
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 
 /**
  * BFF render 잡 제출 + COMPLETED 폴링 + 결과 mp4 다운로드 + 캐시 저장 후 파일 경로 반환.
@@ -55,7 +51,18 @@ class RemoteRenderExecutor(
             ).jobId
             onProgress(10)
 
-            pollUntilDone(jobId, downloadProgressMax = 89, completedProgress = 90, onProgress = onProgress)
+            val pollStartProgress = 10
+            val pollEndProgress = 89
+            val ratio = (pollEndProgress - pollStartProgress).coerceAtLeast(1) / 100f
+            pollRenderJobUntilDone(
+                api = api,
+                jobId = jobId,
+                onPoll = { sp ->
+                    val mapped = pollStartProgress + (sp * ratio).toInt()
+                    onProgress(mapped.coerceIn(pollStartProgress, pollEndProgress))
+                },
+                onCompleted = { onProgress(90) },
+            )
 
             val bytes = api.downloadRenderResult(jobId)
             val outPath = saveBytesToCache(outputPath.substringAfterLast('/'), bytes)
@@ -66,34 +73,6 @@ class RemoteRenderExecutor(
         } catch (e: Throwable) {
             Result.failure(e)
         }
-    }
-
-    private suspend fun pollUntilDone(
-        jobId: String,
-        downloadProgressMax: Int,
-        completedProgress: Int,
-        onProgress: (percent: Int) -> Unit,
-    ) {
-        val maxPollMs = 15 * 60 * 1000L
-        val startTime = currentTimeMillis()
-        val span = (downloadProgressMax - 10).coerceAtLeast(1)
-        val ratio = span / 100f
-        while (currentCoroutineContext().isActive) {
-            if (currentTimeMillis() - startTime > maxPollMs) {
-                throw RuntimeException("Render timed out (15 min)")
-            }
-            val status = api.getRenderStatus(jobId)
-            when (status.status) {
-                "COMPLETED" -> { onProgress(completedProgress); return }
-                "FAILED" -> throw RuntimeException(status.error ?: "Server render failed")
-                else -> {
-                    val mapped = 10 + (status.progress * ratio).toInt()
-                    onProgress(mapped.coerceIn(10, downloadProgressMax))
-                }
-            }
-            delay(2000)
-        }
-        throw CancellationException("Render polling cancelled")
     }
 
     private data class RenderRequest(

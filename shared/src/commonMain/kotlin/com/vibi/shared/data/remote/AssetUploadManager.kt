@@ -45,8 +45,11 @@ interface AssetUploader {
  *   3) `alreadyExists=true` 면 모바일은 PUT skip — 그 assetKey 만 캐시 박고 반환
  *   4) 그렇지 않으면 presigned URL 로 R2 직접 PUT → 성공 시 캐시 저장
  *
- * R2 가 lifecycle 만료로 객체를 지웠어도 매 호출이 [BffApi.requestAssetUploadUrl] 을 통과하므로
- * `alreadyExists=false` 분기에서 자연 재업로드.
+ * 주의: 로컬 [AssetKeyCache] hit(1)은 BFF 를 호출하지 않고 캐시된 assetKey 를 즉시 반환한다 —
+ * prewarm→저장 시점의 instant 히트를 위한 의도된 최적화. 따라서 R2 가 lifecycle 만료 등으로
+ * 객체를 지웠는데 로컬 캐시가 남아 있으면, 이후 렌더가 그 키로 404 날 수 있다. R2 만료 정책을
+ * 둘 경우 캐시 TTL 을 그보다 짧게 두거나, hit 시에도 requestAssetUploadUrl 로 존재 확인을
+ * 추가해야 한다 (sha256 만 캐시에 함께 저장하면 네트워크만 추가, 해시 재계산은 계속 skip).
  */
 class AssetUploadManager(
     private val api: BffApi,
@@ -80,4 +83,20 @@ class AssetUploadManager(
         cache.put(localPath, meta, resp.assetKey)
         return resp.assetKey
     }
+}
+
+private val ALLOWED_AUDIO_EXTS = setOf("m4a", "mp3", "wav", "aac")
+
+/** 파일 경로 확장자로 R2 업로드용 audio ext 추론 — 미지원/누락 시 m4a 폴백. 업로드 경로([com.vibi.shared.data.repository.V3RenderExecutor])와 prewarm 이 공유. */
+internal fun inferAudioExt(path: String): String {
+    val raw = path.substringAfterLast('.', "").lowercase()
+    return if (raw in ALLOWED_AUDIO_EXTS) raw else "m4a"
+}
+
+/** [inferAudioExt] 결과 → R2 PUT content-type. */
+internal fun inferAudioContentType(ext: String): String = when (ext) {
+    "m4a", "aac" -> "audio/mp4"
+    "mp3" -> "audio/mpeg"
+    "wav" -> "audio/wav"
+    else -> "audio/mp4"
 }

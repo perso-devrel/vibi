@@ -2,6 +2,8 @@ package com.vibi.shared.data.repository
 
 import com.vibi.shared.data.remote.AssetUploader
 import com.vibi.shared.data.remote.api.BffApi
+import com.vibi.shared.data.remote.inferAudioContentType
+import com.vibi.shared.data.remote.inferAudioExt
 import com.vibi.shared.data.remote.dto.RenderBgmClipV3
 import com.vibi.shared.data.remote.dto.RenderConfigV3
 import com.vibi.shared.data.remote.dto.RenderSegmentV3
@@ -12,12 +14,8 @@ import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
 import com.vibi.shared.domain.usecase.export.SeparationDirectiveInput
-import com.vibi.shared.platform.currentTimeMillis
 import com.vibi.shared.platform.saveBytesToCache
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 
 /**
  * v3 asset-by-reference 렌더 — segment 영상/BGM 을 R2 에 사전 PUT 한 뒤 키만 BFF 로 전송.
@@ -130,12 +128,17 @@ class V3RenderExecutor(
             val jobId = api.submitRenderJobV3(config).jobId
             onProgress(40)
 
-            pollUntilDone(
-                jobId,
-                pollStartProgress = 40,
-                pollEndProgress = 89,
-                completedProgress = 90,
-                onProgress = onProgress,
+            val pollStartProgress = 40
+            val pollEndProgress = 89
+            val ratio = (pollEndProgress - pollStartProgress).coerceAtLeast(1) / 100f
+            pollRenderJobUntilDone(
+                api = api,
+                jobId = jobId,
+                onPoll = { sp ->
+                    val mapped = pollStartProgress + (sp * ratio).toInt()
+                    onProgress(mapped.coerceIn(pollStartProgress, pollEndProgress))
+                },
+                onCompleted = { onProgress(90) },
             )
 
             val bytes = api.downloadRenderResult(jobId)
@@ -149,48 +152,4 @@ class V3RenderExecutor(
         }
     }
 
-    private suspend fun pollUntilDone(
-        jobId: String,
-        pollStartProgress: Int,
-        pollEndProgress: Int,
-        completedProgress: Int,
-        onProgress: (percent: Int) -> Unit,
-    ) {
-        val maxPollMs = 15 * 60 * 1000L
-        val startTime = currentTimeMillis()
-        val span = (pollEndProgress - pollStartProgress).coerceAtLeast(1)
-        val ratio = span / 100f
-        while (currentCoroutineContext().isActive) {
-            if (currentTimeMillis() - startTime > maxPollMs) {
-                throw RuntimeException("Render timed out (15 min)")
-            }
-            val status = api.getRenderStatus(jobId)
-            when (status.status) {
-                "COMPLETED" -> { onProgress(completedProgress); return }
-                "FAILED" -> throw RuntimeException(status.error ?: "Server render failed")
-                else -> {
-                    val mapped = pollStartProgress + (status.progress * ratio).toInt()
-                    onProgress(mapped.coerceIn(pollStartProgress, pollEndProgress))
-                }
-            }
-            delay(2000)
-        }
-        throw CancellationException("Render polling cancelled")
-    }
-
-    private fun inferAudioExt(path: String): String {
-        val raw = path.substringAfterLast('.', "").lowercase()
-        return if (raw in ALLOWED_AUDIO_EXTS) raw else "m4a"
-    }
-
-    private fun inferAudioContentType(ext: String): String = when (ext) {
-        "m4a", "aac" -> "audio/mp4"
-        "mp3" -> "audio/mpeg"
-        "wav" -> "audio/wav"
-        else -> "audio/mp4"
-    }
-
-    companion object {
-        private val ALLOWED_AUDIO_EXTS = setOf("m4a", "mp3", "wav", "aac")
-    }
 }

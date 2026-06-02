@@ -315,8 +315,11 @@ class TimelineViewModel constructor(
     private var separationGate = TriggerGate.ARMED
     private var separationRefreshGate = TriggerGate.ARMED
 
-    // 영상 원본 R2 선업로드(prewarm) 가드 — segment flow 가 재emit 돼도 편집 진입당 1회만 fire.
-    private var prewarmGate = TriggerGate.ARMED
+    // R2 선업로드(prewarm) 추적 — 이미 선업로드 trigger 한 원본 URI 집합. segment/BGM flow 가
+    // 재emit 돼도 같은 URI 는 재trigger 안 하고, 진입 후 "새로 추가된" 영상/BGM 소스만 선업로드한다
+    // (1회성 게이트는 진입 후 append 된 소스를 영영 놓쳤음). ensureUploaded 가 멱등이라 정확성엔 무관,
+    // 불필요한 코루틴 spawn 만 막는 가드.
+    private val prewarmedSourceUris = mutableSetOf<String>()
 
     init {
         loadSegments()
@@ -347,6 +350,7 @@ class TimelineViewModel constructor(
         viewModelScope.launch {
             bgmClipRepository.observeClips(projectId).collect { clips ->
                 val applied = applyBgmLaneOverrides(clips)
+                maybePrewarmBgmUpload(applied)
                 // 사용자가 lane N 에 clip 둔 채 종료 → 재진입 시 default 3 으로 lane N 이 영역 밖 시각
                 // 깜빡임 방지. 현재 lane 수가 점유보다 작으면 그만큼 자동 확장.
                 val maxOccupiedLane = applied.maxOfOrNull { it.lane } ?: -1
@@ -487,7 +491,8 @@ class TimelineViewModel constructor(
                 muteOriginalSegmentAudio = persisted.muteOriginalSegmentAudio,
             )
         )
-        separationJobs[clientToken]?.cancel()
+        // clientToken 은 방금 생성한 새 UUID 라 map 에 없음 → ?.cancel() 은 항상 no-op. 중복 방지는
+        // 위 jobId 가드(477)가 담당.
         separationJobs[clientToken] = viewModelScope.launch {
             pollSeparationFlow(clientToken, persisted.jobId)
         }
@@ -570,19 +575,31 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 편집 진입 시 영상 원본을 R2 에 미리 올려, 저장 시점의 업로드 대기를 없앤다. segment flow 는
-     * 매 편집마다 재emit 되므로 [prewarmGate] 로 진입당 1회만 fire. 업로드는 best-effort 라 실패해도
-     * 저장 경로가 평소대로 처리하므로 회귀가 없다. segment flow 처리를 막지 않도록 별도 launch.
+     * 영상 원본을 R2 에 미리 올려 저장 시점의 업로드 대기를 없앤다. segment flow 는 매 편집마다 재emit
+     * 되므로 [prewarmedSourceUris] 로 이미 선업로드한 URI 는 건너뛰고, 진입 후 새로 append 된 소스만
+     * trigger 한다. 업로드는 best-effort 라 실패해도 저장 경로가 평소대로 처리하므로 회귀가 없다.
+     * segment flow 처리를 막지 않도록 별도 launch.
      */
     private fun maybePrewarmAssetUpload(segments: List<Segment>) {
-        if (prewarmGate != TriggerGate.ARMED) return
-        val videoPaths = segments
+        val newPaths = segments
             .filter { it.type == SegmentType.VIDEO }
             .map { it.sourceUri }
-            .filter { it.isNotBlank() }
-        if (videoPaths.isEmpty()) return
-        prewarmGate = TriggerGate.FIRED
-        viewModelScope.launch { prewarmAssetUpload(videoPaths) }
+            .filter { it.isNotBlank() && prewarmedSourceUris.add(it) }
+        if (newPaths.isEmpty()) return
+        viewModelScope.launch { prewarmAssetUpload.prewarmVideos(newPaths) }
+    }
+
+    /**
+     * BGM 원본을 R2 에 미리 올려 저장 시점의 업로드 대기를 없앤다. [maybePrewarmAssetUpload] 와 동일
+     * 패턴 — BGM 은 보통 편집 중간에 추가되므로(진입 시점엔 없음) 소스별 추적이 필수. 원격 URL BGM 은
+     * 로컬 stat 불가라 prewarm 이 best-effort skip 되고 저장 시점에 평소대로 처리된다.
+     */
+    private fun maybePrewarmBgmUpload(clips: List<BgmClip>) {
+        val newPaths = clips
+            .map { it.sourceUri }
+            .filter { it.isNotBlank() && prewarmedSourceUris.add(it) }
+        if (newPaths.isEmpty()) return
+        viewModelScope.launch { prewarmAssetUpload.prewarmAudio(newPaths) }
     }
 
     private fun selectedSegmentGlobalTrim(
@@ -645,29 +662,30 @@ class TimelineViewModel constructor(
 
     private fun updateUndoRedoState() {
         val mgr = mainUndoManager
-        _uiState.value = _uiState.value.copy(
-            canUndo = mgr.canUndo,
-            canRedo = mgr.canRedo
-        )
+        // update{} (atomic CAS) — observe* 콜렉터 emit 과 read-modify-write 가 interleave 해도
+        // segments/bgmClips/directives 가 stale 값으로 revert 되지 않게. (onUndo/onRedo/commit* 등
+        // 여러 경로에서 호출됨.)
+        _uiState.update { it.copy(canUndo = mgr.canUndo, canRedo = mgr.canRedo) }
     }
 
     fun onUpdatePlaybackPosition(positionMs: Long) {
-        val s = _uiState.value
-        val total = s.videoDurationMs.coerceAtLeast(0L)
-        val hasSelection = s.pendingRangeEndMs > s.pendingRangeStartMs
-        // range 모드 (음원분리/영상편집) + 선택 있음 → pendingRange 안으로 clamp.
-        // zero-width 선택 또는 평상 모드 → 영상 전체 자유 재생.
-        val clamped = when {
-            s.isRangeSelecting && hasSelection ->
-                positionMs.coerceIn(s.pendingRangeStartMs, s.pendingRangeEndMs)
-            else ->
-                positionMs.coerceIn(0L, total)
+        _uiState.update { s ->
+            val total = s.videoDurationMs.coerceAtLeast(0L)
+            val hasSelection = s.pendingRangeEndMs > s.pendingRangeStartMs
+            // range 모드 (음원분리/영상편집) + 선택 있음 → pendingRange 안으로 clamp.
+            // zero-width 선택 또는 평상 모드 → 영상 전체 자유 재생.
+            val clamped = when {
+                s.isRangeSelecting && hasSelection ->
+                    positionMs.coerceIn(s.pendingRangeStartMs, s.pendingRangeEndMs)
+                else ->
+                    positionMs.coerceIn(0L, total)
+            }
+            s.copy(playbackPositionMs = clamped)
         }
-        _uiState.value = s.copy(playbackPositionMs = clamped)
     }
 
     fun onTogglePlayback() {
-        _uiState.value = _uiState.value.copy(isPlaying = !_uiState.value.isPlaying)
+        _uiState.update { it.copy(isPlaying = !it.isPlaying) }
     }
 
     /**
@@ -680,28 +698,31 @@ class TimelineViewModel constructor(
     }
 
     private fun selectExclusively(target: SelectionTarget, id: String?) {
-        val state = _uiState.value
-        val current = when (target) {
-            SelectionTarget.Segment -> state.selectedSegmentId
-            SelectionTarget.Bgm -> state.selectedBgmClipId
+        // 모든 segment/BGM 탭에서 호출되는 핵심 선택 경로 — observe* 콜렉터 emit 과 interleave 하므로
+        // update{} 로 read-modify-write 를 atomic 화. 람다는 순수 (state·target·id 만 읽음).
+        _uiState.update { state ->
+            val current = when (target) {
+                SelectionTarget.Segment -> state.selectedSegmentId
+                SelectionTarget.Bgm -> state.selectedBgmClipId
+            }
+            val next = if (id != null && id == current) null else id
+            // BGM 을 새로 선택(next != null) 한 경우엔 영상 다듬기/range 선택 모드를 함께 종료. 그래야
+            // 하단 액션 토글이 Video 에서 Bgm 으로 교체된다 — 안 그러면 BGM 을 골랐는데 영상 토글이
+            // 그대로 남아 사용자가 어느 트랙을 편집하는지 혼선.
+            val switchingToBgm = target == SelectionTarget.Bgm && next != null
+            state.copy(
+                selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
+                selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
+                isVideoSelected = false,
+                showVideoVolumeSlider = false,
+                isSegmentEditMode = if (switchingToBgm) false else state.isSegmentEditMode,
+                isRangeSelecting = if (switchingToBgm) false else state.isRangeSelecting,
+                editTargets = if (switchingToBgm) setOf(EditTarget.Video) else state.editTargets,
+                rangeTargetSegmentId = if (switchingToBgm) null else state.rangeTargetSegmentId,
+                pendingRangeStartMs = if (switchingToBgm) 0L else state.pendingRangeStartMs,
+                pendingRangeEndMs = if (switchingToBgm) 0L else state.pendingRangeEndMs,
+            )
         }
-        val next = if (id != null && id == current) null else id
-        // BGM 을 새로 선택(next != null) 한 경우엔 영상 다듬기/range 선택 모드를 함께 종료. 그래야
-        // 하단 액션 토글이 Video 에서 Bgm 으로 교체된다 — 안 그러면 BGM 을 골랐는데 영상 토글이
-        // 그대로 남아 사용자가 어느 트랙을 편집하는지 혼선.
-        val switchingToBgm = target == SelectionTarget.Bgm && next != null
-        _uiState.value = state.copy(
-            selectedSegmentId = if (target == SelectionTarget.Segment) next else null,
-            selectedBgmClipId = if (target == SelectionTarget.Bgm) next else null,
-            isVideoSelected = false,
-            showVideoVolumeSlider = false,
-            isSegmentEditMode = if (switchingToBgm) false else state.isSegmentEditMode,
-            isRangeSelecting = if (switchingToBgm) false else state.isRangeSelecting,
-            editTargets = if (switchingToBgm) setOf(EditTarget.Video) else state.editTargets,
-            rangeTargetSegmentId = if (switchingToBgm) null else state.rangeTargetSegmentId,
-            pendingRangeStartMs = if (switchingToBgm) 0L else state.pendingRangeStartMs,
-            pendingRangeEndMs = if (switchingToBgm) 0L else state.pendingRangeEndMs,
-        )
     }
 
     // 자막 위치/스타일 메서드 제거 — 자막 기능 삭제.
@@ -820,63 +841,68 @@ class TimelineViewModel constructor(
     }
 
     fun onCancelTrim() {
-        _uiState.value = _uiState.value.copy(isTrimming = false, isVideoSelected = false)
+        _uiState.update { it.copy(isTrimming = false, isVideoSelected = false) }
     }
 
     /** Timeline 헤더 "저장" 버튼 — 원본 영상 렌더 + 갤러리 저장. */
     fun onSaveAllVariants() {
         if (_uiState.value.saveStatus is SaveStatus.RUNNING) return
-        val s = _uiState.value
-        _uiState.value = s.copy(
-            saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
-            shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
-        )
+        _uiState.update { s ->
+            s.copy(
+                saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
+                shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
+            )
+        }
         viewModelScope.launch { runSaveAllVariants() }
     }
 
     private suspend fun runSaveAllVariants() {
-        _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(0))
+        // 진행률 콜백이 suspend 경계를 넘나들며 반복 발화 — 그 사이 observe* 콜렉터가 segments/bgmClips
+        // 를 갱신할 수 있으므로 status 쓰기는 모두 update{} (atomic) 로. value=value.copy() 면 진행률
+        // tick 이 콜렉터 갱신을 덮어쓴다.
+        _uiState.update { it.copy(saveStatus = SaveStatus.RUNNING(0)) }
         val result = saveAllVariants(
             projectId = projectId,
             onProgress = { percent ->
-                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.RUNNING(percent))
+                _uiState.update { it.copy(saveStatus = SaveStatus.RUNNING(percent)) }
             },
         )
         result.fold(
             onSuccess = {
-                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.DONE)
+                _uiState.update { it.copy(saveStatus = SaveStatus.DONE) }
                 runCatching { editProjectRepository.deleteProject(projectId) }
                 _navigateBackHome.emit(Unit)
             },
             onFailure = { e ->
                 com.vibi.shared.platform.logError("TimelineVM", "save failed", e)
-                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.FAILED("Save failed"))
+                _uiState.update { it.copy(saveStatus = SaveStatus.FAILED("Save failed")) }
             }
         )
     }
 
     fun onClearSaveStatus() {
-        _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.IDLE)
+        _uiState.update { it.copy(saveStatus = SaveStatus.IDLE) }
     }
 
     /** Timeline 헤더 "공유" 버튼 — 원본 영상을 렌더 후 share sheet. */
     fun onShareExport() {
         if (_uiState.value.shareStatus is ShareStatus.RUNNING) return
         if (_uiState.value.segments.isEmpty()) return
-        val s = _uiState.value
-        _uiState.value = s.copy(
-            saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
-            shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
-        )
+        _uiState.update { s ->
+            s.copy(
+                saveStatus = if (s.saveStatus is SaveStatus.FAILED) SaveStatus.IDLE else s.saveStatus,
+                shareStatus = if (s.shareStatus is ShareStatus.FAILED) ShareStatus.IDLE else s.shareStatus,
+            )
+        }
         viewModelScope.launch { runShareExport() }
     }
 
     private suspend fun runShareExport() {
-        _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(0))
+        _uiState.update { it.copy(shareStatus = ShareStatus.RUNNING(0)) }
         val result = saveAllVariants(
             projectId = projectId,
             onProgress = { percent ->
-                _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.RUNNING(percent))
+                _uiState.update { it.copy(shareStatus = ShareStatus.RUNNING(percent)) }
             },
             saveToGallery = false,
         )
@@ -884,9 +910,7 @@ class TimelineViewModel constructor(
             onSuccess = { variants ->
                 val paths = variants.map { it.outputPath }
                 if (paths.isEmpty()) {
-                    _uiState.value = _uiState.value.copy(
-                        shareStatus = ShareStatus.FAILED("Nothing to share")
-                    )
+                    _uiState.update { it.copy(shareStatus = ShareStatus.FAILED("Nothing to share")) }
                     return@fold
                 }
                 shareSheetLauncher.shareVideos(
@@ -895,27 +919,23 @@ class TimelineViewModel constructor(
                     title = "vibi",
                 ).fold(
                     onSuccess = {
-                        _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.DONE)
+                        _uiState.update { it.copy(shareStatus = ShareStatus.DONE) }
                     },
                     onFailure = { e ->
                         com.vibi.shared.platform.logError("TimelineVM", "share sheet failed", e)
-                        _uiState.value = _uiState.value.copy(
-                            shareStatus = ShareStatus.FAILED("Share failed")
-                        )
+                        _uiState.update { it.copy(shareStatus = ShareStatus.FAILED("Share failed")) }
                     }
                 )
             },
             onFailure = { e ->
                 com.vibi.shared.platform.logError("TimelineVM", "share render failed", e)
-                _uiState.value = _uiState.value.copy(
-                    shareStatus = ShareStatus.FAILED("Share failed")
-                )
+                _uiState.update { it.copy(shareStatus = ShareStatus.FAILED("Share failed")) }
             }
         )
     }
 
     fun onClearShareStatus() {
-        _uiState.value = _uiState.value.copy(shareStatus = ShareStatus.IDLE)
+        _uiState.update { it.copy(shareStatus = ShareStatus.IDLE) }
     }
 
     fun onShowAppendSheet() {

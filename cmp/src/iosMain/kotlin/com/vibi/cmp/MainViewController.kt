@@ -5,6 +5,7 @@ import com.vibi.shared.di.initKoinIos
 import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
 import com.vibi.shared.platform.IapBridge
+import com.vibi.shared.platform.OnDeviceVideoExportBridge
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.UIKit.UIColor
 import platform.UIKit.UIViewController
@@ -17,9 +18,16 @@ fun MainViewController(
     googleSignInBridge: GoogleSignInBridge,
     appleSignInBridge: AppleSignInBridge,
     iapBridge: IapBridge,
+    onDeviceVideoExportBridge: OnDeviceVideoExportBridge,
 ): UIViewController {
     if (!koinStarted) {
-        initKoinIos(bffBaseUrl, googleSignInBridge, appleSignInBridge, iapBridge)
+        initKoinIos(
+            bffBaseUrl,
+            googleSignInBridge,
+            appleSignInBridge,
+            iapBridge,
+            onDeviceVideoExportBridge,
+        )
         koinStarted = true
     }
     // KoinContext composable 은 Koin 4.x 에서 deprecated — startKoin {} 호출만으로
