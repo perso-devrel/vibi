@@ -23,7 +23,7 @@ import com.vibi.shared.data.local.db.entity.TextOverlayEntity
         BgmClipEntity::class,
         SeparationDirectiveEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 @ConstructedBy(VibiDatabaseConstructor::class)

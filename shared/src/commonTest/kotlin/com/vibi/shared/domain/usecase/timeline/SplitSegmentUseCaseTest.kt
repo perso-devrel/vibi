@@ -2,6 +2,7 @@ package com.vibi.shared.domain.usecase.timeline
 
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
+import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.repository.SegmentRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -15,27 +16,9 @@ import kotlin.test.assertTrue
 
 class SplitSegmentUseCaseTest {
 
-    private class FakeSegmentRepository : SegmentRepository {
-        val store = mutableMapOf<String, Segment>()
-        override fun observeByProjectId(projectId: String): Flow<List<Segment>> =
-            flowOf(store.values.filter { it.projectId == projectId }.sortedBy { it.order })
-        override suspend fun getByProjectId(projectId: String): List<Segment> =
-            store.values.filter { it.projectId == projectId }.sortedBy { it.order }
-        override suspend fun getSegment(id: String): Segment? = store[id]
-        override suspend fun addSegment(segment: Segment) { store[segment.id] = segment }
-        override suspend fun addSegments(segments: List<Segment>) {
-            segments.forEach { store[it.id] = it }
-        }
-        override suspend fun updateSegment(segment: Segment) { store[segment.id] = segment }
-        override suspend fun deleteSegment(id: String) { store.remove(id) }
-        override suspend fun deleteAllByProjectId(projectId: String) {
-            store.values.filter { it.projectId == projectId }.forEach { store.remove(it.id) }
-        }
-        override suspend fun getMaxOrder(projectId: String): Int =
-            store.values.filter { it.projectId == projectId }.maxOfOrNull { it.order } ?: -1
-        override suspend fun getFirstSourceUri(projectId: String): String? =
-            store.values.filter { it.projectId == projectId }.minByOrNull { it.order }?.sourceUri
-    }
+    private fun directiveRepo() = FakeSeparationDirectiveRepository()
+    private fun SplitSegmentUseCase(repo: SegmentRepository) =
+        SplitSegmentUseCase(repo, directiveRepo())
 
     private fun videoSegment(
         id: String = "seg",
@@ -158,5 +141,27 @@ class SplitSegmentUseCaseTest {
         useCase("seg", 30L, 7_000L)
 
         assertEquals(2, repo.store["next"]!!.order)
+    }
+
+    @Test
+    fun `directive anchored to original is re-anchored to the piece containing its local range`() = runTest {
+        val repo = FakeSegmentRepository()
+        repo.store["seg"] = videoSegment()
+        val dirRepo = FakeSeparationDirectiveRepository()
+        // directive 가 source [7_500, 9_000] (= post 영역) 에 앵커. split 후 post 로 옮겨가야 함.
+        dirRepo.store["d"] = SeparationDirective(
+            id = "d", projectId = "p1", rangeStartMs = 7_500L, rangeEndMs = 9_000L,
+            numberOfSpeakers = 1, muteOriginalSegmentAudio = true, selections = emptyList(),
+            createdAt = 0L, segmentId = "seg", localStartMs = 7_500L, localEndMs = 9_000L,
+        )
+        val useCase = SplitSegmentUseCase(repo, dirRepo)
+
+        val r = useCase("seg", 2_000L, 7_000L)  // pre[0,2k] middle[2k,7k] post[7k,10k]
+
+        assertNotNull(r.post)
+        // local 7_500 은 post 의 source 범위 [7_000,10_000] → post 로 재앵커.
+        assertEquals(r.post!!.id, dirRepo.store["d"]!!.segmentId)
+        // local 좌표는 source 기준이라 불변.
+        assertEquals(7_500L, dirRepo.store["d"]!!.localStartMs)
     }
 }

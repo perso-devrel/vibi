@@ -5,6 +5,7 @@ package com.vibi.shared.ui.timeline
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vibi.shared.platform.currentTimeMillis
+import kotlin.math.roundToLong
 import kotlin.uuid.Uuid
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.Stem
@@ -12,6 +13,9 @@ import com.vibi.shared.domain.model.StemKind
 import com.vibi.shared.domain.model.EditProject
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
+import com.vibi.shared.domain.model.DirectiveAnchor
+import com.vibi.shared.domain.model.cloneForSegment
+import com.vibi.shared.domain.model.isContiguousMergeableRun
 import com.vibi.shared.domain.model.PersistedSeparationJob
 import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.addProcessingSeparation
@@ -47,6 +51,8 @@ import com.vibi.shared.domain.usecase.text.DuplicateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.text.UpdateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.DuplicateSegmentRangeUseCase
+import com.vibi.shared.domain.usecase.timeline.MoveSegmentUseCase
+import com.vibi.shared.domain.usecase.timeline.MergeSegmentsUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.SplitSegmentUseCase
@@ -282,6 +288,8 @@ class TimelineViewModel constructor(
     private val removeSegment: RemoveSegmentUseCase,
     private val splitSegment: SplitSegmentUseCase,
     private val duplicateSegmentRange: DuplicateSegmentRangeUseCase,
+    private val moveSegment: MoveSegmentUseCase,
+    private val mergeSegments: MergeSegmentsUseCase,
     private val removeSegmentRange: RemoveSegmentRangeUseCase,
     private val updateSegmentVolume: UpdateSegmentVolumeUseCase,
     private val updateSegmentSpeed: UpdateSegmentSpeedUseCase,
@@ -655,14 +663,26 @@ class TimelineViewModel constructor(
         }
     }
 
-    private fun segmentStartOffsetMs(segments: List<Segment>, segmentId: String): Long {
-        var acc = 0L
-        for (seg in segments) {
-            if (seg.id == segmentId) return acc
-            acc += seg.effectiveDurationMs
-        }
-        return acc
-    }
+    private fun segmentStartOffsetMs(segments: List<Segment>, segmentId: String): Long =
+        DirectiveAnchor.segmentStartOffsetMs(segments, segmentId)
+            ?: segments.sumOf { it.effectiveDurationMs }   // 못 찾으면 끝(기존 fallback 동작 유지)
+
+    /**
+     * directive 생성 시 앵커(segmentId + source-local 좌표) 계산. [segment] 가 null(whole-video) 이면
+     * 미앵커(글로벌 range 그대로 사용). 앵커되면 세그먼트 이동/복제 시 글로벌 range 가 자동 재계산됨.
+     */
+    private fun directiveAnchor(
+        segment: Segment?,
+        segStart: Long,
+        globalStart: Long,
+        globalEnd: Long,
+    ): Triple<String, Long, Long> =
+        if (segment == null) Triple("", 0L, 0L)
+        else Triple(
+            segment.id,
+            DirectiveAnchor.toLocalMs(globalStart, segment, segStart),
+            DirectiveAnchor.toLocalMs(globalEnd, segment, segStart),
+        )
 
     /**
      * In-memory snapshot — `_uiState.value` 가 이미 모든 repository 의 최신 상태를 반영하고 있으므로
@@ -1041,7 +1061,15 @@ class TimelineViewModel constructor(
         val segments = _uiState.value.segments
         if (segments.size <= 1) return
         viewModelScope.launch {
+            // 삭제되는 세그먼트에 앵커된 directive 는 콘텐츠가 사라지므로 함께 삭제(고아 앵커 방지). 그 뒤
+            // 세그먼트가 당겨지며 이후 directive 들의 글로벌 위치가 바뀌므로 reanchorDirectiveCache 로 캐시
+            // 재계산 + _uiState 동기(undo 스냅샷 정합).
+            separationDirectiveRepository.getByProject(projectId)
+                .filter { it.segmentId == segmentId }
+                .forEach { separationDirectiveRepository.delete(it.id) }
             removeSegment(segmentId)
+            refreshSegmentsStateFromDb()
+            reanchorDirectiveCache()
             _uiState.value = _uiState.value.copy(
                 selectedSegmentId = null,
                 isPlaying = false,
@@ -1246,7 +1274,7 @@ class TimelineViewModel constructor(
                 pendingRangeEndMs = segEnd,
                 pendingRangeVolume = seg.volumeScale,
                 pendingRangeSpeed = seg.speedScale,
-                playbackPositionMs = segStart,
+                // 재생바(playhead)는 선택과 무관하게 현재 위치 유지 — 클립 선택 시 따라 이동하지 않음.
                 // 영상 segment 탭 → editTargets 를 Video 로 (BGM 모드였다면 자동 해제).
                 editTargets = setOf(EditTarget.Video),
             )
@@ -1273,7 +1301,7 @@ class TimelineViewModel constructor(
                 pendingRangeEndMs = re,
                 pendingRangeVolume = seg.volumeScale,
                 pendingRangeSpeed = seg.speedScale,
-                playbackPositionMs = rs,
+                // 재생바는 선택과 무관하게 현재 위치 유지.
                 editTargets = setOf(EditTarget.Video),
             )
         }
@@ -1395,13 +1423,11 @@ class TimelineViewModel constructor(
         val s = startMs.coerceIn(0L, total)
         val e = endMs.coerceIn(0L, total)
         if (e - s < MIN_RANGE_MS) return
-        // 새 range 안으로 재생 marker clamp — 음원분리 모드에서 marker 는 항상 선택 구간 안.
-        val clampedPlayback = state.playbackPositionMs.coerceIn(s, e)
+        // 재생바(playhead)는 선택 구간과 무관하게 현재 위치 유지 — 클립/구간 선택 시 따라 이동·clamp 하지 않음.
         if (state.isRangeSelecting) {
             _uiState.value = state.copy(
                 pendingRangeStartMs = s,
                 pendingRangeEndMs = e,
-                playbackPositionMs = clampedPlayback,
             )
         } else {
             // range 모드 진입 — 첫 video segment 를 타깃으로. 슬라이더 valueRange 는 이후 영상 전체.
@@ -1417,7 +1443,6 @@ class TimelineViewModel constructor(
                 pendingRangeVolume = seg.volumeScale,
                 pendingRangeSpeed = seg.speedScale,
                 isPlaying = false,
-                playbackPositionMs = clampedPlayback,
             )
         }
     }
@@ -1452,6 +1477,74 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * BGM/녹음 클립 단독 탭 → 영상 다듬기와 동일한 구간편집 모드 진입(isSegmentEditMode=false 인 BGM 모드).
+     * 범위는 클립 전체로 시작, 핸들로 서브-구간 좁힘([rangeBoundsForCurrentMode] 가 클립 안으로 clamp).
+     * 같은 클립 재호출 → 토글 종료. 배경음 제거 진행 중인 클립은 무시(편집 잠금).
+     */
+    fun onEnterBgmRangeEditMode(clipId: String) {
+        val state = _uiState.value
+        // 진행 중 분리 클립은 잠금
+        if (state.bgmBackgroundRemovalProgress[clipId] is BgmRemovalProgress.Processing) return
+        // 같은 클립 재탭 → 토글 종료
+        val alreadyThisClip = !state.isSegmentEditMode &&
+            state.editTargets.any { it is EditTarget.Bgm && it.clipId == clipId }
+        if (alreadyThisClip) {
+            _uiState.value = state.copy(
+                isRangeSelecting = false,
+                editTargets = setOf(EditTarget.Video),
+                selectedBgmClipId = null,
+                rangeTargetSegmentId = null,
+                pendingRangeStartMs = 0L,
+                pendingRangeEndMs = 0L,
+            )
+            return
+        }
+        val clip = state.bgmClips.firstOrNull { it.id == clipId } ?: return
+        _uiState.value = state.copy(
+            // 음원 클릭은 "선택 + 하단 편집 버튼" 만 — range 선택(핸들) 모드로 진입하지 않는다(사용자 요청).
+            // editTargets=Bgm + pendingRange(클립 전체) 만 세팅하면 하단 패널 Apply 가 클립 전체에 적용됨.
+            isRangeSelecting = false,
+            isSegmentEditMode = false,
+            editTargets = setOf(EditTarget.Bgm(clipId)),
+            selectedBgmClipId = clipId,
+            selectedSegmentId = null,
+            selectedTextOverlayId = null,
+            isVideoSelected = false,
+            showVideoVolumeSlider = false,
+            rangeTargetSegmentId = null,
+            pendingRangeStartMs = clip.startMs,
+            pendingRangeEndMs = clip.startMs + clip.effectiveDurationMs,
+            pendingRangeVolume = clip.volumeScale,
+            pendingRangeSpeed = clip.speedScale,
+            showRangeActionSheet = false,
+            isPlaying = false,
+        )
+    }
+
+    /**
+     * BGM 단일 클립 구간편집이면 그 액션을 clip-local 헬퍼로 실행하고 true 반환(호출부 early-return).
+     * 4개 range 액션(볼륨/속도/삭제/복제)의 동일한 분기·launch·재타깃·undo 보일러플레이트를 한 곳으로.
+     * 호출 시점엔 이미 MIN_RANGE_MS 가드를 통과한 상태(각 함수 상단).
+     */
+    private fun runBgmClipLocal(action: suspend (BgmClip, Long, Long) -> BgmEditFocus): Boolean {
+        val state = _uiState.value
+        val clip = bgmClipLocalTarget(state) ?: return false
+        val start = state.pendingRangeStartMs
+        val end = state.pendingRangeEndMs
+        viewModelScope.launch {
+            val focus = action(clip, start, end)
+            // observeClips 는 Room DAO Flow(비동기 emit) 라 repo 쓰기 직후 _uiState.bgmClips 가 아직 분할 전.
+            // Apply 는 저빈도(탭) 이므로 1회 동기 reload 로 스냅샷을 분할 결과로 갱신 → undo/redo 정확.
+            // 동시에 새 focus 클립이 state 에 즉시 들어와 하단 패널이 그 클립을 바로 찾음(깜빡임 방지).
+            val fresh = applyBgmLaneOverrides(bgmClipRepository.observeClips(projectId).first())
+            _uiState.update { it.copy(bgmClips = fresh) }
+            applyBgmEditFocus(focus)
+            pushUndoState()
+        }
+        return true
+    }
+
+    /**
      * 이동/리사이즈 clamp 경계.
      * - 영상편집 모드: *진행 중* 음원분리 구간만 침범 금지(완료 directive 는 인접 영상과 함께 편집 가능).
      *   현재 선택을 포함하는, 분리중 구간으로 막히지 않은 최대 연속 구간으로 clamp — 초기 선택 규칙
@@ -1462,6 +1555,12 @@ class TimelineViewModel constructor(
     private fun rangeBoundsForCurrentMode(): Pair<Long, Long> {
         val state = _uiState.value
         val total = state.videoDurationMs.coerceAtLeast(0L)
+        // BGM 단일 클립 구간편집 — 핸들을 그 클립의 timeline 범위 안으로 clamp.
+        val bgmTarget = state.editTargets.firstOrNull { it is EditTarget.Bgm } as? EditTarget.Bgm
+        if (!state.isSegmentEditMode && bgmTarget?.clipId != null) {
+            val clip = state.bgmClips.firstOrNull { it.id == bgmTarget.clipId }
+            if (clip != null) return clip.startMs to (clip.startMs + clip.effectiveDurationMs)
+        }
         if (state.isSegmentEditMode) {
             val frees = freeIntervalsInSegment(0L, total, excludeCompletedDirectives = false)
             val containing = frees.firstOrNull { state.pendingRangeStartMs in it }
@@ -1576,6 +1675,17 @@ class TimelineViewModel constructor(
      * stale state 위에 segments 만 partial update 되는 race 차단. 본 함수가 await 하는 동안
      * 다른 mutation handler 가 selectedSegmentId 등을 갱신해도 그 값을 보존.
      */
+    /**
+     * directive 편집 mutation 직후 `_uiState.separationDirectives` 를 동기 fetch 로 강제 갱신 —
+     * [refreshSegmentsStateFromDb] 의 directive 버전. observe Flow emit 지연이 곧바로 찍는 undo
+     * 스냅샷([pushUndoState])에 stale directive 를 박는 race 우회. 다음 Flow emit 이 같은 값으로
+     * 덮어쓰므로 idempotent.
+     */
+    private suspend fun refreshDirectivesStateFromDb() {
+        val fresh = separationDirectiveRepository.getByProject(projectId)
+        _uiState.update { it.copy(separationDirectives = fresh) }
+    }
+
     private suspend fun refreshSegmentsStateFromDb() {
         val fresh = segmentRepository.getByProjectId(projectId)
         val total = fresh.sumOf { it.effectiveDurationMs }
@@ -1591,11 +1701,26 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * 세그먼트 드래그 재정렬 — [segmentId] 를 [targetIndex] 로 이동. directive(음원분리)는 세그먼트에
+     * 앵커돼 있어 order 만 바꾸면 자동으로 따라간다: [reanchorDirectiveCache] 가 새 순서로 글로벌 range
+     * 캐시를 재계산(+ _uiState 동기). no-op(제자리)면 아무 것도 안 함.
+     */
+    fun onMoveSegment(segmentId: String, targetIndex: Int) {
+        viewModelScope.launch {
+            moveSegment(segmentId, targetIndex) ?: return@launch
+            refreshSegmentsStateFromDb()
+            reanchorDirectiveCache()
+            pushUndoState()
+        }
+    }
+
     fun onDuplicateRange() {
         val state = _uiState.value
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        if (runBgmClipLocal { c, s, e -> applyBgmClipRangeDuplicate(c, s, e) }) return
         val applyToVideo = state.editTargets.hasVideo()
         val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
@@ -1603,17 +1728,24 @@ class TimelineViewModel constructor(
         resetRangeMode()
         viewModelScope.launch {
             var lastDuplicated: Segment? = null
-            slices.forEach { s ->
-                lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
+            // 다중 세그먼트 범위는 복제본을 하나의 병합 세그먼트로 범위 끝 뒤에 삽입 ([a|b|c] → a+b 복제 → [a|b|ab|c]).
+            // 병합 불가(다른 source 등)면 null → 기존 per-segment 복제로 폴백.
+            if (slices.size > 1) {
+                lastDuplicated = duplicateRangeAsMergedBlock(slices)
+            }
+            if (lastDuplicated == null) {
+                slices.forEach { s ->
+                    lastDuplicated = duplicateSegmentRange(s.segmentId, s.localStart, s.localEnd)
+                }
             }
             if (applyToBgm) applyBgmRangeDuplicate(start, end)
-            if (applyToVideo) {
-                // directive ripple — 순서 중요: shift 가 inside directive 의 rangeStart 를 안 옮긴 상태에서
-                // duplicate 가 안 directive 를 새 위치(+width)에 복제. 둘이 합쳐져 원본 + 복제 모두 보존.
-                applyDirectiveShiftAfter(after = end, deltaMs = end - start)
-                applyDirectiveDuplicateInside(start, end)
-            }
             refreshSegmentsStateFromDb()
+            if (applyToVideo) {
+                // directive 따라가기 — DuplicateSegmentRangeUseCase 가 복제본 세그먼트에 directive 를 새
+                // segmentId 로 복제(앵커 보존)했고, 여기서 모든 앵커 directive 의 글로벌 range 캐시를 새
+                // 배치(복제로 뒤가 +width 밀림)로 재계산한다. 앵커링이 기존 글로벌 ms ripple 을 대체.
+                reanchorDirectiveCache()
+            }
             if (wasSegmentEdit) {
                 lastDuplicated?.id?.let { selectSegmentInEditInternal(it) }
             }
@@ -1621,11 +1753,61 @@ class TimelineViewModel constructor(
         }
     }
 
+    /**
+     * 다중 세그먼트 범위 복제 — 병합 가능(연속 order·동일 source·내부 경계 연속·동일 speed/volume)하면 복제본을
+     * **단일 세그먼트**로 범위 끝(마지막 세그먼트) 뒤에 삽입한다. [a|b|c] 에서 a+b 복제 → [a|b|ab|c].
+     * 병합 불가면 null 반환 → 호출자가 per-segment 복제로 폴백. 원본은 건드리지 않는다(복제본만 추가).
+     *
+     * 복제본 trim = [첫 slice localStart, 마지막 slice localEnd] (같은 source 의 연속 구간). 범위 내 세그먼트에
+     * 앵커된 directive 중 복제 source 구간에 든 것은 복제본에 같은 local 좌표로 clone (분리도 따라감).
+     */
+    private suspend fun duplicateRangeAsMergedBlock(slices: List<SegmentRangeSlice>): Segment? {
+        val ordered = slices.sortedBy { it.order }
+        if (ordered.size < 2) return null
+        val segs = _uiState.value.segments.associateBy { it.id }
+        val pieces = ordered.map { segs[it.segmentId] ?: return null }
+        // 병합복제는 복제본(duplicatedFromId 있음)도 다시 합쳐 복제 가능해야 하므로 allowDuplicates=true.
+        if (!pieces.isContiguousMergeableRun(allowDuplicates = true)) return null
+        val first = pieces.first()
+        val last = pieces.last()
+        val mergedTrimStart = ordered.first().localStart
+        val mergedTrimEnd = ordered.last().localEnd
+        if (mergedTrimEnd - mergedTrimStart < MIN_RANGE_MS) return null
+
+        val insertionOrder = last.order + 1
+        segmentRepository.getByProjectId(projectId)
+            .filter { it.order >= insertionOrder }
+            .sortedByDescending { it.order }
+            .forEach { segmentRepository.updateSegment(it.copy(order = it.order + 1)) }
+
+        val dup = first.copy(
+            id = generateId(),
+            order = insertionOrder,
+            trimStartMs = mergedTrimStart,
+            trimEndMs = mergedTrimEnd,
+            duplicatedFromId = first.id,
+        )
+        segmentRepository.addSegment(dup)
+
+        // directive 따라가기 — 범위 내 세그먼트에 앵커된 directive 중 복제 source 구간에 든 것을 복제본에
+        // 같은 local 좌표로 clone (같은 source 라 좌표 그대로 유효). jobId 는 dedup 충돌 방지로 null.
+        val rangeSegIds = pieces.map { it.id }.toSet()
+        val clones = separationDirectiveRepository.getByProject(projectId)
+            .filter {
+                it.segmentId in rangeSegIds &&
+                    it.localStartMs >= mergedTrimStart && it.localEndMs <= mergedTrimEnd
+            }
+            .map { it.cloneForSegment(dup.id) }
+        if (clones.isNotEmpty()) separationDirectiveRepository.addAll(clones)
+        return dup
+    }
+
     fun onDeleteRange() {
         val state = _uiState.value
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        if (runBgmClipLocal { c, s, e -> applyBgmClipRangeDelete(c, s, e) }) return
         val applyToVideo = state.editTargets.hasVideo()
         val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
@@ -1640,6 +1822,9 @@ class TimelineViewModel constructor(
                 applyDirectiveRippleDelete(start, end)
             }
             refreshSegmentsStateFromDb()
+            // delete 는 글로벌 ms 를 직접 옮기는(global-truth) 연산 — 앵커를 새 글로벌로 재동기화해
+            // 이후 복제/이동의 reanchor 가 stale 앵커로 clobber 하지 않게 한다.
+            if (applyToVideo) resyncDirectiveAnchorsFromGlobal()
             if (wasSegmentEdit) {
                 _uiState.value.segments.firstOrNull { it.type == SegmentType.VIDEO }
                     ?.id?.let { selectSegmentInEditInternal(it) }
@@ -1653,6 +1838,7 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        if (runBgmClipLocal { c, s, e -> applyBgmClipRangeVolume(c, s, e, value) }) return
         val applyToVideo = state.editTargets.hasVideo()
         val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
@@ -1666,8 +1852,10 @@ class TimelineViewModel constructor(
                 lastMiddleId = r.middle.id
             }
             if (applyToBgm) applyBgmRangeVolume(start, end, value)
-            // volume 은 timeline 길이를 바꾸지 않아 directive ripple 필요 없음.
+            // volume 은 timeline 길이를 안 바꿔 directive 글로벌 range ripple 은 불필요하나, split 이
+            // directive 의 segmentId 를 새 조각으로 재앵커(행 변경)할 수 있어 undo 스냅샷 전 동기 반영.
             refreshSegmentsStateFromDb()
+            if (applyToVideo) refreshDirectivesStateFromDb()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
             }
@@ -1680,6 +1868,7 @@ class TimelineViewModel constructor(
         val start = state.pendingRangeStartMs
         val end = state.pendingRangeEndMs
         if (end - start < MIN_RANGE_MS) return
+        if (runBgmClipLocal { c, s, e -> applyBgmClipRangeSpeed(c, s, e, value) }) return
         val applyToVideo = state.editTargets.hasVideo()
         val applyToBgm = state.editTargets.hasBgm()
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
@@ -1715,6 +1904,8 @@ class TimelineViewModel constructor(
                 applyDirectiveShiftAfter(after = end, deltaMs = rippleDelta)
             }
             refreshSegmentsStateFromDb()
+            // speed 도 글로벌 ms ripple(shiftAfter)로 range 를 옮기는 global-truth 연산 — 앵커 재동기화.
+            if (applyToVideo) resyncDirectiveAnchorsFromGlobal()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
             }
@@ -1900,6 +2091,168 @@ class TimelineViewModel constructor(
         }
     }
 
+    // ── BGM 클립 구간편집 (영상 다듬기와 동일 UX) — clip-local split ──────────────────
+    // 위 applyBgmRange* / applyBgmRippleDelete 는 "영상 구간 편집에 딸려가는" BGM 처리라 BGM 레인
+    // 전체를 한 타임라인으로 보고 하위 클립을 ripple shift 한다. 아래 헬퍼는 사용자가 BGM 클립 하나를
+    // 탭해 그 안의 서브-구간만 편집하는 신규 흐름 전용 — **편집한 클립의 조각만** 손대고 다른 클립은
+    // 절대 안 옮긴다(단일 클립 에디터). 분할은 sourceTrimStart/End 경계만 새로 잡아 표현(컬럼 추가 불필요).
+
+    private data class BgmSplit(val before: BgmClip?, val middle: BgmClip, val after: BgmClip?)
+
+    /** 적용 후 연속 편집(chain) 을 위한 재타깃 정보. clipId=null 이면 모드 종료. */
+    private data class BgmEditFocus(
+        val clipId: String?,
+        val start: Long,
+        val end: Long,
+        val volume: Float = 1f,
+        val speed: Float = 1f,
+    )
+
+    /**
+     * 현재 상태가 "BGM 단일 클립 구간편집"(영상 다듬기 아님 + editTargets=Bgm(clipId)) 이면 그 클립 반환.
+     * 4개 range 액션이 이 분기로 clip-local 헬퍼를 탄다. 영상-동기 BGM 처리(applyToBgm)와 구분.
+     */
+    private fun bgmClipLocalTarget(state: TimelineUiState): BgmClip? {
+        if (state.isSegmentEditMode) return null
+        val clipId = (state.editTargets.firstOrNull { it is EditTarget.Bgm } as? EditTarget.Bgm)?.clipId
+            ?: return null
+        return state.bgmClips.firstOrNull { it.id == clipId }
+    }
+
+    /** 적용 후 재타깃 — flow 재조회 없이 split 계산값으로 직접 set(연속 편집). clipId=null=모드 종료. */
+    private fun applyBgmEditFocus(focus: BgmEditFocus) {
+        val state = _uiState.value
+        _uiState.value = if (focus.clipId == null) state.copy(
+            isRangeSelecting = false,
+            editTargets = setOf(EditTarget.Video),
+            selectedBgmClipId = null,
+            rangeTargetSegmentId = null,
+            pendingRangeStartMs = 0L,
+            pendingRangeEndMs = 0L,
+        ) else state.copy(
+            isRangeSelecting = true,
+            isSegmentEditMode = false,
+            editTargets = setOf(EditTarget.Bgm(focus.clipId)),
+            selectedBgmClipId = focus.clipId,
+            pendingRangeStartMs = focus.start,
+            pendingRangeEndMs = focus.end,
+            pendingRangeVolume = focus.volume,
+            pendingRangeSpeed = focus.speed,
+        )
+    }
+
+    /**
+     * 글로벌 ms 경계 [globalStart, globalEnd] 로 클립을 before/middle/after 로 분할.
+     * - source-offset 은 sourceTrimStartMs 가 대신함 — 둘째/셋째 조각도 source 의 올바른 지점부터 재생.
+     * - 원본 id 를 재사용하는 조각(before 있으면 before, 없으면 middle)은 createdAt 유지 → 색/번호 안정.
+     * - 신규 조각은 새 id/createdAt + 원본 lane override 등록(R1: lane 은 DB 영속 아님).
+     * - MIN_FRAGMENT_MS 미만 before/after 는 middle 에 흡수(미세 ghost 클립 방지).
+     */
+    private fun splitBgmClip(clip: BgmClip, globalStart: Long, globalEnd: Long): BgmSplit {
+        val speed = clip.speedScale.coerceAtLeast(0.01f)
+        val bs = clip.startMs
+        val be = bs + clip.effectiveDurationMs
+        val srcTrimStart = clip.sourceTrimStartMs
+        val srcTrimEnd = if (clip.sourceTrimEndMs > 0L) clip.sourceTrimEndMs else clip.sourceDurationMs
+        val cutStart = globalStart.coerceIn(bs, be)
+        val cutEnd = globalEnd.coerceIn(bs, be)
+        var srcCutStart = (srcTrimStart + ((cutStart - bs) * speed).roundToLong())
+            .coerceIn(srcTrimStart, srcTrimEnd)
+        var srcCutEnd = (srcTrimStart + ((cutEnd - bs) * speed).roundToLong())
+            .coerceIn(srcCutStart, srcTrimEnd)
+        // snap-to-edge: 미세 before/after 흡수
+        if (srcCutStart - srcTrimStart in 1 until SplitSegmentUseCase.MIN_FRAGMENT_MS) srcCutStart = srcTrimStart
+        if (srcTrimEnd - srcCutEnd in 1 until SplitSegmentUseCase.MIN_FRAGMENT_MS) srcCutEnd = srcTrimEnd
+
+        val hasBefore = srcCutStart > srcTrimStart
+        val hasAfter = srcCutEnd < srcTrimEnd
+        // global startMs: before 는 bs, middle 은 (before 있으면 cutStart, 없으면 bs), after 는 cutEnd
+        val before = if (hasBefore) clip.copy(
+            // 원본 id 재사용 — createdAt/색/번호 유지
+            sourceTrimStartMs = srcTrimStart,
+            sourceTrimEndMs = srcCutStart,
+            startMs = bs,
+        ) else null
+        val middle = clip.copy(
+            id = if (hasBefore) generateId() else clip.id,
+            sourceTrimStartMs = srcCutStart,
+            sourceTrimEndMs = srcCutEnd,
+            startMs = if (hasBefore) cutStart else bs,
+            createdAt = if (hasBefore) currentTimeMillis() else clip.createdAt,
+        )
+        val after = if (hasAfter) clip.copy(
+            id = generateId(),
+            sourceTrimStartMs = srcCutEnd,
+            sourceTrimEndMs = srcTrimEnd,
+            startMs = cutEnd,
+            createdAt = currentTimeMillis(),
+        ) else null
+        // 신규 id 는 lane override 등록 — 안 그러면 DB 저장 lane(보통 0)으로 튐
+        listOfNotNull(before, after).forEach { if (it.id != clip.id) bgmClipLaneOverrides[it.id] = clip.lane }
+        if (middle.id != clip.id) bgmClipLaneOverrides[middle.id] = clip.lane
+        return BgmSplit(before = before, middle = middle, after = after)
+    }
+
+    /** 선택 구간만 볼륨 적용 — 분할 후 middle 만 갱신. 길이 불변 → ripple 없음. */
+    private suspend fun applyBgmClipRangeVolume(clip: BgmClip, start: Long, end: Long, value: Float): BgmEditFocus {
+        val v = value.coerceIn(BgmClip.MIN_VOLUME, BgmClip.MAX_VOLUME)
+        val s = splitBgmClip(clip, start, end)
+        s.before?.let { bgmClipRepository.updateClip(it) } // before 는 원본 id 재사용 → update
+        bgmClipRepository.let { repo ->
+            if (s.before == null) repo.updateClip(s.middle.copy(volumeScale = v)) // middle=원본 id
+            else repo.addClip(s.middle.copy(volumeScale = v))                     // middle=신규 id
+        }
+        s.after?.let { bgmClipRepository.addClip(it) }
+        return BgmEditFocus(s.middle.id, s.middle.startMs, s.middle.startMs + s.middle.effectiveDurationMs, v, s.middle.speedScale)
+    }
+
+    /** 선택 구간만 속도 적용 — middle 만 speed 변경, 그 클립의 after 만 재앵커(다른 클립 미이동). */
+    private suspend fun applyBgmClipRangeSpeed(clip: BgmClip, start: Long, end: Long, value: Float): BgmEditFocus {
+        val newSpeed = value.coerceIn(BgmClip.MIN_SPEED, BgmClip.MAX_SPEED)
+        val s = splitBgmClip(clip, start, end)
+        val newMiddle = s.middle.copy(speedScale = newSpeed)
+        s.before?.let { bgmClipRepository.updateClip(it) }
+        if (s.before == null) bgmClipRepository.updateClip(newMiddle) else bgmClipRepository.addClip(newMiddle)
+        // after 를 새 middle 끝으로 재앵커 (clip-local: 형제 클립은 안 옮김)
+        s.after?.let { bgmClipRepository.addClip(it.copy(startMs = newMiddle.startMs + newMiddle.effectiveDurationMs)) }
+        return BgmEditFocus(newMiddle.id, newMiddle.startMs, newMiddle.startMs + newMiddle.effectiveDurationMs, newMiddle.volumeScale, newSpeed)
+    }
+
+    /** 선택 구간만 삭제 — middle 제거 + after 를 앞으로 당겨 갭 닫기(clip-local). 전체 삭제면 모드 종료. */
+    private suspend fun applyBgmClipRangeDelete(clip: BgmClip, start: Long, end: Long): BgmEditFocus {
+        val s = splitBgmClip(clip, start, end)
+        // 범위==클립 전체: before/after 없음 → 클립 통째 삭제, 모드 종료
+        if (s.before == null && s.after == null) {
+            bgmClipRepository.deleteClip(clip.id)
+            return BgmEditFocus(null, 0L, 0L)
+        }
+        // middle 제거: 원본 id 면 delete, 신규 id 면 애초에 add 안 함
+        if (s.middle.id == clip.id) bgmClipRepository.deleteClip(clip.id)
+        s.before?.let { bgmClipRepository.updateClip(it) }
+        // after 를 before 끝(없으면 bs)으로 당김
+        val gapStart = s.before?.let { it.startMs + it.effectiveDurationMs } ?: clip.startMs
+        val survivor = s.after?.copy(startMs = gapStart) ?: s.before!!
+        s.after?.let { bgmClipRepository.addClip(survivor) }
+        return BgmEditFocus(survivor.id, survivor.startMs, survivor.startMs + survivor.effectiveDurationMs, survivor.volumeScale, survivor.speedScale)
+    }
+
+    /** 선택 구간만 복제 — middle 복제본을 middle 바로 뒤에 삽입 + 그 클립 after 만 오른쪽 shift(clip-local). */
+    private suspend fun applyBgmClipRangeDuplicate(clip: BgmClip, start: Long, end: Long): BgmEditFocus {
+        val s = splitBgmClip(clip, start, end)
+        s.before?.let { bgmClipRepository.updateClip(it) }
+        // middle 을 자기 윈도우로 영속 — before 있으면 신규 id(add), 없으면 원본 id(update)
+        if (s.before == null) bgmClipRepository.updateClip(s.middle) else bgmClipRepository.addClip(s.middle)
+        val middleEff = s.middle.effectiveDurationMs
+        val dupStart = s.middle.startMs + middleEff
+        bgmClipRepository.addClip(
+            s.middle.copy(id = generateId(), startMs = dupStart, createdAt = currentTimeMillis())
+                .also { bgmClipLaneOverrides[it.id] = clip.lane }
+        )
+        // dup 이 차지한 middleEff 만큼 이 클립의 after 만 오른쪽으로 (형제 클립 미이동)
+        s.after?.let { bgmClipRepository.addClip(it.copy(startMs = it.startMs + middleEff)) }
+        return BgmEditFocus(s.middle.id, s.middle.startMs, s.middle.startMs + middleEff, s.middle.volumeScale, s.middle.speedScale)
+    }
+
     /**
      * 영상 range delete [start, end] 를 separation directive 들에 ripple — split/truncate/shift 로
      * directive 가 video edit 으로 stale 되지 않게 유지. 같은 stem audio URL 을 공유한 채
@@ -1963,24 +2316,33 @@ class TimelineViewModel constructor(
     }
 
     /**
-     * 구간 `[start, end]` 에 완전히 포함된 directive 를 새 id 로 복제해 `[ds+width, de+width]` 에 삽입.
-     * stem audio URL · sourceOffsetMs 보존 — 같은 audio 가 두 위치에서 재생. 각 piece 는 독립 directive
-     * id 라 stem mixer 의 activeGroup 모델과 호환 (playback 위치가 한 번에 하나의 directive 안).
-     *
-     * 부분 겹침 directive 는 복제 대상에서 제외 — 자른 stem 의 부분 재생은 의미상 모호하고, 사용자가
-     * 의도한 "이 구간 그대로 한 번 더" 를 위반.
+     * 앵커된 directive 의 글로벌 range 캐시를 현재 세그먼트 배치로 재계산(앵커→글로벌). 복제/이동처럼
+     * 세그먼트 위치만 바뀌고 directive 의 source-local 좌표는 그대로인 연산 직후 호출 — directive 가
+     * 새 위치를 자동으로 따라간다(per-operation 글로벌 ripple 대체). repo 가 권위 원본.
      */
-    private suspend fun applyDirectiveDuplicateInside(start: Long, end: Long) {
-        val width = end - start
-        if (width <= 0L) return
-        val clones = _uiState.value.separationDirectives
-            .filter { it.rangeStartMs >= start && it.rangeEndMs <= end }
-            .map { it.copy(
-                id = generateId(),
-                rangeStartMs = it.rangeStartMs + width,
-                rangeEndMs = it.rangeEndMs + width,
-            ) }
-        separationDirectiveRepository.addAll(clones)
+    private suspend fun reanchorDirectiveCache() {
+        val updates = DirectiveAnchor.reanchor(
+            separationDirectiveRepository.getByProject(projectId),
+            _uiState.value.segments,
+        )
+        if (updates.isNotEmpty()) separationDirectiveRepository.addAll(updates)
+        // use case 가 쓴 clone + 위 reanchor 결과를 undo 스냅샷 전에 _uiState 로 동기 반영.
+        refreshDirectivesStateFromDb()
+    }
+
+    /**
+     * 글로벌 range 를 진실로 보고 앵커(segmentId + local)를 재계산(글로벌→앵커). delete/speed 처럼 기존
+     * 글로벌 ms ripple 로 range 를 직접 옮긴 연산 직후 호출해 앵커를 일관되게 맞춘다 — 이후 복제/이동의
+     * [reanchorDirectiveCache] 가 stale 앵커로 글로벌을 덮어쓰는(clobber) 사고를 막는다.
+     */
+    private suspend fun resyncDirectiveAnchorsFromGlobal() {
+        val updates = DirectiveAnchor.resyncAnchors(
+            separationDirectiveRepository.getByProject(projectId),
+            _uiState.value.segments,
+        )
+        if (updates.isNotEmpty()) separationDirectiveRepository.addAll(updates)
+        // 글로벌 ms ripple 결과 + 위 anchor 재동기화를 undo 스냅샷 전에 _uiState 로 동기 반영.
+        refreshDirectivesStateFromDb()
     }
 
     /**
@@ -2007,15 +2369,8 @@ class TimelineViewModel constructor(
         )
     }
 
-    fun segmentStartMs(segmentId: String): Long {
-        val segments = _uiState.value.segments
-        var acc = 0L
-        for (seg in segments) {
-            if (seg.id == segmentId) return acc
-            acc += seg.effectiveDurationMs
-        }
-        return acc
-    }
+    fun segmentStartMs(segmentId: String): Long =
+        segmentStartOffsetMs(_uiState.value.segments, segmentId)
 
     fun currentSegmentAt(positionMs: Long): Segment? {
         val segments = _uiState.value.segments
@@ -2415,7 +2770,7 @@ class TimelineViewModel constructor(
                     return@launch
                 }
                 val state = _uiState.value
-                val startMs = state.playbackPositionMs
+                val playhead = state.playbackPositionMs
                 // 영상보다 길면 사용자에게 구간 선택 시트 — 실제 삽입은 onConfirmBgmTrim 에서.
                 // videoDurationMs == 0 (empty timeline) 인 경우엔 비교 불가라 그냥 통과 — addBgmClip 이
                 // sourceDurationMs > 0 만 require.
@@ -2426,13 +2781,20 @@ class TimelineViewModel constructor(
                             bgmTrimRequest = BgmTrimRequest(
                                 sourceUri = uri,
                                 sourceDurationMs = info.durationMs,
-                                insertStartMs = startMs,
+                                insertStartMs = playhead,
                                 rangeStartMs = 0L,
                                 rangeEndMs = state.videoDurationMs,
                             ),
                         )
                     }
                     return@launch
+                }
+                // 재생바 위치에 삽입하되, 재생바위치 + 음원길이 가 영상길이를 넘으면 넘는 만큼 앞으로 당겨
+                // 끝에 맞춘다 (startMs = 영상길이 - 음원길이, 0 미만이면 0). 영상 길이 미상(0)이면 그대로 재생바.
+                val startMs = if (state.videoDurationMs > 0L) {
+                    playhead.coerceIn(0L, (state.videoDurationMs - info.durationMs).coerceAtLeast(0L))
+                } else {
+                    playhead
                 }
                 addBgmClip(
                     projectId = projectId,
@@ -2485,6 +2847,12 @@ class TimelineViewModel constructor(
         val span = req.rangeEndMs - req.rangeStartMs
         if (span < MIN_RANGE_MS) return
         if (state.videoDurationMs > 0L && span > state.videoDurationMs) return
+        // 삽입 위치 = 재생바(insertStartMs). 끝(영상 길이)을 넘으면 넘는 만큼 앞으로 당겨 끝에 맞춤.
+        val insertAt = if (state.videoDurationMs > 0L) {
+            req.insertStartMs.coerceIn(0L, (state.videoDurationMs - span).coerceAtLeast(0L))
+        } else {
+            req.insertStartMs
+        }
         viewModelScope.launch {
             try {
                 val prepared = if (audioExtractor.isSupported) {
@@ -2503,7 +2871,7 @@ class TimelineViewModel constructor(
                         projectId = projectId,
                         sourceUri = prepared.path,
                         sourceDurationMs = span,
-                        startMs = req.insertStartMs,
+                        startMs = insertAt,
                         volumeScale = 1.0f,
                     )
                 } else {
@@ -2511,7 +2879,7 @@ class TimelineViewModel constructor(
                         projectId = projectId,
                         sourceUri = req.sourceUri,
                         sourceDurationMs = req.sourceDurationMs,
-                        startMs = req.insertStartMs,
+                        startMs = insertAt,
                         volumeScale = 1.0f,
                         sourceTrimStartMs = req.rangeStartMs,
                         sourceTrimEndMs = req.rangeEndMs,
@@ -2930,6 +3298,9 @@ class TimelineViewModel constructor(
 
     private var editingDirectiveId: String? = null
 
+    /** [onStartSeparation] 동기 재진입 가드 — 병합 prefix 의 suspend 창에서 중복 제출(더블탭) 차단. */
+    private var separationStarting = false
+
     /**
      * 음원분리 target 이 video segment 가 아닌 BgmClip 일 때 그 id 보존. onConfirmStemMix 가 분기:
      * non-null 이면 BGM 교체 path, null 이면 video segment directive path.
@@ -3222,6 +3593,42 @@ class TimelineViewModel constructor(
 
     fun onStartSeparation() {
         if (!audioExtractor.isSupported) return
+        val sep0 = _uiState.value.audioSeparation ?: return
+        if (_uiState.value.segments.none { it.id == sep0.segmentId }) return
+        if (separationStarting) return   // 동기 재진입 가드 (병합 prefix 의 suspend 창 보호)
+        separationStarting = true
+        viewModelScope.launch {
+            try {
+                // 병합 후 분리 — 선택 범위가 여러 병합 가능한 영상 세그먼트(split 조각)에 걸치면 하나로 합친
+                // 뒤 단일 세그먼트로 분리. 병합되면 directive 가 그 세그먼트에 offset=0 으로 앵커돼 export 도 정확.
+                val rs = sep0.rangeStartMs
+                val re = sep0.rangeEndMs
+                var mergedAny = false
+                if (rs != null && re != null) {
+                    val spannedIds = sliceGlobalRange(rs, re).map { it.segmentId }.distinct()
+                    if (spannedIds.size > 1) {
+                        val merged = mergeSegments(spannedIds)
+                        if (merged != null) {
+                            refreshSegmentsStateFromDb()
+                            reanchorDirectiveCache()
+                            _uiState.update { st ->
+                                st.copy(audioSeparation = st.audioSeparation?.copy(segmentId = merged.id))
+                            }
+                            mergedAny = true
+                        }
+                    }
+                }
+                // 병합으로 세그먼트 구조가 바뀌었으면 undo 스냅샷 — 분리가 실패해도 병합을 되돌릴 수 있게.
+                // (분리 성공 시 commit 이 undo 스택을 clear 하고 새 baseline 을 push 하므로 중복 없음.)
+                if (mergedAny) pushUndoState()
+                startSeparationResolved()
+            } finally {
+                separationStarting = false
+            }
+        }
+    }
+
+    private fun startSeparationResolved() {
         val state = _uiState.value
         val sep = state.audioSeparation ?: return
         val segment = state.segments.firstOrNull { it.id == sep.segmentId } ?: return
@@ -3247,6 +3654,10 @@ class TimelineViewModel constructor(
             _uiState.value = state.copy(
                 showAudioSeparationSheet = false,
                 audioSeparation = null,
+                isRangeSelecting = false,
+                rangeTargetSegmentId = null,
+                pendingRangeStartMs = 0L,
+                pendingRangeEndMs = 0L,
             )
             return
         }
@@ -3261,11 +3672,16 @@ class TimelineViewModel constructor(
             muteOriginalSegmentAudio = sep.muteOriginalSegmentAudio,
             editingDirectiveId = editingDirectiveId,
         )
-        // 분리 시작 즉시 sheet 닫음 — 결과는 timeline directive 막대로 알림.
+        // 분리 시작 즉시 sheet 닫고 range 선택 모드도 종료 → neutral 복귀. isRangeSelecting 이 남아 있으면
+        // 분리 후에도 showRange=true 라 세그먼트 재정렬 게이트(showSegments || !showRange)가 꺼져 이동 불가했음.
         _uiState.value = _uiState.value.copy(
             showAudioSeparationSheet = false,
             audioSeparation = null,
             processingSeparations = _uiState.value.processingSeparations + processingEntry,
+            isRangeSelecting = false,
+            rangeTargetSegmentId = null,
+            pendingRangeStartMs = 0L,
+            pendingRangeEndMs = 0L,
         )
         // entry 에 보존했으므로 ViewModel-level 변수 초기화 — 다음 분리 흐름과 충돌 방지.
         editingDirectiveId = null
@@ -3515,6 +3931,12 @@ class TimelineViewModel constructor(
                     }
                 val effectiveStart = existing?.rangeStartMs ?: directiveStart
                 val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
+                // 기존 directive 재편집(선택/볼륨만 변경)이면 그 앵커를 보존 — sep.segmentId 로 재계산하면
+                // 생성 이후 분할/이동된 경우 잘못된 세그먼트로 재앵커될 수 있다. 신규면 현재 위치로 앵커.
+                val (anchorSeg, anchorLocalStart, anchorLocalEnd) =
+                    if (existing?.isAnchored == true)
+                        Triple(existing.segmentId, existing.localStartMs, existing.localEndMs)
+                    else directiveAnchor(segment, segStart, effectiveStart, effectiveEnd)
                 separationDirectiveRepository.add(
                     SeparationDirective(
                         id = existing?.id ?: Uuid.random().toString(),
@@ -3526,6 +3948,9 @@ class TimelineViewModel constructor(
                         selections = selectionList,
                         createdAt = existing?.createdAt ?: currentTimeMillis(),
                         jobId = entry.jobId ?: existing?.jobId,
+                        segmentId = anchorSeg,
+                        localStartMs = anchorLocalStart,
+                        localEndMs = anchorLocalEnd,
                     )
                 )
                 removeProcessingSeparationEntry(clientToken)
@@ -3536,6 +3961,8 @@ class TimelineViewModel constructor(
                 }
                 separationGate = TriggerGate.ARMED
                 mainUndoManager.clear()
+                // 방금 add 한 directive 를 observe Flow emit 전에 _uiState 로 동기 반영 — 스냅샷 정합.
+                refreshDirectivesStateFromDb()
                 pushUndoState()
             }
         } catch (e: Exception) {
@@ -3682,6 +4109,11 @@ class TimelineViewModel constructor(
                 val effectiveStart = existing?.rangeStartMs ?: directiveStart
                 val effectiveEnd = existing?.rangeEndMs ?: directiveEnd
                 editingDirectiveId = null
+                // 기존 directive 재편집이면 앵커 보존(생성 후 분할/이동 시 sep.segmentId 재계산은 부정확).
+                val (anchorSeg, anchorLocalStart, anchorLocalEnd) =
+                    if (existing?.isAnchored == true)
+                        Triple(existing.segmentId, existing.localStartMs, existing.localEndMs)
+                    else directiveAnchor(segment, segStart, effectiveStart, effectiveEnd)
                 separationDirectiveRepository.add(
                     SeparationDirective(
                         id = existing?.id ?: Uuid.random().toString(),
@@ -3694,6 +4126,9 @@ class TimelineViewModel constructor(
                         createdAt = existing?.createdAt ?: currentTimeMillis(),
                         // 기존 directive 편집이면 그 jobId 보존 (dedup 키 유지). 신규면 null.
                         jobId = existing?.jobId,
+                        segmentId = anchorSeg,
+                        localStartMs = anchorLocalStart,
+                        localEndMs = anchorLocalEnd,
                     )
                 )
                 // 음성분리 구간의 원본 음성은 directive range 안에서만 mute — TimelineScreen 의
@@ -3711,6 +4146,8 @@ class TimelineViewModel constructor(
                 }
                 separationGate = TriggerGate.ARMED
                 mainUndoManager.clear()
+                // 방금 add 한 directive 를 observe Flow emit 전에 _uiState 로 동기 반영 — 스냅샷 정합.
+                refreshDirectivesStateFromDb()
                 pushUndoState()
             } catch (e: Exception) {
                 updateSeparation {

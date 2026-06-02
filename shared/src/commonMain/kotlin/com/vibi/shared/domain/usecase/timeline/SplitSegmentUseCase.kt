@@ -5,9 +5,11 @@ import com.vibi.shared.platform.generateId
 import com.vibi.shared.domain.model.Segment
 import com.vibi.shared.domain.model.SegmentType
 import com.vibi.shared.domain.repository.SegmentRepository
+import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 
 class SplitSegmentUseCase constructor(
-    private val segmentRepository: SegmentRepository
+    private val segmentRepository: SegmentRepository,
+    private val separationDirectiveRepository: SeparationDirectiveRepository,
 ) {
     data class SplitResult(
         val pre: Segment?,
@@ -99,7 +101,43 @@ class SplitSegmentUseCase constructor(
             segmentRepository.addSegment(post!!)
         }
 
+        // directive 앵커 보존 — split 은 original.id 를 pre(needsPre) 또는 middle(!needsPre) 로만 남기므로,
+        // 다른 조각(source 좌표) 에 속한 directive 는 segmentId 를 그 조각으로 옮겨야 글로벌 range 파생이
+        // 맞다. directive 의 local 좌표(source-media)는 모든 조각이 같은 sourceUri 라 그대로 유효 —
+        // segmentId 만 재지정. localStartMs 가 어느 조각 source 범위에 드는지로 귀속(경계 straddle 는
+        // localStart 기준 단일 조각으로 — 분리는 보통 조각 경계에 정렬돼 드묾).
+        reanchorDirectivesAfterSplit(
+            original = original,
+            preId = pre?.id,
+            middleId = middle.id,
+            postId = post?.id,
+            effectiveStart = effectiveStart,
+            effectiveEnd = effectiveEnd,
+        )
+
         return SplitResult(pre = pre, middle = middle, post = post)
+    }
+
+    private suspend fun reanchorDirectivesAfterSplit(
+        original: Segment,
+        preId: String?,
+        middleId: String,
+        postId: String?,
+        effectiveStart: Long,
+        effectiveEnd: Long,
+    ) {
+        val anchored = separationDirectiveRepository.getByProject(original.projectId)
+            .filter { it.segmentId == original.id }
+        if (anchored.isEmpty()) return
+        val updates = anchored.mapNotNull { d ->
+            val targetId = when {
+                preId != null && d.localStartMs < effectiveStart -> preId
+                d.localStartMs < effectiveEnd -> middleId
+                else -> postId ?: middleId
+            }
+            if (targetId == d.segmentId) null else d.copy(segmentId = targetId)
+        }
+        if (updates.isNotEmpty()) separationDirectiveRepository.addAll(updates)
     }
 
     companion object {

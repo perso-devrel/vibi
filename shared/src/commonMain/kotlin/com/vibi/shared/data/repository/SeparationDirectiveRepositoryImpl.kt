@@ -53,6 +53,9 @@ class SeparationDirectiveRepositoryImpl(
         createdAt = createdAt,
         jobId = jobId,
         sourceOffsetMs = sourceOffsetMs,
+        segmentId = segmentId,
+        localStartMs = localStartMs,
+        localEndMs = localEndMs,
     )
 
     private fun SeparationDirectiveEntity.toDomain(): SeparationDirective {
@@ -73,6 +76,9 @@ class SeparationDirectiveRepositoryImpl(
             createdAt = createdAt,
             jobId = jobId,
             sourceOffsetMs = sourceOffsetMs,
+            segmentId = segmentId,
+            localStartMs = localStartMs,
+            localEndMs = localEndMs,
         )
     }
 

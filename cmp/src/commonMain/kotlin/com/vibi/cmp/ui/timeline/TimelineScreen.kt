@@ -22,6 +22,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.Orientation
@@ -29,6 +30,8 @@ import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +51,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
@@ -112,6 +117,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -784,6 +790,7 @@ fun TimelineScreen(
                 // 제외)으로 선택을 좁힌다 — 분리중 구간 위 탭은 무동작. 완료된 directive 는 free 에 포함돼
                 // 인접 영상과 함께 선택. 범위 선택 흐름과 동일 규칙(freeIntervalsInSegment) 공유.
                 onSegmentTap = { segId, tapMs -> viewModel.onSelectSegmentInEdit(segId, tapMs) },
+                onMoveSegment = viewModel::onMoveSegment,
                 onWaveformTapInNeutral = { tapMs ->
                     val segId = state.segments.firstOrNull {
                         it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
@@ -794,7 +801,10 @@ fun TimelineScreen(
                 // directive 탭 시 AudioSeparationSheet 띄우지 않음 — 편집은 SoundDeck 의 stem 카드에서 처리.
                 onDirectiveTap = {},
                 // 진행 중 음원분리 바 탭 → 취소 UI 노출 대상 지정.
-                onProcessingTap = { token -> selectedProcessingToken = token },
+                // 같은 진행 구간 재탭 → 토글로 닫힘(기존 "Keep processing" 효과). 다른 구간 탭 → 그쪽으로 전환.
+                onProcessingTap = { token ->
+                    selectedProcessingToken = if (selectedProcessingToken == token) null else token
+                },
                 onScrub = { viewModel.onUpdatePlaybackPosition(it) },
                 onRangeStartChange = { viewModel.onSetPendingRangeStart(it) },
                 onRangeEndChange = { viewModel.onSetPendingRangeEnd(it) },
@@ -814,15 +824,10 @@ fun TimelineScreen(
                 // 활성 동안엔 BGM 트랙은 read-only (탭으로 BGM range 편집 진입은 그대로 허용).
                 bgmDragEnabled = !state.isSegmentEditMode,
                 onBgmSelectClip = { clipId ->
-                    // BGM 을 명시적으로 range edit 타깃으로 잡아 둔 경우에만 range-edit 분기.
-                    // 그 외엔 단순 selection → 하단 BGM 편집 토글 등장. 사용자가 영상 다듬기 중에
-                    // BGM 을 탭하면 "BGM 으로 작업 전환" 의도이므로 selectExclusively 가 영상 모드를
-                    // 자동 종료해 BGM 토글이 자리를 차지하게 한다.
-                    if (state.isSegmentEditMode && state.editTargets.hasBgm()) {
-                        viewModel.onSelectBgmForRangeEdit(clipId)
-                    } else {
-                        viewModel.onSelectBgmClip(clipId)
-                    }
+                    // BGM/녹음 클립 탭 → 영상과 동일한 구간편집 모드 진입(트림 대체). editTargets=Bgm 이 되어
+                    // bgmRangeMode=true → 블록 트림 핸들 대신 range 핸들 노출. 영상 다듬기 중 탭이면 영상 모드를
+                    // 빠져나와 BGM 으로 작업 전환. 같은 클립 재탭은 토글 종료(onEnterBgmRangeEditMode 내부).
+                    viewModel.onEnterBgmRangeEditMode(clipId)
                 },
                 onBgmUpdateStart = viewModel::onUpdateBgmStartMs,
                 onBgmUpdateTrim = viewModel::onUpdateBgmTrim,
@@ -831,11 +836,12 @@ fun TimelineScreen(
                 // applyBgmRange* 헬퍼로 BGM 까지 적용하므로 사용자가 lane 을 보면서 편집 가능.
                 // 음원분리 흐름 전체에서는 BGM 레인 숨김 — 영상 트랙만 노출해 화자/배경음 stem 선택에 집중.
                 //   - 구간 선택 단계: isRangeSelecting && !isSegmentEditMode (음원분리 IconLabelCard
-                //     → onEnterRangeMode 진입).
+                //     → onEnterRangeMode 진입). 단, **BGM 구간편집**(editTargets=Bgm) 은 같은 플래그
+                //     조합이지만 편집 대상 클립을 봐야 하므로 레인 유지 — hasBgm() 으로 구분.
                 //   - sheet/processing 단계: showAudioSeparationSheet (BGM 분리 path 는 range mode
                 //     없이 곧장 sheet 만 열리므로 별도 가드 필요).
                 showBgm = !state.showAudioSeparationSheet &&
-                    !(state.isRangeSelecting && !state.isSegmentEditMode),
+                    !(state.isRangeSelecting && !state.isSegmentEditMode && !state.editTargets.hasBgm()),
                 // BGM 타깃 모드 — editTargets 에 Bgm 포함 시 영상 strip 의 range overlay 숨기고 BGM lane
                 // 에 동일 디자인의 range fill 노출. 영상/BGM 동시 선택 막아 사용자 의도가 분명한 트랙에만 apply.
                 bgmRangeMode = state.editTargets.hasBgm(),
@@ -907,12 +913,12 @@ fun TimelineScreen(
                         )
                         Text("${selectedProcessing.progress}%", style = typo.bodySm, color = tokens.mutedText)
                     }
+                    // 닫기(keep processing)는 진행 바를 한 번 더 탭 → onProcessingTap 토글. 버튼은 취소만, 우측 정렬.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                        horizontalArrangement = Arrangement.End,
                     ) {
                         OutlinedButton(
-                            modifier = Modifier.weight(1f),
                             onClick = {
                                 val token = selectedProcessing.clientToken
                                 if (viewModel.skipSeparationCancelWarning) {
@@ -923,9 +929,6 @@ fun TimelineScreen(
                                 }
                             },
                         ) { Text("Cancel separation") }
-                        TextButton(onClick = { selectedProcessingToken = null }) {
-                            Text("Keep processing")
-                        }
                     }
                 }
             }
@@ -1346,7 +1349,17 @@ fun TimelineScreen(
     if (renameBgmClip != null) {
         RenameDialog(
             title = "Rename audio",
-            currentName = renameBgmClip.customName.orEmpty(),
+            // 진입 시 현재 카드에 표시되는 이름을 기본값으로 — 커스텀명 없으면 자동 라벨(파일명/"Recording N").
+            // 카드 라벨 계산(SoundCardModel)과 동일 규칙: recording ordinal = createdAt 정렬 내 순번.
+            currentName = renameBgmClip.customName?.takeIf { it.isNotBlank() }
+                ?: com.vibi.cmp.ui.timeline.sounddeck.bgmDisplayLabel(
+                    renameBgmClip.sourceUri,
+                    state.bgmClips
+                        .sortedWith(compareBy({ it.createdAt }, { it.id }))
+                        .filter { com.vibi.cmp.ui.timeline.sounddeck.isRecordingSourceUri(it.sourceUri) }
+                        .withIndex().firstOrNull { it.value.id == renameBgmClip.id }
+                        ?.let { it.index + 1 },
+                ),
             placeholder = "Audio name",
             onConfirm = { newName ->
                 viewModel.onRenameBgmClip(renameBgmClip.id, newName)
@@ -1646,6 +1659,8 @@ private fun UnifiedTimelineBar(
     /** 진행 중인 음원분리 range 들 — 동시에 여러 구간이 분리 진행될 수 있어 리스트로 받음. */
     processingSeparations: List<ProcessingSeparationOverlay> = emptyList(),
     onSegmentTap: (segmentId: String, tapMs: Long) -> Unit = { _, _ -> },
+    /** Neutral 모드에서 CapCut 블록을 길게 눌러 드래그 재정렬 — (segmentId, 목표 index). */
+    onMoveSegment: (segmentId: String, targetIndex: Int) -> Unit = { _, _ -> },
     /** Neutral (range/segment edit 모드 아님) 상태에서 영상 파형 탭 — BGM 클립 탭과 같은 의미로 영상 다듬기 진입. */
     onWaveformTapInNeutral: (tapMs: Long) -> Unit = {},
     /** 진행 중인 음원분리 바를 탭 — 해당 clientToken 으로 취소 UI 노출. 다른 탭(파형/구간)보다 우선. */
@@ -1777,7 +1792,19 @@ private fun UnifiedTimelineBar(
                     }
                     freeStart = maxOf(freeStart, d.end)
                 }
-                onFreeIntervalTap(freeStart, freeEnd)
+                // 세그먼트 단위 선택 — 탭한 세그먼트(블록) 범위를 free 구간과 교집합해 그 세그먼트만 선택.
+                // 이후 좌/우 핸들로 free 구간 안에서 자유 조절 (rangeBoundsForCurrentMode 분리 분기).
+                var segStart = freeStart
+                var segEnd = freeEnd
+                run {
+                    var acc = 0L
+                    for (seg in segments) {
+                        val next = acc + seg.effectiveDurationMs
+                        if (ms in acc until next) { segStart = acc; segEnd = next; return@run }
+                        acc = next
+                    }
+                }
+                onFreeIntervalTap(maxOf(freeStart, segStart), minOf(freeEnd, segEnd))
             })
         }
     } else if (totalMs > 0L) {
@@ -1802,6 +1829,12 @@ private fun UnifiedTimelineBar(
     //  기준 maxValue 로 잘려 확대 시 한 프레임 늦게 따라잡아 진동을 일으켰음.)
     var zoom by remember(totalMs) { mutableFloatStateOf(1f) }
     var scrollPx by remember(totalMs) { mutableFloatStateOf(0f) }
+
+    // 세그먼트 드래그 재정렬 상태 — 함수 레벨로 hoist (블록 레이어 + 파형 마스킹 양쪽에서 참조).
+    // 드래그 중엔 연속 파형/directive fill 을 숨기고 reflow 되는 카드만 노출 → "파형이 안 따라오는" 혼란 제거.
+    var dragSegId by remember(totalMs) { mutableStateOf<String?>(null) }
+    var dragTranslatePx by remember(totalMs) { mutableFloatStateOf(0f) }
+    var dragDropIndex by remember(totalMs) { mutableIntStateOf(-1) }
 
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
@@ -1874,6 +1907,10 @@ private fun UnifiedTimelineBar(
         ) {
         Box(
             modifier = Modifier
+                // 오버사이즈(확대) 콘텐츠를 부모 안에서 가운데가 아닌 **start(좌측)** 로 고정 — 안 하면 Box 가
+                // viewport 보다 넓은 자식을 center 배치해 scrollPx=0 에서 앞부분이 화면 왼쪽 밖으로 밀리고
+                // (앞 빈칸), 끝 너머로도 빈 화면이 스크롤되는 문제가 났음. unbounded=true 로 viewport 초과 허용.
+                .wrapContentWidth(align = Alignment.Start, unbounded = true)
                 .requiredWidth(contentWidthDp)
                 .height(totalHeight)
                 .offset { IntOffset(-scrollPx.coerceIn(0f, maxScroll).roundToInt(), 0) }
@@ -1908,8 +1945,11 @@ private fun UnifiedTimelineBar(
             // 구간을 잡도록. segment 의 volume/speed 변경은 파형 bar 높이/밀도에 이미 반영됨
             // (TimelineWaveformBackground 가 seg.volumeScale, speedScale 을 곱해 매핑).
             // peaks 비면 (Android stub / 추출 실패) 회색 strip + directive 막대 fallback.
+            // 드래그 재정렬 중엔 연속 파형/fallback 을 숨긴다 — 파형은 타임라인 전체 한 덩어리라 세그먼트별로
+            // 따라 움직이지 못해 "카드만 움직이고 파형은 가만히 있다 점프" 하는 혼란을 줬음. 드래그 중엔
+            // 콘텐츠 bg 위에서 reflow 되는 카드만 노출.
             val hasWaveform = videoPeaks.isNotEmpty() && totalMs > 0L
-            if (hasWaveform) {
+            if (hasWaveform && dragSegId == null) {
                     TimelineWaveformBackground(
                         sourcePeaks = videoPeaks,
                         segments = segments,
@@ -1939,7 +1979,7 @@ private fun UnifiedTimelineBar(
                             onDirectiveTap = onDirectiveTap,
                         )
                     }
-                } else {
+                } else if (dragSegId == null) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -1963,7 +2003,8 @@ private fun UnifiedTimelineBar(
 
             // 이미 분리 완료된 directive 구간 — 옅은 fill 로 점유 표시. 파형 highlight 색만으로는
             // 음원분리 range 선택 중 어디가 occupied 인지 한눈에 안 들어와 사용자 보고.
-            if (totalMs > 0L) {
+            // 드래그 중엔 숨김 — 파형과 마찬가지로 한 덩어리라 따라 움직이지 못해 혼란.
+            if (totalMs > 0L && dragSegId == null) {
                 val dirFillHeight = TimelineBarSpec.WaveformHeight
                 directives.forEach { d ->
                     if (d.rangeEndMs <= d.rangeStartMs) return@forEach
@@ -1980,6 +2021,136 @@ private fun UnifiedTimelineBar(
                             .background(accent.copy(alpha = 0.12f))
                     )
                 }
+            }
+
+            // === CapCut 세그먼트 블록 + 드래그 재정렬 — 각 영상 segment 를 둥근 사각형으로 묶어 경계 시각화
+            // (분할/복제로 생긴 세그먼트가 한눈에). 파형/directive 위에 outline 으로 올려 파형 가독성 유지,
+            // 블록 사이 작은 gap 으로 분할 표현. neutral 모드에선 블록을 길게 눌러 드래그로 순서 변경 가능
+            // (directive 는 세그먼트 앵커링으로 자동 동반 — onMoveSegment → reanchorDirectiveCache).
+            if (totalMs > 0L && segments.isNotEmpty()) {
+                val blockHeight = TimelineBarSpec.WaveformHeight
+                val blockGap = 2.dp
+                val blockGapPx = with(density) { blockGap.toPx() }
+                // 재정렬 = 일반(neutral) + 영상편집 모드. 음원분리 범위 선택 중(showRange && !showSegments)만 제외.
+                val reorderEnabled = showSegments || !showRange
+                val edgePx = with(density) { 44.dp.toPx() }
+                val autoPanStepPx = with(density) { 6.dp.toPx() }
+
+                // finger content-x → 드롭 index (드래그 대상 제외, 나머지 세그먼트 중심이 finger 왼쪽인 개수).
+                fun dropIndexFor(fingerContentX: Float, draggedId: String): Int {
+                    var acc = 0f; var count = 0; var others = 0
+                    segments.forEach { s ->
+                        if (s.type != com.vibi.shared.domain.model.SegmentType.VIDEO) return@forEach
+                        val wPx = totalWidthPx * (s.effectiveDurationMs.toFloat() / totalMs)
+                        if (s.id != draggedId) {
+                            others++
+                            if (acc + wPx / 2f < fingerContentX) count++
+                        }
+                        acc += wPx
+                    }
+                    return count.coerceIn(0, others)
+                }
+
+                // CapCut식 reflow 기준 — 들린 세그먼트의 index/width, 드롭 슬롯(k=dragDropIndex).
+                val draggedSeg = dragSegId?.let { id -> segments.firstOrNull { it.id == id } }
+                val draggedIdx = if (dragSegId != null) segments.indexOfFirst { it.id == dragSegId } else -1
+                val draggedWpx = draggedSeg?.let { totalWidthPx * (it.effectiveDurationMs.toFloat() / totalMs) } ?: 0f
+
+                var accMs = 0L
+                segments.forEachIndexed { i, seg ->
+                    val segStart = accMs
+                    val segEnd = accMs + seg.effectiveDurationMs
+                    accMs = segEnd
+                    if (seg.type != com.vibi.shared.domain.model.SegmentType.VIDEO) return@forEachIndexed
+                    val sFrac = (segStart.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val eFrac = (segEnd.toFloat() / totalMs).coerceIn(0f, 1f)
+                    val rawWidthDp = totalWidthDp * (eFrac - sFrac).coerceAtLeast(0f)
+                    if (rawWidthDp <= blockGap) return@forEachIndexed
+                    val blockStartContentPx = totalWidthPx * sFrac + blockGapPx / 2f
+                    val isDragging = dragSegId == seg.id
+                    // 다른 블록은 들린 세그먼트가 빠진 자리(remove: 뒤쪽 -W) + 드롭 슬롯 앞에 열리는 빈자리
+                    // (insert: 슬롯 이후 +W)를 반영해 밀려난다 → 들린 블록이 놓일 gap 이 실시간으로 열림.
+                    val reflowTargetPx = if (draggedSeg != null && !isDragging) {
+                        val j = if (i < draggedIdx) i else i - 1
+                        (if (i > draggedIdx) -draggedWpx else 0f) + (if (j >= dragDropIndex) draggedWpx else 0f)
+                    } else 0f
+                    val animatedReflowPx by animateFloatAsState(reflowTargetPx, label = "segReflow")
+
+                    Box(
+                        modifier = Modifier
+                            .zIndex(if (isDragging) 1f else 0f)   // 들린 블록은 다른 블록 위로
+                            .offset(x = totalWidthDp * sFrac + blockGap / 2)
+                            .width(rawWidthDp - blockGap)
+                            .height(blockHeight)
+                            .align(Alignment.CenterStart)
+                            .then(
+                                if (!reorderEnabled) Modifier
+                                else Modifier.pointerInput(seg.id, segments, totalMs, totalWidthPx, viewportWidthPx, maxScroll) {
+                                    // 롱프레스→드래그 표준 제스처 — scrollable 부모/탭 검출과 깔끔히 공존(재정렬 리스트 패턴).
+                                    var grabOffsetX = 0f
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { offset ->
+                                            grabOffsetX = offset.x
+                                            dragSegId = seg.id
+                                            dragTranslatePx = 0f
+                                            dragDropIndex = dropIndexFor(blockStartContentPx + grabOffsetX, seg.id)
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            dragTranslatePx += dragAmount.x
+                                            val fingerContentX = blockStartContentPx + grabOffsetX + dragTranslatePx
+                                            dragDropIndex = dropIndexFor(fingerContentX, seg.id)
+                                            // 가장자리 auto-pan (확대/스크롤 가능 시). scrollPx 는 live state.
+                                            if (maxScroll > 0f) {
+                                                val fingerViewportX = fingerContentX - scrollPx
+                                                if (fingerViewportX < edgePx)
+                                                    scrollPx = (scrollPx - autoPanStepPx).coerceAtLeast(0f)
+                                                else if (fingerViewportX > viewportWidthPx - edgePx)
+                                                    scrollPx = (scrollPx + autoPanStepPx).coerceAtMost(maxScroll)
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            val drop = dragDropIndex
+                                            val wasThis = dragSegId == seg.id
+                                            dragSegId = null; dragTranslatePx = 0f; dragDropIndex = -1
+                                            if (wasThis && drop >= 0) onMoveSegment(seg.id, drop)
+                                        },
+                                        onDragCancel = {
+                                            dragSegId = null; dragTranslatePx = 0f; dragDropIndex = -1
+                                        },
+                                    )
+                                }
+                            )
+                            .graphicsLayer {
+                                // pointerInput 이 graphicsLayer 보다 위(앞)라 translationX 가 pointer 좌표에
+                                // 피드백되지 않음 — 시각만 담당. 들린 블록은 손가락 따라 뜨고, 나머지는 reflow.
+                                if (isDragging) {
+                                    translationX = dragTranslatePx
+                                    scaleX = 1.03f
+                                    scaleY = 1.12f
+                                    alpha = 0.95f
+                                    shadowElevation = 12f
+                                } else {
+                                    translationX = animatedReflowPx
+                                }
+                            }
+                            .then(
+                                // 드래그 중엔 블록을 불투명 카드로 채워 reflow(밀려남)가 또렷이 보이게 —
+                                // 들린 블록은 accent, 나머지는 track 색 카드. 평소엔 outline 만(파형 노출).
+                                when {
+                                    isDragging -> Modifier.background(accent.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
+                                    dragSegId != null -> Modifier.background(trackColor, RoundedCornerShape(4.dp))
+                                    else -> Modifier
+                                }
+                            )
+                            .border(
+                                if (isDragging) 2.dp else 1.dp,
+                                if (isDragging) accent else segmentColor.copy(alpha = 0.85f),
+                                RoundedCornerShape(4.dp),
+                            )
+                    )
+                }
+
             }
 
             // 진행 중 음원분리 overlay — 반투명 fill + 중앙 무한 회전 스피너 (사용자 요청). 좁은 구간은
@@ -2648,28 +2819,25 @@ private fun BoxScope.TimelineActionBottomBar(
                         }
                         com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
                             title = "",
-                            volume = clip.volumeScale,
-                            speed = clip.speedScale,
-                            // BGM 은 슬라이더가 곧 commit — Apply 버튼 redundant 라 null 로 숨김.
-                            // update* 가 즉시 DB write + Flow emit. undo snapshot 만 드래그 종료 시점에
-                            // commitBgmEditUndo 로 한 번 push (드래그 중 60Hz pushUndoState 폭주 회피).
-                            onVolumeChange = { viewModel.onUpdateBgmVolume(clip.id, it) },
-                            onSpeedChange = { viewModel.onUpdateBgmSpeed(clip.id, it) },
-                            onApplyVolume = null,
-                            onApplySpeed = null,
-                            onVolumeChangeFinished = { viewModel.commitBgmEditUndo() },
-                            onSpeedChangeFinished = { viewModel.commitBgmEditUndo() },
-                            // secondary = 복제 (원본 끝에 동일 속성 새 클립 추가)
+                            // 영상 다듬기와 동일한 pending-range/Apply 패턴 — 선택 구간에만 적용(클립 분할).
+                            // 볼륨/속도는 pendingRange* 값을 슬라이더로 잡고 Apply 로 onApplyRange* 호출 →
+                            // VM 의 clip-local 분할 헬퍼가 가운데 조각만 편집. 복제/삭제도 구간 기준.
+                            volume = state.pendingRangeVolume,
+                            speed = state.pendingRangeSpeed,
+                            onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
+                            onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
+                            onApplyVolume = { viewModel.onApplyRangeVolume(it) },
+                            onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
+                            // secondary = 선택 구간 복제
                             secondaryActionIcon = Icons.Filled.ContentCopy,
-                            secondaryActionContentDescription = "Duplicate BGM",
-                            onSecondaryAction = { viewModel.onDuplicateBgmClip(clip.id) },
-                            onDelete = { viewModel.onDeleteBgmClip(clip.id) },
-                            // tertiary = 배경음 제거 ↔ 원래대로 토글
+                            secondaryActionContentDescription = "Duplicate",
+                            onSecondaryAction = { viewModel.onDuplicateRange() },
+                            // delete = 선택 구간 삭제
+                            onDelete = { viewModel.onDeleteRange() },
+                            // tertiary = 배경음 제거 ↔ 원래대로 토글 (BGM 고유 — 유지)
                             tertiaryActionLabel = bgRemovalLabel,
                             onTertiaryAction = { viewModel.onToggleBgmBackgroundRemoval(clip.id) },
                             tertiaryActionEnabled = bgRemovalEnabled,
-                            // X 버튼 제거 — 같은 BGM 재탭하면 selectExclusively 가 toggle off 로
-                            // 해제 (사용자 친숙한 동작). 영상 패널과 동일하게 onCancel = null.
                             onCancel = null,
                         )
                     }
@@ -2951,9 +3119,18 @@ private fun RangeHandle(
     // range 핸들 hit zone 이 BGM lane drag 와 충돌하지 않게 top playback region 만큼만 잡도록 한다.
     var baseMs by remember { mutableLongStateOf(0L) }
     var accumPx by remember { mutableFloatStateOf(0f) }
+    // 드래그 중에는 핸들 위치를 전역 state(offsetX) 라운드트립이 아니라 로컬 optimistic offset 으로 렌더 —
+    // 매 프레임 onChange→VM→uiState→거대한 UnifiedTimelineBar 재구성을 기다리면 프레임 드랍("지지직")이
+    // 나기 때문. 드래그 끝나면 offsetX(=커밋값) 로 복귀 — onChange 가 동일 clamp 값을 보냈으니 점프 없음.
+    val density = LocalDensity.current
+    val currentOffsetX by rememberUpdatedState(offsetX)
+    var dragging by remember { mutableStateOf(false) }
+    var baseOffsetX by remember { mutableStateOf(0.dp) }
+    var visualDeltaDp by remember { mutableStateOf(0.dp) }
+    val renderOffsetX = if (dragging) baseOffsetX + visualDeltaDp else offsetX
     Box(
         modifier = Modifier
-            .offset(x = offsetX, y = offsetY)
+            .offset(x = renderOffsetX, y = offsetY)
             .width(hitWidth)
             .height(hitHeight)
             .pointerInput(totalWidthPx, totalMs) {
@@ -2961,12 +3138,22 @@ private fun RangeHandle(
                     onDragStart = {
                         baseMs = baseMsProvider()
                         accumPx = 0f
+                        baseOffsetX = currentOffsetX
+                        visualDeltaDp = 0.dp
+                        dragging = true
                     },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false },
                     onHorizontalDrag = { _, dragAmount ->
                         accumPx += dragAmount
                         if (totalWidthPx > 0f && totalMs > 0L) {
                             val deltaMs = (accumPx / totalWidthPx) * totalMs
-                            onChange(clamp((baseMs + deltaMs).toLong()))
+                            val clamped = clamp((baseMs + deltaMs).toLong())
+                            onChange(clamped)
+                            // clamp 적용된 ms 를 px→dp 로 환산해 핸들을 그 위치로 (clamp 경계에서 손가락보다
+                            // 안 넘어가게 — 경계 도달 시 핸들이 멈춰 보임).
+                            val clampedDeltaPx = ((clamped - baseMs).toFloat() / totalMs) * totalWidthPx
+                            visualDeltaDp = with(density) { clampedDeltaPx.toDp() }
                         }
                     }
                 )
@@ -3473,6 +3660,8 @@ private fun bgmClipLabelText(
     clip: com.vibi.shared.domain.model.BgmClip,
     allClips: List<com.vibi.shared.domain.model.BgmClip>,
 ): String {
+    // 사용자가 지정한 이름 우선 — SoundDeck 카드(SoundCardModel)와 동일 규칙. (rename 이 바에도 반영되도록.)
+    clip.customName?.takeIf { it.isNotBlank() }?.let { return it }
     if (isBgmRecording(clip)) {
         val ordered = allClips
             .filter { isBgmRecording(it) }

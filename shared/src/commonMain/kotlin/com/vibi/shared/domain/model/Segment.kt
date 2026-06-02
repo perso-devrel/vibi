@@ -52,6 +52,29 @@ private fun Float.isApproxZero(): Boolean = kotlin.math.abs(this) < EDIT_TOLERAN
  *
  * 용도: 편집 영상이 필요한지(=새로 render 해야 하는지) 판단. 무편집이면 원본 sourceUri 직접 사용 가능.
  */
+/**
+ * 두 인접 세그먼트가 하나로 이어붙일 수 있는지 — 동일 source · 연속 trim(앞 effectiveTrimEnd == 뒤 trimStart)
+ * · 동일 speed/volume · 연속 order. (split 조각은 충족.) 병합/병합복제의 단일 판정 진실.
+ */
+fun Segment.isContiguousMergeableWith(next: Segment): Boolean =
+    next.order == order + 1 &&
+        sourceUri == next.sourceUri &&
+        effectiveTrimEndMs == next.trimStartMs &&
+        speedScale == next.speedScale &&
+        volumeScale == next.volumeScale
+
+/**
+ * order 순으로 정렬된 세그먼트들이 하나로 병합 가능한 연속 run 인지. [allowDuplicates] true 면 복제본
+ * (duplicatedFromId 있음)도 허용 — 병합복제 블록을 다시 복제할 때. 기본 false (음원분리 병합 등).
+ */
+fun List<Segment>.isContiguousMergeableRun(allowDuplicates: Boolean = false): Boolean {
+    if (size < 2) return false
+    return zipWithNext().all { (a, b) ->
+        a.isContiguousMergeableWith(b) &&
+            (allowDuplicates || (a.duplicatedFromId == null && b.duplicatedFromId == null))
+    }
+}
+
 fun Segment.hasNonTrivialEdits(): Boolean {
     if (trimStartMs != 0L) return true
     // trimEndMs == 0L 또는 == durationMs 둘 다 "미트림" 으로 본다 (effectiveTrimEndMs 의 fallback).

@@ -1,6 +1,7 @@
 package com.vibi.shared.domain.model
 
 import com.vibi.shared.domain.repository.StemSelection
+import com.vibi.shared.platform.generateId
 
 /**
  * 음성분리 명세 — 언어 독립.
@@ -39,6 +40,27 @@ data class SeparationDirective(
      * Stem mixer 의 seek offset: `(playback - rangeStartMs) + sourceOffsetMs`.
      */
     val sourceOffsetMs: Long = 0L,
+    /**
+     * 이 directive 가 앵커된 세그먼트 id. 비어 있으면(legacy/미앵커) 글로벌 range([rangeStartMs]/[rangeEndMs])
+     * 를 그대로 진실로 본다. 비어 있지 않으면 글로벌 range 는 세그먼트 위치에서 파생되는 **캐시** — 세그먼트가
+     * 이동/복제/분할돼도 [localStartMs]/[localEndMs](세그먼트 source 좌표) 를 기준으로 다시 계산된다.
+     * → 세그먼트가 움직이면 directive 도 자동으로 따라간다 (per-operation 글로벌 ripple 불필요).
+     */
+    val segmentId: String = "",
+    /** 앵커 세그먼트의 source-media(trim) 좌표계 내 분리 구간 시작. [segmentId] 비면 무의미. */
+    val localStartMs: Long = 0L,
+    /** 앵커 세그먼트의 source-media(trim) 좌표계 내 분리 구간 끝. [segmentId] 비면 무의미. */
+    val localEndMs: Long = 0L,
 ) {
     val durationMs: Long get() = (rangeEndMs - rangeStartMs).coerceAtLeast(0L)
+
+    /** 세그먼트에 앵커돼 글로벌 range 가 파생값(캐시)인지 여부. */
+    val isAnchored: Boolean get() = segmentId.isNotEmpty()
 }
+
+/**
+ * 복제본 세그먼트로 directive 를 복제 — 새 id + 대상 segmentId + jobId 제거(원본과 dedup 충돌 방지).
+ * local 좌표는 동일 source 라 그대로 유효. 세그먼트/범위 복제 시 분리를 복제본에 따라가게 하는 공용 헬퍼.
+ */
+fun SeparationDirective.cloneForSegment(newSegmentId: String): SeparationDirective =
+    copy(id = generateId(), segmentId = newSegmentId, jobId = null)

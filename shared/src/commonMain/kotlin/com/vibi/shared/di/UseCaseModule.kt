@@ -16,6 +16,8 @@ import com.vibi.shared.domain.usecase.text.DuplicateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.text.UpdateTextOverlayUseCase
 import com.vibi.shared.domain.usecase.timeline.AddVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.DuplicateSegmentRangeUseCase
+import com.vibi.shared.domain.usecase.timeline.MergeSegmentsUseCase
+import com.vibi.shared.domain.usecase.timeline.MoveSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentRangeUseCase
 import com.vibi.shared.domain.usecase.timeline.RemoveSegmentUseCase
 import com.vibi.shared.domain.usecase.timeline.SplitSegmentUseCase
@@ -55,6 +57,8 @@ val useCaseModule = module {
     factoryOf(::RemoveSegmentUseCase)
     factoryOf(::RemoveSegmentRangeUseCase)
     factoryOf(::DuplicateSegmentRangeUseCase)
+    factoryOf(::MoveSegmentUseCase)
+    factoryOf(::MergeSegmentsUseCase)
     factoryOf(::SplitSegmentUseCase)
     factoryOf(::UpdateSegmentTrimUseCase)
     factoryOf(::UpdateSegmentVolumeUseCase)
