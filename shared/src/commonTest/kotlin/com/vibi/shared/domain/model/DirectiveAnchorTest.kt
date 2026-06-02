@@ -31,7 +31,7 @@ class DirectiveAnchorTest {
     }
 
     @Test
-    fun `reanchor updates cache when segment order changes (move follows)`() {
+    fun `reanchor updates cache when segment order changes - move follows`() {
         val d = dir("b", ls = 0L, le = 2_000L, gs = 5_000L, ge = 7_000L)
         // b 를 앞으로 옮김 (order 0). 이제 b 의 글로벌 시작 = 0.
         val moved = listOf(seg("b", 0), seg("a", 1))
@@ -49,7 +49,7 @@ class DirectiveAnchorTest {
     }
 
     @Test
-    fun `resyncAnchors derives anchor from global (global-truth ops)`() {
+    fun `resyncAnchors derives anchor from global - global-truth ops`() {
         // delete 등으로 글로벌 range 가 [6000,8000] 로 옮겨진 directive. 앵커는 stale.
         val segments = listOf(seg("a", 0), seg("b", 1))
         val stale = dir("a", ls = 99L, le = 99L, gs = 6_000L, ge = 8_000L)
@@ -62,7 +62,7 @@ class DirectiveAnchorTest {
     }
 
     @Test
-    fun `resync then reanchor is idempotent (no clobber)`() {
+    fun `resync then reanchor is idempotent - no clobber`() {
         val segments = listOf(seg("a", 0), seg("b", 1))
         val stale = dir("a", ls = 99L, le = 99L, gs = 6_000L, ge = 8_000L)
         val resynced = DirectiveAnchor.resyncAnchors(listOf(stale), segments).first()

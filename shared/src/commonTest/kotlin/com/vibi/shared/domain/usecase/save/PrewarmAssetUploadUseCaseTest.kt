@@ -31,7 +31,7 @@ class PrewarmAssetUploadUseCaseTest {
     }
 
     @Test
-    fun `중간 실패해도 나머지 진행하고 throw 안 함 (best-effort)`() = runTest {
+    fun `중간 실패해도 나머지 진행하고 throw 안 함 - best-effort`() = runTest {
         val uploader = FakeUploader(throwOn = setOf("a.mp4"))
         val useCase = PrewarmAssetUploadUseCase(uploader)
 
