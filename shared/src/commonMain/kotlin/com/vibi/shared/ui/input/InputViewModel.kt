@@ -15,7 +15,7 @@ import com.vibi.shared.domain.usecase.draft.ExpireOldDraftsUseCase
 import com.vibi.shared.domain.usecase.input.CreateProjectWithInitialVideoSegmentUseCase
 import com.vibi.shared.domain.usecase.input.ValidateVideoUseCase
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -69,14 +69,21 @@ class InputViewModel constructor(
     private val _navigateToLogin = MutableSharedFlow<Unit>()
     val navigateToLogin: SharedFlow<Unit> = _navigateToLogin.asSharedFlow()
 
+    /** drafts 썸네일 추출 job — observeAllProjects 새 emission 마다 교체(이전 추출 취소). */
+    private var thumbnailJob: Job? = null
+
     init {
         // 7일 미접근 drafts cleanup. 실패해도 drafts observe 는 진행.
         viewModelScope.launch { runCatching { expireOldDrafts() } }
         editProjectRepository.observeAllProjects()
             .onEach { projects ->
-                val placeholders = projects.map { it.toDraftSummary(thumbnailPath = null) }
-                _uiState.value = _uiState.value.copy(drafts = placeholders)
-                coroutineScope {
+                // 플레이스홀더(썸네일 null)는 즉시 반영 — 삭제 등 DB 변경이 곧장 목록에 보이게.
+                _uiState.update { it.copy(drafts = projects.map { p -> p.toDraftSummary(thumbnailPath = null) }) }
+                // 썸네일 추출은 취소 가능 job 으로 분리. 이전엔 coroutineScope 로 onEach 를 블록해
+                // 추출이 끝날 때까지 다음 emission(삭제 등) 반영이 지연됐다. 새 emission 이 오면
+                // 진행 중 추출을 취소(flatMapLatest 의미)해 stale 작업 누적과 반영 지연을 함께 해소.
+                thumbnailJob?.cancel()
+                thumbnailJob = viewModelScope.launch {
                     projects.forEach { project ->
                         launch {
                             val firstUri = runCatching {

@@ -106,11 +106,18 @@ actual fun rememberAudioRecorder(
                 val rec = recorder ?: return
                 val path = outputPath
                 val durationMs = (currentTimeMillis() - startedAt).coerceAtLeast(0L)
-                runCatching { rec.stop() }
+                // rec.stop() 은 녹음이 너무 짧으면 (<~1s) IllegalStateException 을 던지고 파일이
+                // 유효하지 않게 남는다. 성공했을 때만 onRecorded — 실패 시 깨진 파일 삭제 후 onError.
+                val stopOk = runCatching { rec.stop() }.isSuccess
                 runCatching { rec.release() }
                 recorder = null
                 recording = false
-                if (path != null) onRecorded(path, durationMs)
+                if (stopOk && path != null) {
+                    onRecorded(path, durationMs)
+                } else {
+                    path?.let { runCatching { File(it).delete() } }
+                    onError("녹음이 너무 짧습니다")
+                }
             }
         }
     }

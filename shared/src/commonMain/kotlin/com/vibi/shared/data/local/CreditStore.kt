@@ -38,7 +38,9 @@ class CreditStore(
     /** BFF 응답 등 외부 권위로부터 받은 값을 그대로 set. */
     fun setBalance(userId: String, balance: Int) {
         val normalized = balance.coerceAtLeast(0)
-        if (read(userId) == normalized) return
+        // persisted 값만 보고 early-return 하면 _balance(StateFlow) 가 다른 이유로 drift 한 경우
+        // (userId swap 등) stale 인 채로 남는다. putInt 는 idempotent 하고 emit 은 아래에서 guard 하므로
+        // 항상 둘 다 반영.
         settings.putInt(keyFor(userId), normalized)
         if (_balance.value != normalized) _balance.value = normalized
     }

@@ -37,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.extractAudioPeaks
@@ -208,34 +207,9 @@ fun AudioSeparationSheet(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = VibiSpacing.xxs)
                             ) {
-                                // 원형 토글 — 사각 Checkbox 대신.
-                                CircleToggle(
-                                    selected = selected,
-                                    onClick = { onToggleStem(stem.stemId) },
-                                )
-                                Spacer(Modifier.size(VibiSpacing.xs))
-                                Text(
-                                    text = stemDisplayLabel(stem),
-                                    style = typo.bodySm,
-                                    color = tokens.onBackgroundPrimary,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .widthIn(max = 80.dp)
-                                        .clickable { onToggleStem(stem.stemId) }
-                                )
-                                Slider(
-                                    value = volume,
-                                    valueRange = 0f..2f,
-                                    onValueChange = { onUpdateStemVolume(stem.stemId, it) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(horizontal = VibiSpacing.xxs)
-                                        .scale(scaleX = 1f, scaleY = 0.7f),
-                                    colors = com.vibi.cmp.ui.timeline.sounddeck.mutedSliderColors(tokens.mutedText),
-                                )
-                                val isThisPlaying = playingId == stem.stemId
-                                val canPreview = stem.url.isNotBlank()
+                                // 행 구성: 미리듣기 ▶ · 라벨 · 파형 · 볼륨 토글(아래 인라인 슬라이더 펼침) ·
+                                // 선택 토글. 볼륨은 인라인 슬라이더(volumeExpanded)로 조절하므로 별도
+                                // 가로 슬라이더는 두지 않는다.
                                 IconButton(
                                     enabled = canPreview,
                                     onClick = {

@@ -112,7 +112,11 @@ actual fun VideoPlayer(
                 player = exoPlayer
                 useController = false
             }
-        }
+        },
+        // factory 는 1회만 실행되므로 playlistKey 로 exoPlayer 가 rebuild 되면 PlayerView 가
+        // released 된 옛 player 를 참조한 채로 남는다. update 에서 현재 인스턴스로 갱신.
+        update = { view -> if (view.player !== exoPlayer) view.player = exoPlayer },
+        onRelease = { view -> view.player = null },
     )
 }
 

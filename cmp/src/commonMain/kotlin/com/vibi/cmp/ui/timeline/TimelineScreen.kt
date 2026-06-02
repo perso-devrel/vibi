@@ -468,20 +468,28 @@ fun TimelineScreen(
         }
     }
 
-    val videoSegs = state.segments.filter {
-        it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+    // remember — 매 recomposition(재생 중 33ms tick 포함)마다 filter/map 으로 새 리스트를 할당하지
+    // 않도록. 의존 state 가 바뀔 때만 재계산.
+    val videoSegs = remember(state.segments) {
+        state.segments.filter {
+            it.type == com.vibi.shared.domain.model.SegmentType.VIDEO
+        }
     }
-    val playerItems: List<com.vibi.cmp.platform.VideoPlayerItem> = if (state.videoUri.isEmpty()) {
-        emptyList()
-    } else {
-        videoSegs.map { seg ->
-            com.vibi.cmp.platform.VideoPlayerItem(
-                sourceUri = seg.sourceUri,
-                trimStartMs = seg.trimStartMs,
-                trimEndMs = seg.effectiveTrimEndMs,
-                speedScale = seg.speedScale,
-                volumeScale = if (state.runtimeVideoMutedForDirective) 0f else seg.volumeScale,
-            )
+    val playerItems: List<com.vibi.cmp.platform.VideoPlayerItem> = remember(
+        videoSegs, state.videoUri, state.runtimeVideoMutedForDirective,
+    ) {
+        if (state.videoUri.isEmpty()) {
+            emptyList()
+        } else {
+            videoSegs.map { seg ->
+                com.vibi.cmp.platform.VideoPlayerItem(
+                    sourceUri = seg.sourceUri,
+                    trimStartMs = seg.trimStartMs,
+                    trimEndMs = seg.effectiveTrimEndMs,
+                    speedScale = seg.speedScale,
+                    volumeScale = if (state.runtimeVideoMutedForDirective) 0f else seg.volumeScale,
+                )
+            }
         }
     }
     // BGM 재생 sync — 인라인/풀스크린 무관하게 1회만. 두 군데서 호출하면 audio engine 충돌.
@@ -1749,7 +1757,9 @@ private fun UnifiedTimelineBar(
     // pointerInput key — progress 변경 (1~2초 폴링) 마다 processingSeparations ref 가 새로 생성되지만
     // tap 검출은 start/end 만 보므로 그 둘만 추출. equals 가 stable 이라 polling tick 동안 gesture
     // detector 가 재등록되지 않음.
-    val processingRangesKey = processingSeparations.map { Triple(it.startMs, it.endMs, it.clientToken) }
+    val processingRangesKey = remember(processingSeparations) {
+        processingSeparations.map { Triple(it.startMs, it.endMs, it.clientToken) }
+    }
     val rangeTapModifier = if (showRange && totalMs > 0L) {
         Modifier.pointerInput(showSegments, segments, directives, processingRangesKey, totalMs) {
             detectTapGestures(onTap = { offset ->
@@ -3855,24 +3865,4 @@ private fun formatRulerLabel(ms: Long, intervalSec: Double): String {
     if (intervalSec >= 1.0) return base
     val hasHalf = ((ms % 1000) / 100) >= 5
     return if (hasHalf) "$base.5" else base
-}
-
-private fun parseArgbHexColor(hex: String): Color {
-    val cleaned = hex.removePrefix("#")
-    val v = runCatching { cleaned.toLong(16) }.getOrNull() ?: return Color.White
-    return when (cleaned.length) {
-        8 -> Color(
-            alpha = ((v shr 24) and 0xFF) / 255f,
-            red = ((v shr 16) and 0xFF) / 255f,
-            green = ((v shr 8) and 0xFF) / 255f,
-            blue = (v and 0xFF) / 255f,
-        )
-        6 -> Color(
-            alpha = 1f,
-            red = ((v shr 16) and 0xFF) / 255f,
-            green = ((v shr 8) and 0xFF) / 255f,
-            blue = (v and 0xFF) / 255f,
-        )
-        else -> Color.White
-    }
 }

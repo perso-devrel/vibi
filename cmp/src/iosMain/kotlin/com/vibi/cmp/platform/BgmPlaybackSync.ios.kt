@@ -24,12 +24,16 @@ actual fun BgmPlaybackSync(
     currentMs: Long,
 ) {
     val players = remember { mutableMapOf<String, AVAudioPlayer>() }
+    // id → 현재 player 가 로드한 sourceUri. 같은 id 로 sourceUri 가 바뀌면 (재선택/trim 소스 교체)
+    // 옛 player 를 stop·교체하기 위한 추적. 존재 여부만 보면 stale 오디오가 계속 재생된다.
+    val playerUrls = remember { mutableMapOf<String, String>() }
 
     DisposableEffect(Unit) {
         ensurePlaybackSession()
         onDispose {
             players.values.forEach { it.stop() }
             players.clear()
+            playerUrls.clear()
         }
     }
 
@@ -42,12 +46,16 @@ actual fun BgmPlaybackSync(
         // 사라진 clip 정리.
         players.keys.filter { it !in active }.forEach { id ->
             players.remove(id)?.stop()
+            playerUrls.remove(id)
         }
         // 새 clip 또는 sourceUri 변경 시 player 생성.
         active.values.forEach { clip ->
             val existing = players[clip.id]
-            val sameUri = existing != null
+            val sameUri = existing != null && playerUrls[clip.id] == clip.sourceUri
             if (!sameUri) {
+                // sourceUri 가 바뀐 경우 옛 player 를 먼저 정지·제거 (stale 오디오 + 미해제 방지).
+                players.remove(clip.id)?.stop()
+                playerUrls.remove(clip.id)
                 // resolver 가 상대경로 / 절대 / file:// / 옛 UUID 모두 처리.
                 val nsUrl = resolveStoredUriToFileUrl(clip.sourceUri) ?: return@forEach
                 val p = runCatching {
@@ -56,6 +64,7 @@ actual fun BgmPlaybackSync(
                 p.enableRate = true
                 p.prepareToPlay()
                 players[clip.id] = p
+                playerUrls[clip.id] = clip.sourceUri
             }
         }
     }
