@@ -14,6 +14,7 @@
 		307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668CECA83ACC03A83C85A623 /* iOSApp.swift */; };
 		88ABACE0259DE83261737B99 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1285E8A7B7E7359EA11B9591 /* SceneDelegate.swift */; };
 		CE7958F87DD54C55027284C3 /* GoogleSignInBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B948C2AA245A5D5254AD028 /* GoogleSignInBridge.swift */; };
+		0D1E2F3A4B5C6D7E8F901234 /* OnDeviceVideoExportBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4C5 /* OnDeviceVideoExportBridge.swift */; };
 		E4EAB4FD09E88F8F38CD6959 /* AppleSignInBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AA697C6EED01C13E40190AA /* AppleSignInBridge.swift */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +22,7 @@
 		1285E8A7B7E7359EA11B9591 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		31D437C050DEC290DFDC9414 /* Auth.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Auth.xcconfig; sourceTree = "<group>"; };
 		3B948C2AA245A5D5254AD028 /* GoogleSignInBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInBridge.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F708192A3B4C5 /* OnDeviceVideoExportBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceVideoExportBridge.swift; sourceTree = "<group>"; };
 		49D2CFAEA830715CAA68FDB9 /* Auth.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Auth.release.xcconfig; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
 		7AA697C6EED01C13E40190AA /* AppleSignInBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInBridge.swift; sourceTree = "<group>"; };
@@ -54,6 +56,7 @@
 				C117AD187833E2513BD2F553 /* Info.plist */,
 				C49B0B02429FBBC9F867DDE1 /* iosApp.entitlements */,
 				668CECA83ACC03A83C85A623 /* iOSApp.swift */,
+				1A2B3C4D5E6F708192A3B4C5 /* OnDeviceVideoExportBridge.swift */,
 				C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */,
 				1285E8A7B7E7359EA11B9591 /* SceneDelegate.swift */,
 			);
@@ -209,6 +212,7 @@
 				E4EAB4FD09E88F8F38CD6959 /* AppleSignInBridge.swift in Sources */,
 				CE7958F87DD54C55027284C3 /* GoogleSignInBridge.swift in Sources */,
 				1418830F2E3513899E992F09 /* IapBridge.swift in Sources */,
+				0D1E2F3A4B5C6D7E8F901234 /* OnDeviceVideoExportBridge.swift in Sources */,
 				88ABACE0259DE83261737B99 /* SceneDelegate.swift in Sources */,
 				307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */,
 			);
