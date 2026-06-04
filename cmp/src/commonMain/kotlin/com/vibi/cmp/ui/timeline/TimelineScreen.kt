@@ -1998,9 +1998,9 @@ private fun UnifiedTimelineBar(
                         // 불투명 흰 패널 위에서 파형이 또렷하게 — 기존 0.45 는 흰 배경에서 밋밋한 중간 회색.
                         defaultBarColor = markerColor.copy(alpha = 0.65f),
                         highlightBarColor = accent,
-                        // 불투명 surface-card 패널 — 라이트=순백(#FFF), 다크=elevated #1C1917. 테두리 없이도
-                        // 캔버스와 대비돼 레인이 구분됨. 기존 반투명 트랙(거의 안 보임)이 "테두리만" 처럼 보이던 문제 해결.
-                        trackBg = tokens.panelBg,
+                        // SoundCard(VibiPanelCard)와 동일한 카드색(panelBgSoft) — 라이트 #FAFAFA, 다크 #1C1917.
+                        // 덱 카드들과 같은 plate 로 통일. 기존 반투명 트랙(거의 안 보임)이 "테두리만" 처럼 보이던 문제 해결.
+                        trackBg = tokens.panelBgSoft,
                         expandedDirectiveIds = expandedDirectiveIds,
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -2025,9 +2025,10 @@ private fun UnifiedTimelineBar(
                             .align(Alignment.Center)
                             .fillMaxWidth()
                             .height(contentHeight)
-                            .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
-                            // 파형 strip 과 동일 패널 — 로드 전/후 레인 룩 일관.
-                            .background(tokens.panelBg)
+                            // 파형 strip 과 동일 카드 룩 — 로드 전/후 레인 일관.
+                            .clip(VibiShape.lg)
+                            .background(tokens.panelBgSoft)
+                            .border(width = 1.dp, color = tokens.hairline, shape = VibiShape.lg)
                     )
                     if (showDirectives && directives.isNotEmpty() && totalMs > 0L) {
                         DirectiveOverlayRow(
@@ -2670,8 +2671,10 @@ private fun TimelineWaveformBackground(
     }
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(TimelineBarSpec.ContentCornerRadius))
-            .background(trackBg),
+            // VibiPanelCard(덱 카드)와 동일 — 라운드 VibiShape.lg + hairline 테두리 + panelBgSoft 배경.
+            .clip(VibiShape.lg)
+            .background(trackBg)
+            .border(width = 1.dp, color = tokens.hairline, shape = VibiShape.lg),
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val peakCount = sourcePeaks.size
