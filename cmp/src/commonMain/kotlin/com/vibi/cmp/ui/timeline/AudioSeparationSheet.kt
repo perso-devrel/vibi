@@ -38,8 +38,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.extractAudioPeaks
+import com.vibi.cmp.ui.account.PAID_CREDITS_CTA_LABEL
+import com.vibi.cmp.ui.account.PaidCreditsComingSoonNote
 import com.vibi.cmp.platform.rememberAudioPreviewer
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.cmp.theme.LocalVibiColors
@@ -81,6 +84,9 @@ fun AudioSeparationSheet(
     /** 잔액 부족 시 "Buy credits" 버튼 → UserMenu/CreditPurchaseSheet 진입. null 이면 버튼 미표시
      *  (테스트 / dev). 운영 TimelineScreen 은 항상 주입. */
     onBuyCredits: (() -> Unit)? = null,
+    /** IAP 미오픈([RuntimeFlags.iapEnabled]=false) 기간 — 잔액 부족 시 "Buy credits" 대신 노출되는
+     *  "I want this" 수요 표현 탭. 컨페티 + BFF 적재를 호출자가 처리. */
+    onWantPaidCredits: (() -> Unit)? = null,
 ) {
     val tokens = LocalVibiColors.current
     val typo = LocalVibiTypography.current
@@ -170,6 +176,10 @@ fun AudioSeparationSheet(
                         // 비용 미리보기 — costPreview null 이면 fetch 미완료, 도착 후 자동 갱신.
                         // 사용자가 Start 누르기 전에 차감액 + 잔액 + 부족 여부를 명시.
                         CostPreviewRow(state.costPreview)
+                        // IAP 미오픈 + 잔액 부족 → "충전" 대신 "곧 열린다" 고지로 전환.
+                        if (state.costPreview?.sufficient == false && !RuntimeFlags.iapEnabled) {
+                            PaidCreditsComingSoonNote()
+                        }
                     }
 
                     AudioSeparationStep.PROCESSING -> {
@@ -304,19 +314,23 @@ fun AudioSeparationSheet(
 
                     AudioSeparationStep.FAILED -> {
                         if (state.insufficientCredits) {
-                            // 잔액 부족 분기 — 사용자가 다음에 할 일은 "재시도" 가 아니라 "충전".
-                            // costPreview 가 있으면 정확한 부족분 표시, 없으면 일반 안내.
-                            Text(
-                                "Not enough credits to start",
-                                color = MaterialTheme.colorScheme.error,
-                                style = typo.bodyMd,
-                            )
-                            state.costPreview?.let { preview ->
+                            // 잔액 부족 분기 — IAP 오픈 전이면 "충전" 대신 "곧 열린다" 고지로 전환.
+                            if (!RuntimeFlags.iapEnabled) {
+                                PaidCreditsComingSoonNote()
+                            } else {
+                                // costPreview 가 있으면 정확한 부족분 표시, 없으면 일반 안내.
                                 Text(
-                                    "This separation needs ${preview.credits} credits, " +
-                                        "but you have ${preview.balance}.",
-                                    style = typo.bodySm,
+                                    "Not enough credits to start",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = typo.bodyMd,
                                 )
+                                state.costPreview?.let { preview ->
+                                    Text(
+                                        "This separation needs ${preview.credits} credits, " +
+                                            "but you have ${preview.balance}.",
+                                        style = typo.bodySm,
+                                    )
+                                }
                             }
                         } else {
                             Text("Failed", color = MaterialTheme.colorScheme.error, style = typo.bodyMd)
@@ -345,15 +359,19 @@ fun AudioSeparationSheet(
                 when (state.step) {
                     AudioSeparationStep.SETUP -> {
                         val insufficient = state.costPreview?.sufficient == false
-                        if (insufficient && onBuyCredits != null) {
+                        when {
+                            // IAP 오픈 전: 부족 → "I want this" 수요 표현. 컨페티는 호출자가 띄움.
+                            insufficient && !RuntimeFlags.iapEnabled && onWantPaidCredits != null ->
+                                Button(onClick = onWantPaidCredits) { Text(PAID_CREDITS_CTA_LABEL) }
                             // 부족 → Start 대신 Buy credits 로 분기. onBuyCredits 미주입 시 fallback
                             // 으로 disabled Start 그대로 표시 (테스트 호환).
-                            Button(onClick = onBuyCredits) { Text("Buy credits") }
-                        } else {
-                            Button(
-                                enabled = state.canStart,
-                                onClick = onStart,
-                            ) { Text("Start") }
+                            insufficient && onBuyCredits != null ->
+                                Button(onClick = onBuyCredits) { Text("Buy credits") }
+                            else ->
+                                Button(
+                                    enabled = state.canStart,
+                                    onClick = onStart,
+                                ) { Text("Start") }
                         }
                     }
 
@@ -365,10 +383,13 @@ fun AudioSeparationSheet(
                     AudioSeparationStep.DONE -> Button(onClick = dismissAndCleanup) { Text("Close") }
 
                     AudioSeparationStep.FAILED -> {
-                        if (state.insufficientCredits && onBuyCredits != null) {
-                            Button(onClick = onBuyCredits) { Text("Buy credits") }
-                        } else {
-                            Button(onClick = dismissAndCleanup) { Text("Close") }
+                        when {
+                            state.insufficientCredits && !RuntimeFlags.iapEnabled && onWantPaidCredits != null ->
+                                Button(onClick = onWantPaidCredits) { Text(PAID_CREDITS_CTA_LABEL) }
+                            state.insufficientCredits && onBuyCredits != null ->
+                                Button(onClick = onBuyCredits) { Text("Buy credits") }
+                            else ->
+                                Button(onClick = dismissAndCleanup) { Text("Close") }
                         }
                     }
 

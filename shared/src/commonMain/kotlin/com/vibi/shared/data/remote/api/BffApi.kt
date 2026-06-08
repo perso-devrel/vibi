@@ -113,6 +113,15 @@ class BffApi(
             setBody(request)
         }.body()
 
+    /**
+     * 유료 크레딧 수요 표현 — IAP 미오픈 기간 동안 "결제 빨리 열어달라"는 탭을 BFF 에 적재.
+     * 서버가 (userId) 기준 유저당 1회로 집계 → 웹 admin 이 합산 숫자를 읽는다. 모바일은
+     * fire-and-forget (재탭은 컨페티만, 카운트 영향 없음) 이라 응답 body 불필요.
+     */
+    suspend fun recordPaidCreditIntent() {
+        client.post("api/v2/intent/paid-credits")
+    }
+
     /** 음성분리 mock 데이터 — testdata/<startSec>-<endSec>/ 폴더 목록 + 그 안의 stem 이름. */
     suspend fun listSeparationTestdata(): List<TestdataSeparationFolderDto> =
         client.get("api/v2/testdata/separation/list").body()

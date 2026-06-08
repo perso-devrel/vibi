@@ -99,8 +99,12 @@ import com.vibi.cmp.theme.SpeakerPalette
 import com.vibi.cmp.theme.VibiRadius
 import com.vibi.cmp.theme.VibiShape
 import com.vibi.cmp.theme.VibiSpacing
+import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.StemMixerSource
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
+import com.vibi.cmp.ui.account.ConfettiOverlay
+import com.vibi.cmp.ui.account.PAID_CREDITS_CTA_LABEL
+import com.vibi.cmp.ui.account.PaidCreditsComingSoonNote
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.hasNonTrivialEdits
@@ -219,6 +223,16 @@ fun TimelineScreen(
     var showUserMenuForCredits by remember { mutableStateOf(false) }
     LaunchedEffect(viewModel) {
         viewModel.navigateToBuyCredits.collect { showUserMenuForCredits = true }
+    }
+
+    // IAP 미오픈 기간 "I want this" 탭 → 수요 적재(VM) + 컨페티 보상. nonce 를 올려 재탭마다
+    // ConfettiOverlay 를 새로 생성(애니메이션 재시작), 종료 시 visible=false 로 제거.
+    var confettiVisible by remember { mutableStateOf(false) }
+    var confettiNonce by remember { mutableStateOf(0) }
+    val onWantPaidCredits = {
+        viewModel.onWantPaidCredits()
+        confettiNonce++
+        confettiVisible = true
     }
 
     // ── 분리된 stem 동시 재생 mixer (Phase 2) ──
@@ -1321,6 +1335,7 @@ fun TimelineScreen(
             onDismiss = { viewModel.onDismissAudioSeparationSheet() },
             onDelete = { viewModel.onDeleteCurrentSeparation() },
             onBuyCredits = { viewModel.onRequestBuyCredits() },
+            onWantPaidCredits = onWantPaidCredits,
         )
     }
 
@@ -1333,27 +1348,36 @@ fun TimelineScreen(
             onDismissRequest = { viewModel.onDismissBgmRemovalCost() },
             title = { Text("Isolate vocals") },
             text = {
-                Text(
-                    text = when {
-                        preview == null -> "Checking credit balance…"
-                        insufficient ->
-                            "This separation needs ${preview.credits} credits, " +
-                                "but you only have ${preview.balance}."
-                        else -> "This separation will use ${preview.credits} credits " +
-                            "(balance: ${preview.balance})."
-                    },
-                    color = if (insufficient) MaterialTheme.colorScheme.error
-                    else LocalContentColor.current,
-                )
+                // IAP 오픈 전 + 잔액 부족이면 "충전" 대신 "곧 열린다" 고지로 전환.
+                if (insufficient && !RuntimeFlags.iapEnabled) {
+                    PaidCreditsComingSoonNote()
+                } else {
+                    Text(
+                        text = when {
+                            preview == null -> "Checking credit balance…"
+                            insufficient ->
+                                "This separation needs ${preview.credits} credits, " +
+                                    "but you only have ${preview.balance}."
+                            else -> "This separation will use ${preview.credits} credits " +
+                                "(balance: ${preview.balance})."
+                        },
+                        color = if (insufficient) MaterialTheme.colorScheme.error
+                        else LocalContentColor.current,
+                    )
+                }
             },
             confirmButton = {
-                if (insufficient) {
-                    TextButton(onClick = {
+                when {
+                    // IAP 오픈 전: 부족 → "I want this" 수요 표현. 다이얼로그 닫고 컨페티.
+                    insufficient && !RuntimeFlags.iapEnabled -> TextButton(onClick = {
+                        viewModel.onDismissBgmRemovalCost()
+                        onWantPaidCredits()
+                    }) { Text(PAID_CREDITS_CTA_LABEL) }
+                    insufficient -> TextButton(onClick = {
                         viewModel.onDismissBgmRemovalCost()
                         viewModel.onRequestBuyCredits()
                     }) { Text("Buy credits") }
-                } else {
-                    TextButton(
+                    else -> TextButton(
                         enabled = preview != null,  // fetch 미완료 동안 confirm 잠시 disable
                         onClick = { viewModel.onConfirmBgmRemovalCost() },
                     ) { Text("Confirm") }
@@ -1363,6 +1387,14 @@ fun TimelineScreen(
                 TextButton(onClick = { viewModel.onDismissBgmRemovalCost() }) { Text("Cancel") }
             },
         )
+    }
+
+    // "I want this" 탭 보상 — Popup 으로 그려 위 sheet/dialog 를 모두 덮는다. 트리 내 위치는
+    // 무관(Popup 은 최상단 렌더). nonce 로 keyed → 재탭마다 새 인스턴스로 애니메이션 재시작.
+    if (confettiVisible) {
+        key(confettiNonce) {
+            ConfettiOverlay(onFinished = { confettiVisible = false })
+        }
     }
 
     // 프로젝트 이름 변경 — 헤더 제목 탭. 표시용일 뿐 저장/렌더 동작과 무관.

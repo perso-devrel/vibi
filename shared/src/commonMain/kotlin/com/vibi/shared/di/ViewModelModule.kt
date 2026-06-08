@@ -44,6 +44,7 @@ val viewModelModule = module {
             audioExtractor = get(),
             audioSeparationRepository = get(),
             separationDirectiveRepository = get(),
+            bffApi = get(),
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
             saveAllVariants = get(),
             shareSheetLauncher = get(),

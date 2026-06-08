@@ -25,6 +25,7 @@ import com.vibi.shared.domain.model.removeProcessingSeparation
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.platform.generateId
 import com.vibi.shared.domain.model.clearSeparation
+import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
@@ -261,6 +262,7 @@ class TimelineViewModel constructor(
     private val audioExtractor: AudioExtractor,
     private val audioSeparationRepository: AudioSeparationRepository,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
+    private val bffApi: BffApi,
     private val bffBaseUrl: String,
     private val saveAllVariants: SaveAllVariantsUseCase,
     private val shareSheetLauncher: ShareSheetLauncher,
@@ -3138,6 +3140,15 @@ class TimelineViewModel constructor(
      */
     fun onRequestBuyCredits() {
         viewModelScope.launch { _navigateToBuyCredits.emit(Unit) }
+    }
+
+    /**
+     * IAP 미오픈 기간 — 잔액 부족 화면의 "I want this" 탭. 유료 결제 수요를 BFF 에 적재
+     * (서버가 유저당 1회 집계, 웹 admin 이 합산 조회). 컨페티는 UI 가 즉시 띄우고, 네트워크는
+     * fire-and-forget — 실패해도 사용자 경험을 막지 않으므로 결과를 surface 하지 않는다.
+     */
+    fun onWantPaidCredits() {
+        viewModelScope.launch { runCatching { bffApi.recordPaidCreditIntent() } }
     }
 
     /**

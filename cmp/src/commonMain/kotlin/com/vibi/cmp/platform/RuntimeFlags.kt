@@ -19,9 +19,13 @@ object RuntimeFlags {
     /**
      * 인앱 크레딧 구매 (IAP) 진입점 노출.
      *
-     * **출시 빌드 주의**: `PurchaseLauncher` 가 아직 StoreKit / Play Billing 미연동 mock 이라
-     * 실제 결제창 안 뜬 채로 App Store 제출하면 가이드라인 2.1 (incomplete) / 3.1.1
-     * (외부 결제 의심) 으로 reject. 데모/내부 테스트에선 true, 심사 빌드 직전에 false 로 토글.
+     * **현재 false — 무료 선출시 모드.** 결제 기능을 빼고 가입 무료 3크레딧만으로 배포(사업자등록
+     * 연기). false 면 모든 IAP 진입점(InputScreen 크레딧 칩, UserMenu 크레딧/구매, 잔액부족
+     * "Buy credits")이 숨겨지고, 잔액 소진 화면은 "I want this" 수요표현 탭(→ 컨페티 +
+     * `BffApi.recordPaidCreditIntent`)으로 대체된다. 결제 오픈 시 true 로만 토글하면 복구.
+     *
+     * (true 로 되돌릴 때 주의: `PurchaseLauncher` 가 StoreKit / Play Billing 실연동돼 있어야 함 —
+     * mock 인 채로 제출하면 가이드라인 2.1 / 3.1.1 reject.)
      */
-    const val iapEnabled: Boolean = true
+    const val iapEnabled: Boolean = false
 }

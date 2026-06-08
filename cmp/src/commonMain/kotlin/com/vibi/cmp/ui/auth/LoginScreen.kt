@@ -27,10 +27,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vibi.cmp.legal.LegalUrls
+import com.vibi.cmp.legal.appendLegalLink
 import com.vibi.shared.ui.auth.LoginViewModel
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -128,9 +131,17 @@ fun LoginScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            // App Store 가이드라인 5.1.1 데이터 수집 고지.
+            // App Store 가이드라인 5.1.1 데이터 수집 고지 — ToS/개인정보 클릭 가능 링크.
+            val linkColor = MaterialTheme.colorScheme.primary
+            val agreement = buildAnnotatedString {
+                append("By signing in, you agree to our ")
+                appendLegalLink("Terms of Service", LegalUrls.TERMS, linkColor)
+                append(" and ")
+                appendLegalLink("Privacy Policy", LegalUrls.PRIVACY, linkColor)
+                append(".")
+            }
             Text(
-                text = "By signing in, you agree to our Terms of Service and Privacy Policy.",
+                text = agreement,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

@@ -34,10 +34,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vibi.cmp.legal.LegalUrls
+import com.vibi.cmp.legal.appendLegalLink
 import com.vibi.cmp.platform.PurchaseLauncher
 import com.vibi.cmp.platform.PurchaseResult
 import com.vibi.cmp.platform.RestoreResult
@@ -458,16 +461,25 @@ private fun RestoreRow(isWorking: Boolean, onClick: () -> Unit) {
 }
 
 /**
- * App Store 가이드라인 3.1.2 / 5.1.1 결제 고지문. TOS / 개인정보 링크는 실제 URL 핸들러가
- * 도입되면 추가 — 빈 onClick 으로 무동작 underlined link 를 보이게 두면 심사에서 reject.
+ * App Store 가이드라인 3.1.2 / 5.1.1 결제 고지문 + 이용약관/개인정보처리방침 클릭 링크.
  */
 @Composable
 private fun FinePrint() {
     val tokens = LocalVibiColors.current
+    val notice = buildAnnotatedString {
+        append(
+            "1 credit = separation of 1 minute of vocals or background. " +
+                "Payment is charged to your Apple ID or Google account at confirmation. " +
+                "Credits are non-refundable and cannot be transferred or redeemed for cash. " +
+                "See our ",
+        )
+        appendLegalLink("Terms of Service", LegalUrls.TERMS, MaterialTheme.colorScheme.primary)
+        append(" and ")
+        appendLegalLink("Privacy Policy", LegalUrls.PRIVACY, MaterialTheme.colorScheme.primary)
+        append(".")
+    }
     Text(
-        text = "1 credit = separation of 1 minute of vocals or background. " +
-            "Payment is charged to your Apple ID or Google account at confirmation. " +
-            "Credits are non-refundable and cannot be transferred or redeemed for cash.",
+        text = notice,
         style = TextStyle(
             fontSize = 11.sp,
             color = tokens.mutedText,
