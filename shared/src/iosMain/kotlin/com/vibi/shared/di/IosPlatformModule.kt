@@ -35,7 +35,7 @@ import org.koin.dsl.module
  * (코덱/회전/fps) 검증을 마치기 전까지 프로덕션은 검증된 서버 경로([V3RenderExecutor])를 쓴다.
  * 검증 후 true 로 바꾸면 영상전용 편집 저장이 [HybridRenderExecutor] 로 온디바이스 fast-path 를 탄다.
  */
-private const val ON_DEVICE_EXPORT_ENABLED = false
+private const val ON_DEVICE_EXPORT_ENABLED = true
 
 /**
  * iOS 측 platform module.
