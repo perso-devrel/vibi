@@ -1664,6 +1664,76 @@ class TimelineViewModel constructor(
         )
     }
 
+    /**
+     * 재생헤드 위치에서 그 지점이 속한 영상 세그먼트를 둘로 나눈다(단일 지점 2분할). 트랜스포트의
+     * '][' 버튼이 호출 — 구간(범위) 선택 없이 현재 재생 위치만으로 컷. 재생헤드가 세그먼트 양 끝
+     * (MIN_RANGE_MS 이내)이면 한쪽 조각이 무의미하게 짧아지므로 무동작.
+     *
+     * split 은 [splitSegment] 재사용 — rangeEnd 를 세그먼트 끝으로 줘 pre=[trimStart..cut],
+     * middle=[cut..trimEnd] 두 조각만 생성(post 없음). directive 앵커는 use case 가 보존.
+     */
+    fun onSplitAtPlayhead() {
+        val state = _uiState.value
+        val playhead = state.playbackPositionMs
+        var acc = 0L
+        var target: Segment? = null
+        var segStart = 0L
+        for (seg in state.segments) {
+            val dur = seg.effectiveDurationMs
+            if (seg.type == SegmentType.VIDEO && playhead in acc..(acc + dur)) {
+                target = seg
+                segStart = acc
+                break
+            }
+            acc += dur
+        }
+        val seg = target ?: return
+        // global(timeline) ms → source-media ms — speedScale 만큼 stretch. sliceGlobalRange 와 동일 보정.
+        val speed = if (seg.speedScale > 0f) seg.speedScale else 1f
+        val trimStart = seg.trimStartMs
+        val trimEnd = seg.effectiveTrimEndMs
+        val localSplit = trimStart + kotlin.math.round((playhead - segStart) * speed).toLong()
+        if (localSplit - trimStart < SplitSegmentUseCase.MIN_RANGE_MS ||
+            trimEnd - localSplit < SplitSegmentUseCase.MIN_RANGE_MS
+        ) return
+        // pre/middle 경계의 정확한 글로벌 ms — 음원분리 directive 도 이 지점에서 쪼갠다.
+        val cutGlobal = segStart + kotlin.math.round((localSplit - trimStart) / speed).toLong()
+        viewModelScope.launch {
+            runCatching { splitSegment(seg.id, localSplit, trimEnd) }
+            refreshSegmentsStateFromDb()
+            // 컷 지점을 가로지르는 음원분리 directive 도 두 조각으로 split — 오디오탭(SoundDeck)에서 구간이
+            // 세그먼트와 동일하게 나뉘게. 글로벌 range 기준으로 쪼갠 뒤 앵커를 글로벌→세그먼트로 재동기화.
+            splitDirectivesAtGlobal(cutGlobal)
+            resyncDirectiveAnchorsFromGlobal()
+            pushUndoState()
+            _uiState.update { it.copy(isPlaying = false) }
+        }
+    }
+
+    /**
+     * 글로벌 [cut] 지점을 관통하는 directive 를 두 조각으로 split. 앞 piece 는 rangeEnd=cut(같은 id),
+     * 뒤 piece 는 새 id + rangeStart=cut + sourceOffsetMs 누적(stem audio 의 cut 이후부터 재생).
+     * [applyDirectiveRippleDelete] 의 관통 분기와 동일 의미의 width=0 버전 — 호출 후
+     * [resyncDirectiveAnchorsFromGlobal] 로 두 조각의 앵커(segmentId + local)를 세그먼트에 맞춘다.
+     */
+    private suspend fun splitDirectivesAtGlobal(cut: Long) {
+        val upserts = mutableListOf<SeparationDirective>()
+        for (dir in separationDirectiveRepository.getByProject(projectId)) {
+            val ds = dir.rangeStartMs
+            val de = dir.rangeEndMs
+            if (ds < cut && cut < de) {
+                upserts += dir.copy(rangeEndMs = cut)
+                upserts += dir.copy(
+                    id = generateId(),
+                    rangeStartMs = cut,
+                    rangeEndMs = de,
+                    sourceOffsetMs = dir.sourceOffsetMs + (cut - ds),
+                )
+            }
+        }
+        if (upserts.isNotEmpty()) separationDirectiveRepository.addAll(upserts)
+    }
+
     fun onUpdatePendingRangeVolume(value: Float) {
         _uiState.value = _uiState.value.copy(pendingRangeVolume = value.coerceIn(0f, 2f))
     }

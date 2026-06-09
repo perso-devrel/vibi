@@ -17,6 +17,11 @@ val viewModelModule = module {
             thumbnailExtractor = get(),
             expireOldDrafts = get(),
             authRepository = get(),
+            startAudioSeparation = get(),
+            pollSeparation = get(),
+            separationDirectiveRepository = get(),
+            audioExtractor = get(),
+            bffBaseUrl = getProperty<String>("bffBaseUrl"),
         )
     }
     factory { (projectId: String) ->

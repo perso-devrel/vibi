@@ -72,7 +72,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Mic
@@ -106,7 +105,6 @@ import com.vibi.cmp.ui.account.ConfettiOverlay
 import com.vibi.cmp.ui.account.PAID_CREDITS_CTA_LABEL
 import com.vibi.cmp.ui.account.PaidCreditsComingSoonNote
 import com.vibi.cmp.platform.rememberStemMixer
-import com.vibi.shared.domain.model.AutoJobStatus
 import com.vibi.shared.domain.model.hasNonTrivialEdits
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import androidx.compose.material3.FilterChip
@@ -679,22 +677,41 @@ fun TimelineScreen(
             val iconSize = 20.dp
             Box(modifier = Modifier.fillMaxWidth().height(btnSize)) {
                 if (state.videoUri.isNotEmpty()) {
-                    // Left — 전체화면 진입.
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .size(btnSize)
-                            .clip(CircleShape)
-                            .background(tokens.chipBg)
-                            .clickable { fullscreenOpen = true },
-                        contentAlignment = Alignment.Center
+                    // Left — 전체화면 + 그 오른쪽에 '][' 구간 분리(재생헤드 컷).
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterStart),
+                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Fullscreen,
-                            contentDescription = "Fullscreen",
-                            tint = tokens.onBackgroundPrimary,
-                            modifier = Modifier.size(iconSize),
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(btnSize)
+                                .clip(CircleShape)
+                                .background(tokens.chipBg)
+                                .clickable { fullscreenOpen = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Fullscreen,
+                                contentDescription = "Fullscreen",
+                                tint = tokens.onBackgroundPrimary,
+                                modifier = Modifier.size(iconSize),
+                            )
+                        }
+                        // '][' 구간 분리 — 재생헤드가 놓인 영상 세그먼트를 그 지점에서 둘로 나눈다.
+                        Box(
+                            modifier = Modifier
+                                .size(btnSize)
+                                .clip(CircleShape)
+                                .background(tokens.chipBg)
+                                .clickable { viewModel.onSplitAtPlayhead() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            SplitIcon(
+                                tint = tokens.onBackgroundPrimary,
+                                modifier = Modifier.size(iconSize),
+                            )
+                        }
                     }
                     // Center — 재생/정지 + 현재s/전체s 라벨. Row 로 묶어 align(Center) 하면 (버튼+텍스트)
                     // 두 자식의 합산 폭이 화면 중앙에 위치 — 버튼만 정중앙에 두고 텍스트를 오른쪽에 띄우는
@@ -829,7 +846,6 @@ fun TimelineScreen(
                 directiveColor = tokens.timelineBarDirective,
                 videoPeaks = videoPeaks,
                 stemPeaksByUrl = stemPeaks,
-                expandedDirectiveIds = expandedSeparationIds,
                 primarySourceUri = state.videoUri,
                 primarySourceDurationMs = state.segments.firstOrNull { it.sourceUri == state.videoUri }
                     ?.durationMs ?: state.videoDurationMs,
@@ -900,39 +916,8 @@ fun TimelineScreen(
                     style = typo.bodySm,
                     color = tokens.accent
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs)
-                ) {
-                    // BGM(음원) 구간편집 중엔 영상 분리용 버튼 숨김 — 음원 클릭 시 분리 버튼이 뜨던 문제.
-                    if (!state.isSegmentEditMode && !state.editTargets.hasBgm() && viewModel.isSeparationSupported) {
-                        // 탭 후 VM state 가 isRangeSelecting=false 로 emit 되어 row 가 사라지기 전까지
-                        // 사용자가 다시 탭하면 같은 구간이 중복 큐잉됨. 첫 탭 즉시 disable 로 가드.
-                        var submitting by remember(state.pendingRangeStartMs, state.pendingRangeEndMs) {
-                            mutableStateOf(false)
-                        }
-                        Button(
-                            modifier = Modifier.weight(1f),
-                            enabled = !submitting,
-                            onClick = {
-                                if (submitting) return@Button
-                                submitting = true
-                                // 분리 대상은 현재 선택 범위가 놓인 클립(rangeTargetSegmentId) — 종전엔
-                                // 무조건 첫 세그먼트를 넘겨, 재정렬 후 의도와 다른 클립이 분리되던 버그.
-                                val segId = state.rangeTargetSegmentId
-                                    ?: state.segments.firstOrNull()?.id ?: return@Button
-                                viewModel.onCancelRangeMode()
-                                // SETUP sheet 만 열고 분리는 시작하지 않음 — 사용자가 비용/잔액
-                                // (CostPreviewRow) 을 보고 sheet 의 Start 버튼으로 명시적 confirm.
-                                // (이전엔 여기서 onStartSeparation 을 자동 호출 → SETUP step 이
-                                // 한 프레임도 안 뜨고 닫혀 "탭이 먹혔는지" 사용자가 모름 → 재탭으로
-                                // 같은 구간 중복 큐잉되는 케이스 신고.)
-                                viewModel.onShowAudioSeparationSheet(segId)
-                            }
-                        ) { Text("Separate this range") }
-                        OutlinedButton(onClick = { viewModel.onCancelRangeMode() }) { Text("Cancel") }
-                    }
-                }
+                // 음원분리 진입(구간 선택 → "Separate this range")은 제거됨 — 음원분리는 영상 import
+                // 시점에 자동으로 전체 분리가 돌고, 영상 편집 화면에서는 '][' 구간 분리(세그먼트 컷)만 제공.
                 // SegmentEditActionPanel 은 음원분리/음원삽입 행 아래로 이동 — 사용자 요청.
             }
 
@@ -986,59 +971,9 @@ fun TimelineScreen(
             }
         }
 
-        // 진입점 버튼들 (음원 분리 + 음원 삽입)
-        val firstSegId = state.segments.firstOrNull()?.id
+        // 진입점 버튼 (음원 삽입). 음원 분리 진입은 제거 — import 시 전체 자동 분리로 대체.
         if (!state.isRangeSelecting || state.isSegmentEditMode) {
-            // 진행 상태는 timeline accent overlay 가 표시 — 버튼 라벨은 새 분리 진입점으로 고정.
-            // FAILED 만 예외 — "다시 시도" 클릭 시 FAILED 비우고 새 분리 흐름.
             run {
-                val sepLabel = when (state.separationStatus) {
-                    AutoJobStatus.FAILED -> "Retry"
-                    else -> "Separate audio"
-                }
-                // 영상 다듬기 / BGM 선택 편집 액션은 화면 하단의 통합 하단바로 이동 — 본 scope inline 폐기.
-                // 음원 분리 — IconLabelCard 패턴 (영상 다듬기 카드와 동일). 설명 텍스트는 의도적으로 생략.
-                com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
-                    label = sepLabel,
-                    description = null,
-                    // 영상편집 모드에서도 활성 — onEnterRangeMode 가 isSegmentEditMode=false 로 전환해
-                    // 분리 모드로 자연스럽게 이동. 영상편집 deselect 시점에 stuck disabled 되던 회귀 fix.
-                    enabled = firstSegId != null,
-                    onClick = {
-                        val segId = firstSegId ?: return@IconLabelCard
-                        when (state.separationStatus) {
-                            AutoJobStatus.FAILED -> {
-                                viewModel.onClearSeparation()
-                                viewModel.onEnterRangeMode(segId)
-                            }
-                            else -> viewModel.onEnterRangeMode(segId)
-                        }
-                    },
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.GraphicEq,
-                        contentDescription = null,
-                        tint = tokens.onBackgroundPrimary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                // 음원 삽입 — IconLabelCard 트리거. 탭 시 화면 하단 AudioInsertEntrySheet (Record / Upload 두 카드)
-                // 가 슬라이드 업. 설명 텍스트는 의도적으로 생략.
-                com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
-                    label = if (state.isAddingBgm) "Adding…" else "Add audio",
-                    description = null,
-                    // 영상편집 모드 가드 제거 — deselect 후 stuck disabled 되던 회귀 fix.
-                    // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
-                    enabled = !state.isAddingBgm,
-                    onClick = { audioEntryOpen = true },
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = tokens.onBackgroundPrimary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
                 // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
                 if (com.vibi.cmp.platform.RuntimeFlags.soundDeckEnabled) {
@@ -1080,6 +1015,23 @@ fun TimelineScreen(
                     )
                     // 영상 다듬기 진입은 timeline 의 영상 파형 탭으로 일원화 (UnifiedTimelineBar
                     // 의 onWaveformTapInNeutral) — 별도 진입 카드 폐기.
+                }
+                // 음원 삽입 — 오디오 섹션(SoundDeck) 하단에 위치. 탭 시 화면 하단 AudioInsertEntrySheet
+                // (Record / Upload) 가 슬라이드 업. 설명 텍스트는 의도적으로 생략.
+                Spacer(Modifier.height(VibiSpacing.xs))
+                com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
+                    label = if (state.isAddingBgm) "Adding…" else "Add audio",
+                    description = null,
+                    // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
+                    enabled = !state.isAddingBgm,
+                    onClick = { audioEntryOpen = true },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MusicNote,
+                        contentDescription = null,
+                        tint = tokens.onBackgroundPrimary,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
         }
@@ -1694,6 +1646,35 @@ data class ProcessingSeparationOverlay(
     val clientToken: String,
 )
 
+/**
+ * '][' 구간 분리 아이콘 — 머티리얼에 해당 글리프가 없어 Canvas 로 직접 그린다. 가운데 두 spine(] 와 [)
+ * 이 마주보고, 위/아래 tick 이 바깥으로 향해 "이 지점에서 자른다"를 표현. (텍스트 글리프 대신 vector.)
+ */
+@Composable
+private fun SplitIcon(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = (w * 0.1f).coerceAtLeast(1.5f)
+        val gap = w * 0.16f     // 가운데에서 각 spine 까지 거리
+        val tick = w * 0.22f    // 위/아래 가로 tick 길이
+        val cx = w / 2f
+        val top = h * 0.18f
+        val bot = h * 0.82f
+        val leftSpine = cx - gap
+        val rightSpine = cx + gap
+        val cap = StrokeCap.Round
+        // ] — 왼쪽 spine, tick 은 왼쪽으로.
+        drawLine(tint, Offset(leftSpine, top), Offset(leftSpine, bot), stroke, cap)
+        drawLine(tint, Offset(leftSpine, top), Offset(leftSpine - tick, top), stroke, cap)
+        drawLine(tint, Offset(leftSpine, bot), Offset(leftSpine - tick, bot), stroke, cap)
+        // [ — 오른쪽 spine, tick 은 오른쪽으로.
+        drawLine(tint, Offset(rightSpine, top), Offset(rightSpine, bot), stroke, cap)
+        drawLine(tint, Offset(rightSpine, top), Offset(rightSpine + tick, top), stroke, cap)
+        drawLine(tint, Offset(rightSpine, bot), Offset(rightSpine + tick, bot), stroke, cap)
+    }
+}
+
 @Composable
 private fun UnifiedTimelineBar(
     segments: List<com.vibi.shared.domain.model.Segment>,
@@ -1720,8 +1701,6 @@ private fun UnifiedTimelineBar(
     videoPeaks: List<Float> = emptyList(),
     /** stem audioUrl → 추출된 peaks. directive 영역에서 source peaks 대신 사용해 각 stem 의 실제 파형 노출. */
     stemPeaksByUrl: Map<String, List<Float>> = emptyMap(),
-    /** SoundDeck 에서 펼친 directive id 집합 — 펼친 구간만 화자별 색, 닫힘은 단일 highlight. */
-    expandedDirectiveIds: Set<String> = emptySet(),
     /** Peak 가 추출된 source URI — segment.sourceUri 가 일치하는 segment 만 peak lookup. 다른 source 영역은 0. */
     primarySourceUri: String = "",
     /** Peak source 의 raw duration (ms). segment trim/speed 역매핑에 사용. */
@@ -2044,7 +2023,6 @@ private fun UnifiedTimelineBar(
                         highlightBarColor = accent,
                         // 라이트 #F5F5F5 (흰 패널 위 밝은 회색), 다크 #1C1917 (elevated plate). 테두리 없음.
                         trackBg = tokens.timelineWaveformStripBg,
-                        expandedDirectiveIds = expandedDirectiveIds,
                         modifier = Modifier
                             .align(Alignment.Center)
                             .fillMaxWidth()
@@ -2667,15 +2645,22 @@ private fun TimelineWaveformBackground(
     defaultBarColor: Color,
     highlightBarColor: Color,
     trackBg: Color,
-    /** 펼친 directive id 집합 — 이 안에 든 directive 만 화자별 stem 색, 나머지는 highlight 단일 색. */
-    expandedDirectiveIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
     // directive 별 effective scale + stem 기여도. directive 영역의 bar 높이는 선택된 모든 stem 의 peak 를
     // volume 으로 가중 후 에너지 합산 (sqrt(Σ(p_i·v_i)²)) — 화자+배경 둘 다 켜면 mix shape 이 보임.
     // muteOriginalSegmentAudio=false 면 source peak 도 추가 항으로 합산.
     val tokens = LocalVibiColors.current
-    val directiveOverlays = remember(directives, stemPeaksByUrl, tokens, expandedDirectiveIds) {
+    // stemPeaksByUrl 는 SnapshotStateMap — peak 가 async 로 채워져도 맵 인스턴스 identity 는 안 바뀌어
+    // remember(stemPeaksByUrl) 의 key equals 가 변하지 않아 overlay 가 재계산되지 않는다. 활성 stem 별
+    // peak size 핑거프린트를 key 로 써서, peak 가 로드되는 순간(0→N) overlay 가 재계산되도록 한다.
+    // (종전엔 expand 토글이 우연히 recompute 를 유발해서만 색이 떴고 — expand 게이팅 제거 후 그 트리거가
+    // 사라져 펼쳐도/닫아도 색이 안 뜨던 회귀 fix. fingerprint 의 stemPeaksByUrl 읽기는 snapshot-tracked
+    // 라 peak 로드 시 recomposition 도 함께 유발.)
+    val stemPeaksFingerprint = directives.flatMap { d ->
+        d.selections.mapNotNull { it.audioUrl?.takeIf { u -> u.isNotBlank() } }
+    }.distinct().map { it to (stemPeaksByUrl[it]?.size ?: 0) }
+    val directiveOverlays = remember(directives, stemPeaksFingerprint, tokens) {
         // 같은 stem audio URL 을 공유하는 모든 piece (split 결과) 중 (sourceOffset + duration) 의 max
         // 를 stem audio 전체 길이로 추정. waveform peak idx 매핑이 piece 길이가 아니라 stem 전체 길이
         // 기준이어야 split 뒷 piece (sourceOffset > 0) 가 stem 의 올바른 구간을 보여줌.
@@ -2704,12 +2689,10 @@ private fun TimelineWaveformBackground(
                         peaks = peaks,
                         volume = sel.volume,
                         totalDurMs = (stemTotalDurByUrl[url] ?: d.durationMs).coerceAtLeast(1L),
-                        // directive 가 펼친 상태면 화자별 색, 닫힘이면 단일 highlight (드러나지 않음).
-                        color = if (d.id in expandedDirectiveIds)
-                            SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor)
-                        else highlightBarColor,
+                        // 분리된 음원은 펼침 여부와 무관하게 항상 화자별 색 — 닫혀 있어도 파형에서 화자 구분.
+                        color = SpeakerPalette.stemColor(sel.stemId, tokens, fallback = highlightBarColor),
                         // dominant 색 후보는 speaker 만 — background 가 peak 가 항상 커서 화자 색을 묻는 사고 방지.
-                        colorCandidate = isSpeaker && d.id in expandedDirectiveIds,
+                        colorCandidate = isSpeaker,
                     )
                 }
             }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +60,8 @@ import com.vibi.shared.platform.formatRelative
 import com.vibi.shared.platform.formatTimestamp
 import com.vibi.shared.ui.input.DraftSummary
 import com.vibi.shared.ui.input.InputViewModel
+import com.vibi.shared.ui.input.PreparingSummary
+import com.vibi.shared.ui.timeline.localizeProgressReason
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
@@ -220,6 +223,43 @@ fun InputScreen(
                 }
             }
 
+            // "작업 준비중" — 영상 선택 직후 백그라운드로 전체 음원분리가 도는 프로젝트들.
+            // drafts 위에 위치. 분리 완료되면 카드가 여기서 빠지고 아래 "이어서 작업"으로 내려간다.
+            if (state.preparing.isNotEmpty()) {
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = "Preparing",
+                    style = TextStyle(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Separating audio. We'll have it ready soon.",
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(items = state.preparing, key = { it.projectId }) { item ->
+                        PreparingCard(
+                            item = item,
+                            onRetry = { viewModel.onRetryPreparing(item.projectId) },
+                            onDelete = { viewModel.onDeleteDraft(item.projectId) },
+                        )
+                    }
+                }
+            }
+
             // "이어서 작업" — drafts 가 비어있으면 섹션 자체 숨김.
             // (갤러리에서 영상 선택 섹션 아래에 위치 — 신규 영상 선택 흐름이 우선.)
             if (state.drafts.isNotEmpty()) {
@@ -369,6 +409,135 @@ private fun DraftCard(
             }
         }
         // 우상단 작은 X 버튼 — 카드 전체 클릭 영역과 분리하기 위해 별도 clickable Box.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(Color(0x66000000))
+                .clickable(onClick = onDelete),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "✕",
+                style = TextStyle(
+                    fontSize = 12.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+            )
+        }
+    }
+}
+
+/**
+ * "작업 준비중" 한 카드. [DraftCard] 와 같은 썸네일/레이아웃이되, 하단에 음원분리 진행 바 + 퍼센트를
+ * 보여준다. 진행 중에는 탭 비활성(분리 완료 전 에디터 진입 불가), 실패 시 "다시 시도" 노출.
+ */
+@Composable
+private fun PreparingCard(
+    item: PreparingSummary,
+    onRetry: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val titleText = item.title?.takeIf { it.isNotBlank() }
+        ?: formatTimestamp(item.createdAt)
+
+    Box(
+        modifier = Modifier
+            .width(220.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF2C2C2E),
+                        Color(0xFF1C1C1E),
+                    )
+                )
+            )
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .background(Color.Black)
+            ) {
+                val thumb = item.thumbnailPath
+                if (!thumb.isNullOrBlank()) {
+                    AsyncImage(
+                        model = thumb,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+            ) {
+                Text(
+                    text = titleText,
+                    maxLines = 1,
+                    style = TextStyle(
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    ),
+                    modifier = Modifier.padding(end = 24.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                if (item.failed) {
+                    Text(
+                        text = if (item.insufficientCredits) "Not enough credits" else "Separation failed",
+                        style = TextStyle(
+                            fontSize = 12.sp,
+                            color = Color(0xFFFF453A),
+                            fontWeight = FontWeight.Medium,
+                        )
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x33FFFFFF))
+                            .clickable(onClick = onRetry)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = "Retry",
+                            style = TextStyle(
+                                fontSize = 12.sp,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        )
+                    }
+                } else {
+                    LinearProgressIndicator(
+                        progress = { (item.progress / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = Color(0xFF30D158),
+                        trackColor = Color(0x33FFFFFF),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${item.progress}% · ${localizeProgressReason(item.progressReason)}",
+                        style = TextStyle(
+                            fontSize = 11.sp,
+                            color = Color(0xCCFFFFFF),
+                        )
+                    )
+                }
+            }
+        }
+        // 우상단 X — 준비중 취소(프로젝트 삭제). DraftCard 와 동일 패턴.
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
