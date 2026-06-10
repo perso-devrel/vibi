@@ -39,16 +39,26 @@ object SpeakerPalette {
 }
 
 /**
- * BGM 클립 (파일 삽입 + 즉시 녹음 통합) 의 시각 색. 삽입 순서 (timeline startMs) 기준 1-based
- * 인덱스로 4색 cycle — 사용자가 어떤 BGM 인지 색만으로 구분 가능. 5개 이상은 wrap.
+ * BGM 클립 (파일 삽입 + 즉시 녹음 통합) 의 시각 색. 클립 id 해시 기준 4색 슬롯 — 한 번 정해진 색이
+ * 다른 클립의 삽입/삭제·드래그(재정렬)에 흔들리지 않는다. 5+ 클립은 색이 겹칠 수 있으나(슬롯 4개)
+ * 안정성을 우선. (이전엔 createdAt dense rank 라 중간 클립 삭제 시 뒤 클립들의 색이 한 칸씩 당겨졌음.)
  */
 object BgmPalette {
+    /** palette() 색 수와 일치해야 함 — [stableIndexForClipId] 가 토큰 없이 슬롯을 계산해야 해 상수로 둠. */
+    private const val COLOR_COUNT = 4
+
     private fun palette(tokens: VibiColors): List<Color> = listOf(
         tokens.gradientMint,
         tokens.gradientLavender,
         tokens.gradientRose,
         tokens.gradientPeach,
     )
+
+    /**
+     * 클립 id → 안정 색 슬롯(1-based). id 는 생성 시 1회 부여 후 불변이라 색이 영구 고정된다.
+     * [colorFor] 와 짝 — 반환값을 그대로 넘기면 같은 색.
+     */
+    fun stableIndexForClipId(clipId: String): Int = clipId.hashCode().mod(COLOR_COUNT) + 1
 
     fun colorFor(bgmIndex: Int?, tokens: VibiColors): Color {
         val p = palette(tokens)

@@ -65,6 +65,8 @@ fun SoundDeck(
     onRenameBgm: (clipId: String) -> Unit,
     onAddSeparation: (() -> Unit)?,
     onAddBgm: (() -> Unit)?,
+    /** 내부 "Audio" 헤더 노출 여부. 호출자가 직접 헤더(+추가 버튼)를 그리면 false 로 중복 방지. */
+    showHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalVibiColors.current
@@ -148,7 +150,8 @@ fun SoundDeck(
     ) {
         // "Audio" 헤더는 삽입된 음원(BGM)이나 분리완료 구간(directive)이 하나라도 있을 때만 노출 —
         // 둘 다 없으면 빈 라벨만 덩그러니 남던 것 제거. groups = 분리 그룹 + BGM 그룹 (둘 다 없으면 empty).
-        if (groups.isNotEmpty()) {
+        // [showHeader]=false 면 호출자(TimelineScreen)가 헤더+추가 버튼을 직접 그리므로 미노출.
+        if (showHeader && groups.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Audio",

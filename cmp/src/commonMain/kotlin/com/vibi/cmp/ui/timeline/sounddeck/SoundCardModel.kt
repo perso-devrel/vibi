@@ -151,13 +151,13 @@ fun buildSoundDeckGroups(
     // 카드 표시 순서 — timeline 위치(startMs) 기준 정렬. 사용자가 카드를 좌→우로 훑을 때
     // 실제 영상 흐름 순으로 보이게.
     val sortedBgm = bgmClips.sortedBy { it.startMs }
-    // 색·녹음 번호는 추가 순서(createdAt) 기준 stable 1-based — 위치(startMs) 가 바뀌어도
-    // 절대 변하지 않게. createdAt 동률이면 id 로 안정 정렬.
-    val sortedByCreation = bgmClips.sortedWith(compareBy({ it.createdAt }, { it.id }))
-    val bgmIndexByClipId: Map<String, Int> = sortedByCreation
-        .withIndex()
-        .associate { (i, b) -> b.id to (i + 1) }
-    val recordingOrdinal: Map<String, Int> = sortedByCreation
+    // 색은 클립 id 해시 기준 안정 슬롯 — 다른 클립의 삽입/삭제·드래그(재정렬) 에도 절대 안 변함.
+    // (이전엔 createdAt dense rank 라 중간 클립 삭제 시 뒤 클립 색이 한 칸씩 당겨졌음.)
+    val bgmIndexByClipId: Map<String, Int> = bgmClips
+        .associate { it.id to com.vibi.cmp.theme.BgmPalette.stableIndexForClipId(it.id) }
+    // 녹음 번호는 추가 순서(createdAt) 기준 1-based — 색과 달리 "몇 번째 녹음" 의미라 순서가 자연스러움.
+    val recordingOrdinal: Map<String, Int> = bgmClips
+        .sortedWith(compareBy({ it.createdAt }, { it.id }))
         .filter { isRecordingSourceUri(it.sourceUri) }
         .withIndex()
         .associate { (i, b) -> b.id to (i + 1) }

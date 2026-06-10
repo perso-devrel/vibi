@@ -141,6 +141,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -522,10 +523,11 @@ fun TimelineScreen(
     Box(modifier = Modifier.fillMaxSize().background(tokens.backgroundPrimary)) {
     val bottomTarget = state.bottomActionTarget()
     val bottomReserve = if (bottomTarget !is BottomActionTarget.None) BottomBarReserveDp else 0.dp
+    // 상단(헤더~타임라인)은 고정, 사운드덱만 스크롤 — 메인 Column 자체는 스크롤 안 함.
+    // 아래쪽 사운드덱 영역을 weight(1f) + verticalScroll Column 으로 감싸 남은 세로를 차지·스크롤.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(VibiSpacing.base)
@@ -586,8 +588,8 @@ fun TimelineScreen(
                     disabledContentColor = tokens.chipContentDisabled,
                 ),
                 elevation = null,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.sm, vertical = 0.dp),
-                modifier = Modifier.height(VibiSpacing.xxl),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = VibiSpacing.xs, vertical = 0.dp),
+                modifier = Modifier.height(VibiSpacing.xl),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Export", style = typo.bodySm)
@@ -707,9 +709,12 @@ fun TimelineScreen(
                                 .clickable { viewModel.onSplitAtPlayhead() },
                             contentAlignment = Alignment.Center
                         ) {
+                            // SplitIcon 은 Canvas 가 박스를 꽉 채워(가로 76%·세로 64%) 내부 패딩이 있는
+                            // Material Fullscreen 글리프보다 커 보임 → 0.85배로 줄여 시각 크기를 맞춤.
+                            // 박스(btnSize 터치영역)는 그대로라 정렬·간격은 불변.
                             SplitIcon(
                                 tint = tokens.onBackgroundPrimary,
-                                modifier = Modifier.size(iconSize),
+                                modifier = Modifier.size(iconSize * 0.85f),
                             )
                         }
                     }
@@ -971,11 +976,41 @@ fun TimelineScreen(
             }
         }
 
+        // 사운드덱 영역 — 여기부터 스크롤. weight(1f) 로 상단 고정 영역(헤더~타임라인) 아래 남은
+        // 세로를 차지하고, 내부 verticalScroll 로 덱이 길어지면 스크롤한다.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+        ) {
         // 진입점 버튼 (음원 삽입). 음원 분리 진입은 제거 — import 시 전체 자동 분리로 대체.
         if (!state.isRangeSelecting || state.isSegmentEditMode) {
             run {
+                // Audio 섹션 헤더 + 음원 추가 버튼(우측 상단) — 타임라인 바로 아래, 사운드덱 공간 상단.
+                // 버튼은 soundDeckEnabled 와 무관하게 항상 노출. 탭 시 AudioInsertEntrySheet(Record/Upload).
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Audio", style = typo.titleSm, color = tokens.onBackgroundPrimary)
+                    if (state.separationDirectives.isNotEmpty()) {
+                        Spacer(Modifier.width(VibiSpacing.xs))
+                        Text(
+                            "Tap a range to adjust the sounds",
+                            style = typo.bodySm,
+                            color = tokens.mutedText,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    AddAudioButton(
+                        enabled = !state.isAddingBgm,
+                        onClick = { audioEntryOpen = true },
+                    )
+                }
                 // SoundDeck — 분리된 stem + BGM 을 세로 카드 스택으로. 기존 AudioSeparationSheet
-                // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영.
+                // 와 같은 state 를 공유하므로 한쪽 토글이 다른 쪽에도 즉시 반영. 헤더는 위 Row 가 담당.
                 if (com.vibi.cmp.platform.RuntimeFlags.soundDeckEnabled) {
                     val deckGroups = remember(state.separationDirectives, state.bgmClips) {
                         com.vibi.cmp.ui.timeline.sounddeck.buildSoundDeckGroups(
@@ -985,7 +1020,8 @@ fun TimelineScreen(
                     }
                     val deckDisabled = state.audioSeparation?.step ==
                         com.vibi.shared.ui.timeline.AudioSeparationStep.PROCESSING
-                    Spacer(Modifier.height(VibiSpacing.xs))
+                    // 헤더(Audio/hint)와 첫 카드 사이 간격은 스크롤 Column 의 spacedBy(xs) 만으로 충분 —
+                    // 별도 Spacer 제거해 간격 축소.
                     com.vibi.cmp.ui.timeline.sounddeck.SoundDeck(
                         groups = deckGroups,
                         disabled = deckDisabled,
@@ -1009,29 +1045,13 @@ fun TimelineScreen(
                         onRemoveBgmBackground = { clipId -> viewModel.onStartBgmSeparation(clipId) },
                         onDeleteBgm = { clipId -> viewModel.onDeleteBgmClip(clipId) },
                         onRenameBgm = { clipId -> renameBgmTargetId = clipId },
-                        // 분리/BGM 진입은 위 버튼 row 가 담당 — deck add 슬롯은 사용 안 함.
+                        // 분리/BGM 진입은 위 Audio 헤더의 추가 버튼이 담당 — deck add 슬롯·내부 헤더 미사용.
                         onAddSeparation = null,
                         onAddBgm = null,
+                        showHeader = false,
                     )
                     // 영상 다듬기 진입은 timeline 의 영상 파형 탭으로 일원화 (UnifiedTimelineBar
                     // 의 onWaveformTapInNeutral) — 별도 진입 카드 폐기.
-                }
-                // 음원 삽입 — 오디오 섹션(SoundDeck) 하단에 위치. 탭 시 화면 하단 AudioInsertEntrySheet
-                // (Record / Upload) 가 슬라이드 업. 설명 텍스트는 의도적으로 생략.
-                Spacer(Modifier.height(VibiSpacing.xs))
-                com.vibi.cmp.ui.timeline.sounddeck.IconLabelCard(
-                    label = if (state.isAddingBgm) "Adding…" else "Add audio",
-                    description = null,
-                    // BGM 삽입은 영상 segment 편집과 직교, 동시 진행해도 충돌 없음.
-                    enabled = !state.isAddingBgm,
-                    onClick = { audioEntryOpen = true },
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = tokens.onBackgroundPrimary,
-                        modifier = Modifier.size(16.dp),
-                    )
                 }
             }
         }
@@ -1051,6 +1071,7 @@ fun TimelineScreen(
             )
             else -> Unit
         }
+        } // 사운드덱 스크롤 Column 끝
     }
 
     // A/B (원본/내믹스) 미리듣기 바는 UI 에서 일단 제거 — 추후 재추가 예정. VM 의 [state.previewMode] +
@@ -2401,14 +2422,12 @@ private fun UnifiedTimelineBar(
                     else 0f
                 }
                 // (range fill+border 는 BGM 막대 위에 보이도록 bgmClips.forEach 뒤에서 그린다.)
-                // BGM 클립 색은 createdAt(추가 순서) 1-based 인덱스로 BgmPalette cycle (4색). 같은
-                // 통합 매핑을 SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을
-                // 매칭. **createdAt 기준** 이라 사용자가 클립을 좌우 drag 해 위치(startMs) 가 바뀌어도
-                // 색은 절대 변하지 않음. createdAt 동률이면 id 로 안정 정렬.
+                // BGM 클립 색은 클립 id 해시 기준 안정 슬롯으로 BgmPalette cycle (4색). 같은 통합 매핑을
+                // SoundCard chip 도 사용 — 사용자가 timeline 위 블록 색과 deck 카드 색을 매칭. id 기준이라
+                // 드래그(위치 변경)·다른 클립 삭제에도 색이 절대 안 변함 (createdAt dense rank 의 삭제 시
+                // 색 당김 버그 해결).
                 val bgmIndexByClipId: Map<String, Int> = remember(bgmClips) {
-                    bgmClips.sortedWith(compareBy({ it.createdAt }, { it.id }))
-                        .withIndex()
-                        .associate { (i, b) -> b.id to (i + 1) }
+                    bgmClips.associate { it.id to com.vibi.cmp.theme.BgmPalette.stableIndexForClipId(it.id) }
                 }
                 bgmClips.forEach { clip ->
                     // 각 클립을 별도 [BgmClipBlock] 으로 — 드래그/트림 시 recomposition 을 그 한 클립으로
@@ -3027,6 +3046,52 @@ private fun BoxScope.TimelineRuler(
                     .offset(x = xDp + 2.dp),
             )
             labelMs += majorIntervalMs
+        }
+    }
+}
+
+/**
+ * 음원 추가 버튼 — 음표(MusicNote)에 작은 + 배지를 얹어 "오디오 추가"를 표현. 사운드덱 Audio 헤더
+ * 우측에 컴팩트하게 배치. 텍스트 글리프 대신 벡터 아이콘 합성. 배지 바탕은 [accent], + 글리프는
+ * [backgroundPrimary] — 두 토큰이 라이트·다크에서 서로 반전이라 어느 테마에서도 + 가 대비된다.
+ */
+@Composable
+private fun AddAudioButton(enabled: Boolean, onClick: () -> Unit) {
+    val tokens = LocalVibiColors.current
+    // 완전한 검정 대신 살짝 투명을 섞어 톤을 누그러뜨림(음표 tint · 배지 바탕 공통).
+    val ink = tokens.onBackgroundPrimary.copy(alpha = 0.88f)
+    Box(
+        modifier = Modifier
+            .size(VibiSpacing.touchMin)
+            .alpha(if (enabled) 1f else 0.5f)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        // 음표 + 작은 + 배지 — 26dp 시각 클러스터로 모음. 음표는 좌하단, 배지는 우상단 코너에 둬
+        // 서로 떨어지게(이전엔 음표 stem 과 + 가 겹쳤음).
+        Box(modifier = Modifier.size(26.dp)) {
+            Icon(
+                imageVector = Icons.Filled.MusicNote,
+                contentDescription = "Add audio",
+                tint = ink,
+                modifier = Modifier.align(Alignment.BottomStart).size(19.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(13.dp)
+                    .clip(CircleShape)
+                    .background(tokens.accent.copy(alpha = 0.88f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = tokens.backgroundPrimary,
+                    modifier = Modifier.size(9.dp),
+                )
+            }
         }
     }
 }
