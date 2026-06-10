@@ -2285,7 +2285,6 @@ private fun UnifiedTimelineBar(
                     startDp = rangeStartDp,
                     widthDp = rangeWidthDp,
                     height = rangeFillHeight,
-                    playbackRegionHeight = playbackRegionHeight,
                     accent = accent,
                     fillAlpha = 0.32f,
                     fillModifier = if (!rangeAdjustable) Modifier else
@@ -2893,11 +2892,8 @@ private fun BoxScope.TimelineActionBottomBar(
                 is BottomActionTarget.None -> Unit
                 is BottomActionTarget.Video -> com.vibi.cmp.ui.timeline.sounddeck.EditActionsPanel(
                     title = "",
-                    volume = state.pendingRangeVolume,
                     speed = state.pendingRangeSpeed,
-                    onVolumeChange = { viewModel.onUpdatePendingRangeVolume(it) },
                     onSpeedChange = { viewModel.onUpdatePendingRangeSpeed(it) },
-                    onApplyVolume = { viewModel.onApplyRangeVolume(it) },
                     onApplySpeed = { viewModel.onApplyRangeSpeed(it) },
                     secondaryActionIcon = Icons.Filled.ContentCopy,
                     secondaryActionContentDescription = "Duplicate",
@@ -3036,22 +3032,18 @@ private fun BoxScope.TimelineRuler(
 }
 
 /**
- * 파형 strip 폭만큼 채우는 fill + 상/하 accent border. 음원분리 진행 overlay 와 구간 선택 fill 가
- * 같은 시각 위계를 공유하도록 정렬·border inset 식을 한 곳에 모은다. [fillModifier] 로 fill Box 에
- * gesture/interaction 부착 (구간 선택은 drag 평행 이동, 진행 overlay 는 정적).
+ * 파형 strip 폭만큼 채우는 fill. [fillModifier] 로 fill Box 에 gesture/interaction 부착
+ * (구간 선택은 drag 평행 이동). 상/하 border 는 두지 않음 — fill 하이라이트만으로 선택 표시.
  */
 @Composable
 private fun BoxScope.RangeFillStrip(
     startDp: androidx.compose.ui.unit.Dp,
     widthDp: androidx.compose.ui.unit.Dp,
     height: androidx.compose.ui.unit.Dp,
-    playbackRegionHeight: androidx.compose.ui.unit.Dp,
     accent: Color,
     fillAlpha: Float,
-    borderAlpha: Float = 1f,
     fillModifier: Modifier = Modifier,
 ) {
-    val borderInsetY = (playbackRegionHeight - height) / 2
     Box(
         modifier = Modifier
             .offset(x = startDp)
@@ -3060,22 +3052,6 @@ private fun BoxScope.RangeFillStrip(
             .align(Alignment.CenterStart)
             .background(accent.copy(alpha = fillAlpha))
             .then(fillModifier)
-    )
-    Box(
-        modifier = Modifier
-            .offset(x = startDp, y = borderInsetY)
-            .width(widthDp)
-            .height(TimelineBarSpec.RangeBorderThickness)
-            .align(Alignment.TopStart)
-            .background(accent.copy(alpha = borderAlpha))
-    )
-    Box(
-        modifier = Modifier
-            .offset(x = startDp, y = -borderInsetY)
-            .width(widthDp)
-            .height(TimelineBarSpec.RangeBorderThickness)
-            .align(Alignment.BottomStart)
-            .background(accent.copy(alpha = borderAlpha))
     )
 }
 

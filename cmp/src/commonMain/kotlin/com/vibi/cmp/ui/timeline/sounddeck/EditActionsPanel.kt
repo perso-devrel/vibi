@@ -53,13 +53,14 @@ import com.vibi.cmp.theme.VibiSpacing
 @Composable
 fun EditActionsPanel(
     title: String,
-    volume: Float,
     speed: Float,
-    onVolumeChange: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
     /** null 이면 Apply 버튼 미렌더 — onValueChange 가 곧 commit 인 호출자(예: BGM)용. */
-    onApplyVolume: ((Float) -> Unit)?,
     onApplySpeed: ((Float) -> Unit)?,
+    /** 볼륨 — null 이면 볼륨 버튼·슬라이더 미렌더 (영상 패널은 볼륨 미사용, BGM 만 주입). */
+    volume: Float? = null,
+    onVolumeChange: ((Float) -> Unit)? = null,
+    onApplyVolume: ((Float) -> Unit)? = null,
     onVolumeChangeFinished: (() -> Unit)? = null,
     onSpeedChangeFinished: (() -> Unit)? = null,
     secondaryActionIcon: ImageVector,
@@ -128,20 +129,22 @@ fun EditActionsPanel(
             // 아이콘 버튼 4개 — 테두리 제거 (border = null). 폭은 ButtonDefaults.MinWidth 기본값에
             // 맡겨 자연스러운 터치 영역 보장 (Material3 기본 ~58dp). 활성 색 (펼침 시 accent) 은
             // 아이콘 tint 로 유지.
-            OutlinedButton(
-                onClick = { expanded = if (expanded == "volume") null else "volume" },
-                contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
-                modifier = Modifier.height(VibiSpacing.touchMin),
-                border = null,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
-                ),
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = "Volume",
-                    modifier = Modifier.size(20.dp),
-                )
+            if (onVolumeChange != null) {
+                OutlinedButton(
+                    onClick = { expanded = if (expanded == "volume") null else "volume" },
+                    contentPadding = PaddingValues(horizontal = VibiSpacing.xxs, vertical = 0.dp),
+                    modifier = Modifier.height(VibiSpacing.touchMin),
+                    border = null,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = if (expanded == "volume") tokens.accent else tokens.onBackgroundPrimary,
+                    ),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "Volume",
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             OutlinedButton(
                 onClick = { expanded = if (expanded == "speed") null else "speed" },
@@ -208,8 +211,8 @@ fun EditActionsPanel(
         // 볼륨 — 0..2 (0 = 무음, 1 = 그대로, 2 = 2배). Local state 로 슬라이더 위치 즉시 갱신 +
         // onVolumeChange 로 부모에 live commit. parent prop (volume) 이 바뀌면 (예: 적용 / Apply
         // 외부 경로) sliderVal 도 재seed.
-        if (expanded == "volume") {
-            var sliderVal by remember(expanded, volume) { mutableStateOf(volume) }
+        if (expanded == "volume" && onVolumeChange != null) {
+            var sliderVal by remember(expanded, volume) { mutableStateOf(volume ?: 1f) }
             Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xxs)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
