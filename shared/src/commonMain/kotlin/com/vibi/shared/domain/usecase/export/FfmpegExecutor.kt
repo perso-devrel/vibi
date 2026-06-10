@@ -53,6 +53,8 @@ data class SeparationDirectiveInput(
     val selections: List<SeparationStemInput>,
     /** Stem audio 파일 안 시작 offset. split directive 의 뒤쪽 piece 가 stem 중간부터 재생. */
     val sourceOffsetMs: Long = 0L,
+    /** 앵커 세그먼트의 speedScale — BFF 가 stem 에 atempo 로 걸어 영상 속도와 tempo 동기. 1.0 = 원본. */
+    val appliedSpeedScale: Float = 1.0f,
 )
 
 data class SeparationStemInput(
@@ -64,8 +66,12 @@ data class SeparationStemInput(
 /**
  * `selected=true` 이고 audioUrl 이 있는 stem 만 모아 export input 으로 변환.
  * 사용 가능한 stem 이 없으면 null — render 단계에서 directive 자체 skip.
+ *
+ * [appliedSpeedScale] 은 directive 가 앵커된 세그먼트의 speedScale — 호출자가 세그먼트에서 resolve 해
+ * 주입한다(directive 는 speed 를 저장하지 않음, 세그먼트가 단일 진실원천). BFF 가 이 값으로 stem 에
+ * atempo 를 걸어 속도 조절된 영상과 tempo 를 맞춘다.
  */
-fun SeparationDirective.toExportInput(): SeparationDirectiveInput? {
+fun SeparationDirective.toExportInput(appliedSpeedScale: Float = 1.0f): SeparationDirectiveInput? {
     val stems = selections.mapNotNull { sel ->
         if (!sel.selected) return@mapNotNull null
         val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -80,6 +86,7 @@ fun SeparationDirective.toExportInput(): SeparationDirectiveInput? {
         muteOriginalSegmentAudio = muteOriginalSegmentAudio,
         selections = stems,
         sourceOffsetMs = sourceOffsetMs,
+        appliedSpeedScale = if (appliedSpeedScale > 0f) appliedSpeedScale else 1.0f,
     )
 }
 

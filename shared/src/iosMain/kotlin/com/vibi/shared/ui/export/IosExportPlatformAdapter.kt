@@ -88,7 +88,14 @@ class IosExportPlatformAdapter(
                 error("BGM unreadable: ${bgmFailures.joinToString(", ")}")
             }
 
-            val directives = request.separationDirectives.mapNotNull { it.toExportInput() }
+            // directive 의 stem tempo = 앵커된 세그먼트의 speedScale. 세그먼트가 단일 진실원천이라
+            // directive 는 speed 를 저장 안 하고 여기서 resolve 해 주입한다. 미앵커(legacy, segmentId
+            // 빔)거나 세그먼트 부재면 1.0 (원본 tempo).
+            val speedBySegmentId = request.segments.associate { it.id to it.speedScale }
+            val directives = request.separationDirectives.mapNotNull { d ->
+                val speed = speedBySegmentId[d.segmentId]?.takeIf { it > 0f } ?: 1f
+                d.toExportInput(appliedSpeedScale = speed)
+            }
 
             val outcome = executor.renderProject(
                 segments = segmentInputs,

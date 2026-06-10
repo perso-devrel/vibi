@@ -119,6 +119,7 @@ class V3RenderExecutor(
                             )
                         },
                         sourceOffsetMs = d.sourceOffsetMs,
+                        appliedSpeedScale = d.appliedSpeedScale,
                     )
                 },
                 outputKind = "video",

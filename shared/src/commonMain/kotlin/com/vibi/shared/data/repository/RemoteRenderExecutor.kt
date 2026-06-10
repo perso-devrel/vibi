@@ -148,6 +148,7 @@ class RemoteRenderExecutor(
                     )
                 },
                 sourceOffsetMs = d.sourceOffsetMs,
+                appliedSpeedScale = d.appliedSpeedScale,
             )
         }
 

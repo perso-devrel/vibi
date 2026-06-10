@@ -144,9 +144,15 @@ internal fun exportSignature(
         append("|bgm=").append(c.sourceUri).append(';').append(c.startMs).append(';').append(c.volumeScale)
             .append(';').append(c.speedScale).append(';').append(c.sourceTrimStartMs).append(';').append(c.sourceTrimEndMs)
     }
+    val speedBySegmentId = segments.associate { it.id to it.speedScale }
     directives.sortedBy { it.id }.forEach { d ->
+        // appliedSpeedScale 은 앵커 세그먼트에서 파생돼 ExportRequest 로 전송된다 — 시그니처도 동일하게
+        // resolve 해 포함(불변식: 시그니처 == 전송 입력). 세그먼트 speedScale 도 위에서 이미 키에 들어가나,
+        // directive→segment 앵커 식별까지 키에 묶어 헛캐시히트 방지.
+        val dirSpeed = speedBySegmentId[d.segmentId]?.takeIf { it > 0f } ?: 1f
         append("|dir=").append(d.rangeStartMs).append(';').append(d.rangeEndMs).append(';').append(d.numberOfSpeakers)
             .append(';').append(d.muteOriginalSegmentAudio).append(';').append(d.sourceOffsetMs)
+            .append(';').append(dirSpeed)
         d.selections.sortedBy { it.stemId }.forEach { sel ->
             append(";s=").append(sel.stemId).append(',').append(sel.volume)
                 .append(',').append(sel.selected).append(',').append(sel.audioUrl ?: "")

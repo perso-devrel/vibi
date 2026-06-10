@@ -1998,16 +1998,6 @@ class TimelineViewModel constructor(
         val slices = if (applyToVideo) sliceGlobalRange(start, end).sortedByDescending { it.order } else emptyList()
         val wasSegmentEdit = state.isSegmentEditMode
         val newSpeed = if (value > 0f) value else 1f
-        // directive ripple delta = (새 effective 합 - 옛 effective 합). 각 slice 의 source 구간 길이는
-        // speed 변경 전·후 글로벌 길이 차이가 곧 timeline 이동량.
-        val segById = state.segments.associateBy { it.id }
-        val rippleDelta = slices.sumOf { s ->
-            val oldSpeed = segById[s.segmentId]?.speedScale?.takeIf { it > 0f } ?: 1f
-            val sourceDur = (s.localEnd - s.localStart).coerceAtLeast(0L)
-            val oldGlobal = (sourceDur.toFloat() / oldSpeed).toLong()
-            val newGlobal = (sourceDur.toFloat() / newSpeed).toLong()
-            newGlobal - oldGlobal
-        }
         resetRangeMode()
         viewModelScope.launch {
             var lastMiddleId: String? = null
@@ -2021,15 +2011,15 @@ class TimelineViewModel constructor(
                 lastMiddleId = r.middle.id
             }
             if (applyToBgm) applyBgmRangeSpeed(start, end, newSpeed)
-            if (applyToVideo) {
-                // directive 정리 — speed 와 겹치는 directive 는 stem tempo mismatch 로 sync 깨짐 →
-                // 삭제 후 재분리 유도. delete 가 먼저, shift 는 살아남은 downstream directive 만 처리.
-                applyDirectiveDeleteOverlapping(start, end)
-                applyDirectiveShiftAfter(after = end, deltaMs = rippleDelta)
-            }
+            // 음원분리 directive 보존 — speed 와 겹치는 directive 를 삭제(재분리 유도)하지 않고 앵커→글로벌
+            // 재계산으로 따라가게 한다. split 이 directive 를 middle(=speed 적용 조각)로 재앵커했고,
+            // DirectiveAnchor.globalRange 가 `segStart + (local - trimStart) / speed` 로 speed 를 반영하므로
+            // directive 의 글로벌 range 가 구간과 함께 압축되고, downstream directive 는 middle 이 짧아진 만큼
+            // 자동으로 당겨진다(reanchor 가 effectiveDuration 누적합으로 글로벌 시작 재계산). 미리듣기는
+            // stemMixer.setRate(segment.speedScale) 로 stem tempo 까지 맞춰 재생.
+            // (export 의 stem atempo 는 BFF 가 directive 의 speed 를 받아 적용해야 — 서버측 별도 작업.)
             refreshSegmentsStateFromDb()
-            // speed 도 글로벌 ms ripple(shiftAfter)로 range 를 옮기는 global-truth 연산 — 앵커 재동기화.
-            if (applyToVideo) resyncDirectiveAnchorsFromGlobal()
+            if (applyToVideo) reanchorDirectiveCache()
             if (wasSegmentEdit) {
                 lastMiddleId?.let { selectSegmentInEditInternal(it) }
             }
@@ -2428,17 +2418,6 @@ class TimelineViewModel constructor(
      * `after` 시점 이후에 시작하는 directive 들의 rangeStart/End 를 +deltaMs 평행 이동.
      * duplicate (delta = +width) / speed (delta = newEffDur - oldEffDur) downstream ripple 공용.
      */
-    private suspend fun applyDirectiveShiftAfter(after: Long, deltaMs: Long) {
-        if (deltaMs == 0L) return
-        val shifted = _uiState.value.separationDirectives
-            .filter { it.rangeStartMs >= after }
-            .map { it.copy(
-                rangeStartMs = (it.rangeStartMs + deltaMs).coerceAtLeast(0L),
-                rangeEndMs = (it.rangeEndMs + deltaMs).coerceAtLeast(0L),
-            ) }
-        separationDirectiveRepository.addAll(shifted)
-    }
-
     /**
      * 앵커된 directive 의 글로벌 range 캐시를 현재 세그먼트 배치로 재계산(앵커→글로벌). 복제/이동처럼
      * 세그먼트 위치만 바뀌고 directive 의 source-local 좌표는 그대로인 연산 직후 호출 — directive 가
@@ -2480,19 +2459,6 @@ class TimelineViewModel constructor(
         if (updates.isNotEmpty()) separationDirectiveRepository.addAll(updates)
         // 글로벌 ms ripple 결과 + 위 anchor 재동기화를 undo 스냅샷 전에 _uiState 로 동기 반영.
         refreshDirectivesStateFromDb()
-    }
-
-    /**
-     * 구간 `[start, end]` 와 조금이라도 겹치는 directive 를 모두 삭제. speed 변경 시 stem audio 는
-     * 원본 tempo 라 video 와 sync 가 깨지므로 보존 불가 — 사용자에게 재분리 유도가 가장 정직한 UX.
-     * (split/scale 로 살리려면 directive 에 appliedSpeedScale 추가 + BFF atempo wiring 필요 — 별도
-     * 작업으로 두고 본 단계에선 conservative delete.)
-     */
-    private suspend fun applyDirectiveDeleteOverlapping(start: Long, end: Long) {
-        val toDelete = _uiState.value.separationDirectives
-            .filter { it.rangeEndMs > start && it.rangeStartMs < end }
-            .map { it.id }
-        toDelete.forEach { separationDirectiveRepository.delete(it) }
     }
 
     /** segment edit mode 종료 ("저장" 버튼) — range/segment 상태를 모두 정리하고 기본 timeline 으로. */
