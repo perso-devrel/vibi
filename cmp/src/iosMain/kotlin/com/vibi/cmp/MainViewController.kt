@@ -1,6 +1,7 @@
 package com.vibi.cmp
 
 import androidx.compose.ui.window.ComposeUIViewController
+import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.shared.di.initKoinIos
 import com.vibi.shared.platform.AppleSignInBridge
 import com.vibi.shared.platform.GoogleSignInBridge
@@ -27,6 +28,7 @@ fun MainViewController(
             appleSignInBridge,
             iapBridge,
             onDeviceVideoExportBridge,
+            RuntimeFlags.iapEnabled,
         )
         koinStarted = true
     }
