@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
-import com.vibi.cmp.platform.RuntimeFlags
 import com.vibi.cmp.platform.rememberMediaPickerLauncher
 import com.vibi.cmp.theme.LocalVibiColors
 import com.vibi.cmp.ui.account.UserAvatarButton
@@ -587,28 +586,28 @@ private fun GreetingRow(name: String?, credits: Int) {
                 )
             )
         }
-        if (RuntimeFlags.iapEnabled) {
-            val tokens = LocalVibiColors.current
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(tokens.chipBg)
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-            ) {
-                Text(
-                    text = "✦",
-                    style = TextStyle(fontSize = 12.sp, color = tokens.accent)
+        // 잔여 크레딧 칩은 결제(iapEnabled)와 무관하게 항상 노출 — 무료 선출시에도 남은 무료
+        // 분리 횟수를 보여준다. 구매/충전 UI 만 iapEnabled 로 게이팅(다른 화면에서 처리).
+        val tokens = LocalVibiColors.current
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(tokens.chipBg)
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        ) {
+            Text(
+                text = "✦",
+                style = TextStyle(fontSize = 12.sp, color = tokens.accent)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "$credits",
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "$credits",
-                    style = TextStyle(
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                )
-            }
+            )
         }
     }
 }

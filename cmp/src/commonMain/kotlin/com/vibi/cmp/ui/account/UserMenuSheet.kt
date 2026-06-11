@@ -63,7 +63,9 @@ fun UserMenuSheet(
     var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
-        if (RuntimeFlags.iapEnabled) viewModel.refreshBalance()
+        // 잔액은 결제(iapEnabled) 와 무관하게 갱신 — 무료 선출시에도 남은 무료 분리 횟수를
+        // 최신으로 표시. 구매/충전 진입만 iapEnabled 로 게이팅.
+        viewModel.refreshBalance()
         viewModel.navigateToLogin.collect { onSignedOut() }
     }
 
@@ -82,7 +84,8 @@ fun UserMenuSheet(
             ProfileHeader(
                 user = state.user,
                 credits = state.credits,
-                showCredits = RuntimeFlags.iapEnabled,
+                // 잔액은 항상 노출(무료 분리 잔여 표시). 구매 진입(BuyCreditsRow)만 iapEnabled 게이팅.
+                showCredits = true,
             )
 
             if (RuntimeFlags.iapEnabled) {
