@@ -5,6 +5,7 @@ import com.vibi.shared.data.local.db.entity.SeparationDirectiveEntity
 import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.repository.SeparationDirectiveRepository
 import com.vibi.shared.domain.repository.StemSelection
+import com.vibi.shared.platform.deleteLocalFile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -32,11 +33,22 @@ class SeparationDirectiveRepositoryImpl(
         dao.getByProject(projectId).map { it.toDomain() }
 
     override suspend fun delete(id: String) {
+        dao.getById(id)?.let { deleteStemFiles(listOf(it)) }
         dao.deleteById(id)
     }
 
     override suspend fun deleteByProject(projectId: String) {
+        deleteStemFiles(dao.getByProject(projectId))
         dao.deleteByProject(projectId)
+    }
+
+    /** directive 들에 영구 캐시된 stem 로컬 파일을 디스크에서 제거 — 누적 방지. URL/미캐시는 무시. */
+    private fun deleteStemFiles(rows: List<SeparationDirectiveEntity>) {
+        rows.forEach { row ->
+            row.toDomain().selections.forEach { sel ->
+                sel.localPath?.takeIf { it.isNotBlank() }?.let { deleteLocalFile(it) }
+            }
+        }
     }
 
     private fun SeparationDirective.toEntity() = SeparationDirectiveEntity(
@@ -48,7 +60,7 @@ class SeparationDirectiveRepositoryImpl(
         muteOriginalSegmentAudio = muteOriginalSegmentAudio,
         selectionsJson = json.encodeToString(
             kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
-            selections.map { StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected) }
+            selections.map { StemSelectionDto(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath) }
         ),
         createdAt = createdAt,
         jobId = jobId,
@@ -63,7 +75,7 @@ class SeparationDirectiveRepositoryImpl(
             json.decodeFromString(
                 kotlinx.serialization.builtins.ListSerializer(StemSelectionDto.serializer()),
                 selectionsJson.ifBlank { "[]" }
-            ).map { StemSelection(it.stemId, it.volume, it.audioUrl, it.selected) }
+            ).map { StemSelection(it.stemId, it.volume, it.audioUrl, it.selected, it.localPath) }
         }.getOrDefault(emptyList())
         return SeparationDirective(
             id = id,
@@ -88,7 +100,9 @@ class SeparationDirectiveRepositoryImpl(
         val volume: Float,
         val audioUrl: String? = null,
         // legacy 데이터(이 필드 없는 row)는 default true — 기존 동작 유지.
-        val selected: Boolean = true
+        val selected: Boolean = true,
+        // 영구 캐시된 stem 로컬 경로. legacy/미캐시 row 는 null.
+        val localPath: String? = null
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }

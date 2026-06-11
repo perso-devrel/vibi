@@ -25,6 +25,14 @@ actual fun saveBytesToCache(fileName: String, bytes: ByteArray): String {
     return file.absolutePath
 }
 
+actual fun saveBytesToPersistentFile(fileName: String, bytes: ByteArray): String {
+    // filesDir 는 cacheDir 와 달리 OS 가 임의로 비우지 않음 — 오프라인 stem 재생 보장.
+    val dir = File(applicationContext.filesDir, "stems").apply { mkdirs() }
+    val file = File(dir, fileName)
+    file.writeBytes(bytes)
+    return file.absolutePath
+}
+
 actual suspend fun readFileBytes(uriOrPath: String): ByteArray = withContext(Dispatchers.IO) {
     if (uriOrPath.startsWith("content://") || uriOrPath.startsWith("file://")) {
         val uri = Uri.parse(uriOrPath)

@@ -179,20 +179,26 @@ private class IosStemMixerHandle(
                 toFetch.map { src ->
                     async {
                         val abs = resolveAbsoluteAudioUrl(src.audioUrl)
-                        val tempPath = downloadAudioToCache(abs, prefix = "stem") ?: return@async null
-                        Prep(src.groupId, src.stemId, src.audioUrl, tempPath)
+                        if (abs.startsWith("http://") || abs.startsWith("https://")) {
+                            val tempPath = downloadAudioToCache(abs, prefix = "stem") ?: return@async null
+                            Prep(src.groupId, src.stemId, src.audioUrl, tempPath, owned = true)
+                        } else {
+                            // 영구 캐시된 로컬 파일 절대경로 — 다운로드 없이 그대로 사용. 우리 소유가
+                            // 아니므로 release/replace 시 삭제하지 않는다 (owned = false).
+                            Prep(src.groupId, src.stemId, src.audioUrl, abs, owned = false)
+                        }
                     }
                 }.awaitAll()
             }
             if (gen != loadGen) {
-                prepared.filterNotNull().forEach { p -> deleteCachedAudio(p.tempPath) }
+                prepared.filterNotNull().forEach { p -> if (p.owned) deleteCachedAudio(p.tempPath) }
                 return@launch
             }
             prepared.filterNotNull().forEach { p ->
                 val file = runCatching {
                     AVAudioFile(forReading = NSURL.fileURLWithPath(p.tempPath), error = null)
                 }.getOrNull() ?: run {
-                    deleteCachedAudio(p.tempPath)
+                    if (p.owned) deleteCachedAudio(p.tempPath)
                     return@forEach
                 }
                 val playerNode = AVAudioPlayerNode()
@@ -226,13 +232,21 @@ private class IosStemMixerHandle(
                 nodes[k] = stem
                 groupOfNode[k] = p.groupId
                 urlByKey[k] = p.audioUrl
-                tempPathByKey[k] = p.tempPath
+                // 우리가 다운로드한 임시 파일만 정리 대상으로 추적. 영구 로컬 파일(owned=false)은 보존.
+                if (p.owned) tempPathByKey[k] = p.tempPath
             }
             applyActiveState()
         }
     }
 
-    private data class Prep(val groupId: String, val stemId: String, val audioUrl: String, val tempPath: String)
+    private data class Prep(
+        val groupId: String,
+        val stemId: String,
+        val audioUrl: String,
+        val tempPath: String,
+        /** true = 우리가 caches 에 받은 임시 파일(정리 대상). false = 영구 로컬 파일(보존). */
+        val owned: Boolean,
+    )
 
     override fun setActiveGroup(groupId: String?) {
         if (activeGroupId == groupId) return

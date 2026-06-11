@@ -106,6 +106,7 @@ import com.vibi.cmp.ui.account.PAID_CREDITS_CTA_LABEL
 import com.vibi.cmp.ui.account.PaidCreditsComingSoonNote
 import com.vibi.cmp.platform.rememberStemMixer
 import com.vibi.shared.domain.model.hasNonTrivialEdits
+import com.vibi.shared.platform.fileExists
 import com.vibi.shared.ui.timeline.AudioSeparationStep
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -242,16 +243,20 @@ fun TimelineScreen(
     // 모든 directive 의 stems 를 한 번에 load — directive 별 group 으로 prepare. transition 시
     // setActiveGroup 만 변경, 다운로드 끊김 없음.
     val allDirectives = state.separationDirectives
+    // localPath 가 key 에 포함돼야 캐시 완료 후 (URL→로컬 경로) load 가 재실행돼 로컬 파일로 전환됨.
     val directivesKey = remember(allDirectives) {
         allDirectives.joinToString("|") { d ->
-            "${d.id}:${d.selections.joinToString(",") { "${it.stemId}=${it.audioUrl}" }}"
+            "${d.id}:${d.selections.joinToString(",") { "${it.stemId}=${it.localPath ?: it.audioUrl}" }}"
         }
     }
     LaunchedEffect(directivesKey) {
         val sources = allDirectives.flatMap { dir ->
             dir.selections.mapNotNull { sel ->
-                val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                StemMixerSource(stemId = sel.stemId, audioUrl = url, groupId = dir.id)
+                // 영구 캐시된 로컬 파일이 있으면 우선 — 서버 연결이 끊겨도 재생. 없으면 원격 URL 스트리밍.
+                val src = sel.localPath?.takeIf { it.isNotBlank() && fileExists(it) }
+                    ?: sel.audioUrl?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                StemMixerSource(stemId = sel.stemId, audioUrl = src, groupId = dir.id)
             }
         }
         stemMixer.load(sources)

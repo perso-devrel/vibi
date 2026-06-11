@@ -43,7 +43,14 @@ data class StemSelection(
      * 다시 토글 가능. preview/render 양쪽에서 false 인 stem 은 음 미포함 (preview 는 volume 0,
      * render 는 사전 필터). 기본 true — 신규 분리/legacy 데이터의 backward compat.
      */
-    val selected: Boolean = true
+    val selected: Boolean = true,
+    /**
+     * 분리 완료 직후 (아직 온라인) [audioUrl] 을 영구 디렉터리에 받아둔 로컬 파일 절대 경로.
+     * 존재하면 preview/mixer 가 원격 URL 대신 이 파일을 재생 — 서버 연결이 끊겨도, tokenized URL
+     * 이 만료돼도 볼륨/복제/삭제/재생이 동작. null 이면 아직 미캐시 (online 스트리밍 fallback).
+     * export render 는 여전히 서버가 [audioUrl] 로 합성하므로 URL 은 별도 보존.
+     */
+    val localPath: String? = null
 )
 
 interface AudioSeparationRepository {

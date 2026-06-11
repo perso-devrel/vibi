@@ -1,6 +1,7 @@
 package com.vibi.cmp.platform
 
 import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -14,6 +15,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink.DefaultAudioProcessorChain
+import java.io.File
 
 /**
  * Android: stem 별 ExoPlayer 인스턴스. 같은 시점에 동시 재생 + 인스턴스별 volume.
@@ -92,8 +94,14 @@ private class AndroidStemMixerHandle(
         players.clear()
         groupOfPlayer.clear()
         sources.forEach { src ->
+            // 영구 캐시된 로컬 파일 절대경로는 file:// URI 로 — 서버 연결이 끊겨도 재생. 원격 URL 은 그대로.
+            val uri = if (src.audioUrl.startsWith("http://") || src.audioUrl.startsWith("https://")) {
+                Uri.parse(src.audioUrl)
+            } else {
+                Uri.fromFile(File(src.audioUrl))
+            }
             val pwg = buildPlayer().apply {
-                player.setMediaItem(MediaItem.fromUri(src.audioUrl))
+                player.setMediaItem(MediaItem.fromUri(uri))
                 player.prepare()
                 player.playWhenReady = false
                 if (pendingRate != 1f) {

@@ -15,7 +15,7 @@ import com.vibi.shared.platform.AudioExtractException
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.AudioSourceKind
 import com.vibi.shared.platform.readFileBytes
-import com.vibi.shared.platform.saveBytesToCache
+import com.vibi.shared.platform.saveBytesToPersistentFile
 import io.ktor.client.call.body
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.http.HttpStatusCode
@@ -146,7 +146,8 @@ class AudioSeparationRepositoryImpl(
     override suspend fun downloadStem(stemUrl: String, outputFileName: String): Result<String> =
         runCatching {
             val bytes = api.downloadStem(stemUrl)
-            saveBytesToCache("stems_$outputFileName", bytes)
+            // 영구 디렉터리에 저장 — 서버 연결이 끊겨도 오프라인 재생/편집 가능.
+            saveBytesToPersistentFile(outputFileName, bytes)
         }
 
     private companion object {

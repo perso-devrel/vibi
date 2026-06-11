@@ -3,6 +3,7 @@ package com.vibi.cmp.ui.timeline.sounddeck
 import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.Stem
+import com.vibi.shared.platform.fileExists
 import com.vibi.shared.ui.timeline.stemDisplayLabelFromId
 
 /**
@@ -133,7 +134,9 @@ fun buildSoundDeckGroups(
                         source = SoundCardSource.SeparationStem(dir.id, sel.stemId),
                         selected = sel.selected,
                         volume = sel.volume,
-                        audioUrl = sel.audioUrl,
+                        // 영구 캐시된 로컬 파일이 있으면 미리듣기도 그것으로 — 오프라인에서도 재생.
+                        audioUrl = sel.localPath?.takeIf { it.isNotBlank() && fileExists(it) }
+                            ?: sel.audioUrl,
                         rangeStartMs = null,
                         rangeEndMs = null,
                         speakerIndex = Stem.speakerIndexFromId(sel.stemId),

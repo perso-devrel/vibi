@@ -6,6 +6,7 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
@@ -49,6 +50,25 @@ private fun cacheDirectory(): String {
 
 actual fun saveBytesToCache(fileName: String, bytes: ByteArray): String {
     val path = "${cacheDirectory()}/$fileName"
+    bytes.usePinned { pinned ->
+        val data = NSData.create(bytes = pinned.addressOf(0), length = bytes.size.toULong())
+        data.writeToFile(path, atomically = true)
+    }
+    return path
+}
+
+/** Application Support/stems — OS 가 storage 압박에도 evict 하지 않음 (Caches 와 대비). */
+private fun persistentStemsDirectory(): String {
+    val paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, true)
+    val base = requireNotNull(paths.firstOrNull() as? String) { "Could not resolve iOS Application Support dir." }
+    val dir = "$base/stems"
+    // Application Support 는 기본 생성 안 돼 있을 수 있어 명시적으로 만든다.
+    NSFileManager.defaultManager.createDirectoryAtPath(dir, true, null, null)
+    return dir
+}
+
+actual fun saveBytesToPersistentFile(fileName: String, bytes: ByteArray): String {
+    val path = "${persistentStemsDirectory()}/$fileName"
     bytes.usePinned { pinned ->
         val data = NSData.create(bytes = pinned.addressOf(0), length = bytes.size.toULong())
         data.writeToFile(path, atomically = true)

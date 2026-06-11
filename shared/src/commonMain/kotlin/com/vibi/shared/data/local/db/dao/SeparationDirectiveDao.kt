@@ -21,6 +21,9 @@ interface SeparationDirectiveDao {
     @Query("SELECT * FROM separation_directives WHERE projectId = :projectId ORDER BY createdAt ASC")
     suspend fun getByProject(projectId: String): List<SeparationDirectiveEntity>
 
+    @Query("SELECT * FROM separation_directives WHERE id = :id")
+    suspend fun getById(id: String): SeparationDirectiveEntity?
+
     @Query("DELETE FROM separation_directives WHERE id = :id")
     suspend fun deleteById(id: String)
 

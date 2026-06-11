@@ -23,6 +23,7 @@ import com.vibi.shared.domain.model.SeparationDirective
 import com.vibi.shared.domain.model.addProcessingSeparation
 import com.vibi.shared.domain.model.removeProcessingSeparation
 import com.vibi.shared.domain.model.BgmClip
+import com.vibi.shared.platform.fileExists
 import com.vibi.shared.platform.generateId
 import com.vibi.shared.domain.model.clearSeparation
 import com.vibi.shared.data.remote.api.BffApi
@@ -428,6 +429,47 @@ class TimelineViewModel constructor(
                 seedDirectivesReady = true
                 maybeSeedUndoBaseline()
                 clearStaleExportStatus()
+                // 분리된 stem 을 영구 로컬에 캐시 (best-effort, online 일 때만 성공) — 이후 서버 연결이
+                // 끊겨도 mixer/preview 가 로컬 파일로 재생해 볼륨/복제/삭제/재생이 계속 동작.
+                cacheStemsLocally(directives)
+            }
+        }
+    }
+
+    /** "dirId/stemId" — 중복 다운로드 가드. 실패 시 비워 다음 emission 에서 (online 복귀 시) 재시도. */
+    private val stemCacheInFlight = mutableSetOf<String>()
+
+    /**
+     * 각 directive 의 stem 중 localPath 가 없거나 파일이 사라진 것을 [audioUrl] 에서 받아 영구
+     * 디렉터리에 저장하고 directive 에 경로를 기록. 한 stem 씩 독립 launch — 일부 실패해도 나머지
+     * 진행. 다운로드는 online 일 때만 성공하며, 오프라인이면 조용히 실패하고 기존 동작(스트리밍 시도)
+     * 으로 fallback. selected 여부와 무관하게 캐시 — 오프라인에서 stem 토글 후 재생도 보장.
+     */
+    private fun cacheStemsLocally(directives: List<SeparationDirective>) {
+        for (dir in directives) {
+            for (sel in dir.selections) {
+                val url = sel.audioUrl?.takeIf { it.isNotBlank() } ?: continue
+                if (sel.localPath?.let { fileExists(it) } == true) continue
+                val key = "${dir.id}/${sel.stemId}"
+                if (!stemCacheInFlight.add(key)) continue
+                viewModelScope.launch {
+                    val ext = url.substringAfterLast('.', "").substringBefore('?').ifEmpty { "flac" }
+                    val path = audioSeparationRepository
+                        .downloadStem(url, "${dir.id}_${sel.stemId}.$ext")
+                        .getOrNull()
+                    stemCacheInFlight.remove(key)
+                    if (path == null) return@launch
+                    // 다운로드 사이 사용자가 볼륨/선택을 바꿨을 수 있어 최신 directive 를 재조회 후
+                    // 해당 stem 의 localPath 만 갱신 (다른 변경 보존).
+                    val fresh = separationDirectiveRepository.getByProject(projectId)
+                        .firstOrNull { it.id == dir.id } ?: return@launch
+                    val updated = fresh.selections.map {
+                        if (it.stemId == sel.stemId) it.copy(localPath = path) else it
+                    }
+                    if (updated != fresh.selections) {
+                        separationDirectiveRepository.add(fresh.copy(selections = updated))
+                    }
+                }
             }
         }
     }
@@ -3502,7 +3544,7 @@ class TimelineViewModel constructor(
                 if (err is com.vibi.shared.domain.error.InsufficientCreditsException) {
                     handleSeparationInsufficientCredits(clientToken, err)
                 } else {
-                    handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
+                    handleSeparationFailure(clientToken, ERROR_SEPARATION_START_NETWORK)
                 }
                 return@launch
             }
@@ -4014,6 +4056,10 @@ class TimelineViewModel constructor(
         const val MIN_RANGE_MS = SplitSegmentUseCase.MIN_RANGE_MS
         private const val HTTP_NOT_FOUND = 404
         private const val ERROR_SEPARATION_GENERIC = "Separation failed"
+        // 잡 시작 자체가 실패한 경우(로컬 추출은 성공, 남은 실패 지점은 서버 도달뿐) — 거의 항상
+        // 연결/서버 문제라 재시도 안내를 명시. handleSeparationFailure 가 그대로 sheet 에 노출.
+        private const val ERROR_SEPARATION_START_NETWORK =
+            "Couldn't reach the server. Check your connection and try again."
         // sheet 의 FAILED 단계가 [AudioSeparationUiState.insufficientCredits]=true 일 때 표시할
         // 메시지. UI 가 추가로 "Buy credits" 버튼을 렌더해 충전 화면으로 분기 시킨다.
         private const val ERROR_INSUFFICIENT_CREDITS = "Not enough credits"
