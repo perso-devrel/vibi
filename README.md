@@ -99,8 +99,8 @@ vibi-mobile/
 ├── shared/                                 # :shared — KMP 비즈니스 로직
 │   ├── commonMain/com/vibi/shared/
 │   │   ├── domain/{model,repository,usecase,util}/
-│   │   ├── data/{remote,repository,local,local/db}/    # Ktor Client + Room v5 (destructive migration)
-│   │   ├── ui/{auth,input,timeline}/                   # ViewModel
+│   │   ├── data/{remote,repository,local,local/db}/    # Ktor Client + Room v14 (destructive migration)
+│   │   ├── ui/{auth,input,timeline,account,share}/     # ViewModel
 │   │   ├── platform/                                   # expect — GoogleSignInClient, AppleSignInClient, FileSystem, ...
 │   │   └── di/                                         # Koin 모듈
 │   ├── androidMain/  └── iosMain/                      # 플랫폼별 actual (인증 / 미디어 / DB / HttpClient)
@@ -109,7 +109,7 @@ vibi-mobile/
 │   ├── commonMain/com/vibi/cmp/
 │   │   ├── App.kt + ui/navigation/VibiNavHost.kt       # Splash · Login · Input · Timeline
 │   │   ├── theme/                                      # VibiTheme · Typography · Radius · Spacing
-│   │   ├── ui/{splash,auth,input,timeline,share,components,cupertino}/
+│   │   ├── ui/{splash,auth,input,timeline,share,account,components,cupertino}/
 │   │   ├── ui/timeline/sounddeck/                      # SoundDeck · SoundCard · ABPreviewBar · ...
 │   │   └── platform/                                   # VideoPlayer / MediaPicker / Audio* / StemMixer / Waveform expect
 │   ├── androidMain/  └── iosMain/                      # Media3 / AVPlayer · PHPicker · GoogleSignIn 등 actual
@@ -119,19 +119,20 @@ vibi-mobile/
 
 핵심 화면 흐름: **Splash → (signedIn) Input ↔ Timeline / (signedOut) Login → Input**.
 
-타임라인 sheet 군: AudioSeparation · BgmTrim · ExportOptions · ExportVariantPicker.
+타임라인 sheet 군: AudioSeparation · AudioInsert · BgmTrim. 계정 sheet: UserMenu · CreditPurchase.
 타임라인 구간 선택은 별도 sheet 가 아니라 `UnifiedTimelineBar` 인라인 (28~56dp 바, segment/directive content strip + range fill + bracket 핸들 + 재생 marker).
 
 ## 핵심 기능 ↔ BFF 매핑
 
 | 기능 | 클라이언트 | BFF 엔드포인트 |
 |---|---|---|
-| 소셜 로그인 (Google + Apple) | LoginScreen · AuthRepository · `GoogleSignInClient` / `AppleSignInClient` (expect) | `POST /api/v2/auth/google` · `POST /api/v2/auth/apple` |
+| 소셜 로그인 (Google + Apple) | LoginScreen · AuthRepository · `GoogleSignInClient` / `AppleSignInClient` (expect) | `POST /api/v2/auth/google` · `POST /api/v2/auth/apple` · `DELETE /api/v2/auth/account` |
+| 크레딧 / 인앱결제 | UserMenuSheet · CreditPurchaseSheet · `UserMenuViewModel` · `IapBridge` / `PurchaseLauncher` | `GET /api/v2/credits` · `GET /api/v2/credits/cost` · `POST /api/v2/credits/purchase` |
 | 영상 업로드 | InputScreen + MediaPicker (PickVisualMedia / PHPicker) · VideoThumbnailExtractor | (로컬 segment) |
-| 음원 분리 (영상 segment + BGM clip) | AudioSeparationSheet · `StartAudioSeparationUseCase` / `PollSeparationUseCase` | `POST /api/v2/separate` → poll → `POST /api/v2/separate/{id}/mix` |
+| 음원 분리 (영상 segment + BGM clip) | AudioSeparationSheet · `StartAudioSeparationUseCase` / `PollSeparationUseCase` · 로컬 StemMixer | `POST /api/v2/separate` → poll → `GET /api/v2/separate/{id}/stem/{stemId}` (로컬 합성 프리뷰) |
 | 구간 선택 | UnifiedTimelineBar (인라인) | (로컬 Room) |
-| 음원 삽입 (파일 + 즉시 녹음 + BGM trim) | `AudioPicker` / `AudioRecorder` · BgmTrimSheet | (로컬 BgmClip) |
-| 익스포트 (단일 + multi-variant) | ExportVariantPickerSheet · `EnsureLatestRenderUseCase` · `SaveAllVariantsUseCase` | `POST /api/v2/render/inputs` → `POST /api/v2/render` (× variants, `inputId` 재사용) → poll → `GET /download` |
+| 음원 삽입 (파일 + 즉시 녹음 + BGM trim) | AudioInsertSheet · `AudioPicker` / `AudioRecorder` · BgmTrimSheet | (로컬 BgmClip) |
+| 익스포트 | TimelineScreen 저장 · `HybridRenderExecutor` · `SaveExportUseCase` · `PrewarmAssetUploadUseCase` → ShareScreen | `POST /api/v2/assets/upload-url` → `PUT` (R2) → `POST /api/v2/render/v3` → poll → `GET /api/v2/render/{id}/download` |
 
 ## 외부 의존 (BFF 경유, 클라이언트가 직접 호출하지 않음)
 

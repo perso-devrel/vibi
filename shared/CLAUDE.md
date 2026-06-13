@@ -2,7 +2,7 @@
 
 ## Project
 
-vibi `:shared` — **Kotlin Multiplatform 비즈니스 로직 모듈**. 도메인 모델 + 리포지토리(인터페이스+구현) + Ktor Client multiplatform BFF 클라이언트 + Room v5 (multiplatform, destructive migration 허용) + UseCase + ViewModel + Auth (GoogleSignIn / Apple AuthenticationServices) + Koin DI 를 `commonMain` 에 두고 `androidMain`/`iosMain` 으로 플랫폼 의존을 분리한다. UI 코드는 형제 모듈 `:cmp` 가 본 모듈을 소비한다.
+vibi `:shared` — **Kotlin Multiplatform 비즈니스 로직 모듈**. 도메인 모델 + 리포지토리(인터페이스+구현) + Ktor Client multiplatform BFF 클라이언트 + Room v14 (multiplatform, destructive migration 허용) + UseCase + ViewModel + Auth (GoogleSignIn / Apple AuthenticationServices) + 크레딧/IAP + Koin DI 를 `commonMain` 에 두고 `androidMain`/`iosMain` 으로 플랫폼 의존을 분리한다. UI 코드는 형제 모듈 `:cmp` 가 본 모듈을 소비한다.
 
 - **gradle 모듈명**: `:shared` (gradle 루트는 `vibi-mobile/`, `include(":shared")`)
 - 코드 스타일: official
@@ -28,26 +28,27 @@ shared/
 └── src/
     ├── commonMain/kotlin/com/vibi/shared/
     │   ├── domain/
-    │   │   ├── model/                       # Segment, Stem, EditProject, BgmClip,
-    │   │   │                                # ImageClip, TextOverlay, AuthUser,
-    │   │   │                                # VideoInfo, ImageInfo, ValidationResult,
-    │   │   │                                # SeparationDirective, SeparationMediaType
+    │   │   ├── model/                       # Segment, Stem, EditProject, BgmClip, AuthUser,
+    │   │   │                                # VideoInfo, ValidationResult, SeparationDirective,
+    │   │   │                                # SeparationMediaType, DirectiveAnchor,
+    │   │   │                                # SeparationCost, IapPlatform
     │   │   ├── repository/                  # 인터페이스 — AudioSeparation, BgmClip, EditProject,
-    │   │   │                                # ImageClip, Segment, TextOverlay,
-    │   │   │                                # SeparationDirective, Render
-    │   │   ├── usecase/                     # 카테고리: input/separation/timeline/text/bgm/image/save/draft/export
+    │   │   │                                # Segment, SeparationDirective
+    │   │   ├── usecase/                     # 카테고리: input/separation/timeline/bgm/export/save/share/draft
     │   │   └── util/                        # LanePacking, ColorValidation, UndoRedoManager
     │   ├── data/
     │   │   ├── remote/api/BffApi.kt         # Ktor Client multiplatform.
-    │   │   │                                # 현행: auth/google · auth/apple ·
-    │   │   │                                #      render(+inputs) · separate(+mix) · testdata.
-    │   │   ├── remote/dto/                  # kotlinx.serialization DTO (Auth/Render/Separation)
+    │   │   │                                # 현행: auth/google · auth/apple · auth/account(DELETE) ·
+    │   │   │                                #      credits(+cost/purchase/admin-grant) ·
+    │   │   │                                #      render(+inputs/v3) · assets/upload-url ·
+    │   │   │                                #      separate · testdata.
+    │   │   ├── remote/dto/                  # kotlinx.serialization DTO (Auth/Credit/Render/Separation)
     │   │   ├── remote/HttpClientFactory.kt  # expect/actual — Authorization 헤더 인젝션, Json 설정
     │   │   ├── repository/                  # 인터페이스 구현 (Room + BFF) + AuthRepository + RemoteRenderExecutor
-    │   │   ├── local/db/                    # Room v5 — VibiDatabase, 8 entity + 8 DAO,
+    │   │   ├── local/db/                    # Room v14 — VibiDatabase, 4 entity + 4 DAO,
     │   │   │                                # fallbackToDestructiveMigration(dropAllTables=true)
     │   │   └── local/                       # AuthTokenStore · UserSession · JwtSubject · UserPreferencesStore (Multiplatform Settings)
-    │   ├── ui/                              # ViewModel — InputVM, TimelineVM, LoginVM
+    │   ├── ui/                              # ViewModel — InputVM, TimelineVM, LoginVM, UserMenuVM, ShareVM
     │   ├── platform/                        # expect — FileSystem, VideoThumbnailExtractor, TimeFormat,
     │   │                                    # GoogleSignInClient, AppleSignInClient
     │   └── di/                              # Koin 모듈 (DatabaseModule, NetworkModule, RepositoryModule, UseCaseModule, ViewModelModule)
@@ -76,7 +77,7 @@ shared/
 - Retrofit / Moshi / OkHttp / Hilt 는 iOS 불가 — 네트워크는 Ktor Client multiplatform, 직렬화는 kotlinx.serialization, DI 는 Koin, KV 저장은 Multiplatform Settings.
 - 본 모듈은 **로직만**. UI 코드(`@Composable`)는 `cmp/` 로.
 - 본 모듈이 모바일 도메인의 단일 source of truth — legacy-android 시절의 모델은 모두 흡수됐다.
-- **Room v5 + destructive migration** — 시연 단계라 `fallbackToDestructiveMigration(dropAllTables=true)`. schema 변경 시 기존 row 는 drop, migration 코드 작성 불필요. 출시 단계에서 정책 재검토.
+- **Room v14 + destructive migration** — 시연 단계라 `fallbackToDestructiveMigration(dropAllTables=true)`. schema 변경 시 기존 row 는 drop, migration 코드 작성 불필요. 출시 단계에서 정책 재검토.
 
 ## 아키텍처·Flow 규약
 
@@ -89,10 +90,10 @@ shared/
 
 ## Timeline 동작 규약
 
-자막/더빙 제거 후 `TimelineStep` 은 `EditAudio` 단일 값. 영상 segment 편집 + BGM 삽입/조정 + 음원분리 + 텍스트 오버레이가 한 화면에 통합.
+자막/더빙 제거 후 `TimelineStep` 은 `EditAudio` 단일 값. 영상 segment 편집 + BGM 삽입/조정 + 음원분리가 한 화면에 통합.
 
 - **`commitSegmentEdit` 만 산출물 wipe** — 영상편집 모드의 ✓로 segment 자체를 바꿨을 때만 `resetTimelineDerivedResults()` 가 BGM/separation 을 정리.
-- **Undo/redo 단일 스택** — text overlay / image clip / audio edit 모두 같은 `UndoRedoManager` 공유. segment edit 모드만 별도 `editModeUndoRedoManager`.
+- **Undo/redo 단일 스택** — BGM / 음원분리 / audio edit 모두 같은 `UndoRedoManager` 공유. segment edit 모드만 별도 `editModeUndoRedoManager`.
 - **EnsureLatestRender 시점은 lazy** — export 등 산출물이 필요한 시점에 `EnsureLatestRenderUseCase` 가 BFF 에 단일 영상 render 잡 제출 (BGM atrim+amix 포함).
 
 ## Auth 흐름 요약

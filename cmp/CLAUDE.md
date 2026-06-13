@@ -2,7 +2,7 @@
 
 ## Project
 
-vibi `:cmp` — **Compose Multiplatform UI 모듈**. 타임라인 에디터, 음원 분리/조절 UI, 미리보기, 로그인 화면 등 Android/iOS 공통 화면을 단일 `@Composable` 코드로 작성. 비즈니스 로직(도메인·리포지토리)은 형제 모듈 `:shared` 에서 가져온다.
+vibi `:cmp` — **Compose Multiplatform UI 모듈**. 타임라인 에디터, 음원 분리/조절 UI, 음원 삽입, 미리보기, 로그인, 계정/크레딧(인앱결제) 등 Android/iOS 공통 화면을 단일 `@Composable` 코드로 작성. 비즈니스 로직(도메인·리포지토리)은 형제 모듈 `:shared` 에서 가져온다.
 
 - **gradle 모듈명**: `:cmp` (gradle 루트는 워크스페이스 루트, `include(":cmp")` 로 자동 인식)
 - **현 상태**: Compose Multiplatform 활성. 세 source set 모두 사용 (commonMain UI + androidMain/iosMain 플랫폼 actual). Android entry 는 `VibiApplication` + `MainActivity`, iOS entry 는 `MainViewController` (UIKit) — `iosApp/` Swift 가 호출.
@@ -37,6 +37,7 @@ cmp/
     │   ├── ui/timeline/
     │   │   ├── TimelineScreen.kt                   # 메인 에디터 + UnifiedTimelineBar (인라인 구간 선택)
     │   │   ├── AudioSeparationSheet.kt             # Setup→Processing→PickStems→Mixing→Done
+    │   │   ├── AudioInsertSheet.kt                 # 음원 삽입 (파일 선택 / 즉시 녹음 모드 + 프리뷰)
     │   │   ├── BgmTrimSheet.kt                     # 영상보다 긴 BGM 의 sub-range 선택
     │   │   ├── DetailEditPanel.kt                  # segment/clip 디테일 (볼륨/속도)
     │   │   ├── WaveformPlayBar.kt                  # 영상 audio 파형 + 분리 구간 accent 표시
@@ -45,6 +46,7 @@ cmp/
     │   │                                           # AddSourceCard · EditEntryCard · IconLabelCard ·
     │   │                                           # SoundCardModel · EditActionsPanel
     │   ├── ui/share/ShareScreen.kt
+    │   ├── ui/account/                             # UserMenuSheet (프로필 + 크레딧 잔액) · CreditPurchaseSheet (인앱결제)
     │   ├── ui/components/VibiCards.kt
     │   ├── ui/cupertino/Cupertino.kt               # iOS-look 위젯 (스위치 등)
     │   └── platform/                               # VideoPlayer / MediaPicker / AudioPicker /
