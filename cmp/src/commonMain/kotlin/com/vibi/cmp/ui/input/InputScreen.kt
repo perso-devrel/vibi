@@ -20,9 +20,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -309,6 +311,22 @@ fun InputScreen(
                 onSignedOut()
             },
             viewModel = userMenuViewModel,
+        )
+    }
+
+    // 분리 시작 확인 — 영상 선택 직후 바로 분리하지 않고, 크레딧 1개 소모를 고지한 뒤 시작.
+    // 취소하면 선택만 해제(크레딧 미소모). 잔액 부족 시엔 시작 후 "준비중" 카드가 실패로 안내.
+    if (state.awaitingSeparationConfirm) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onCancelStartSeparation() },
+            title = { Text("Start audio separation?") },
+            text = { Text("This will use 1 credit to separate the audio from your video.") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.onConfirmStartSeparation() }) { Text("Start") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onCancelStartSeparation() }) { Text("Cancel") }
+            },
         )
     }
 }

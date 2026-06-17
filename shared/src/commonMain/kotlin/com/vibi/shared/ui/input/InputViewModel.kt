@@ -55,6 +55,11 @@ data class InputUiState(
     val validationResult: ValidationResult? = null,
     val isExtracting: Boolean = false,
     /**
+     * 분리 시작 확인 팝업 노출 여부. 분리는 영상 1개당 크레딧 1개를 소모하므로, 영상 선택 직후
+     * 바로 시작하지 않고 사용자 확인을 받는다. 분리 지원 플랫폼(iOS)에서만 true 가 된다.
+     */
+    val awaitingSeparationConfirm: Boolean = false,
+    /**
      * "작업 준비중" 섹션 — 영상 선택 직후 백그라운드로 전체 음원분리가 도는 프로젝트들. drafts 보다
      * 위에 노출되며, 분리가 완료되면 해당 프로젝트가 여기서 빠지고 [drafts] 로 내려간다.
      */
@@ -157,24 +162,27 @@ class InputViewModel constructor(
                         .filter { it.rangeStartMs == null }
                         .forEach { job -> maybeResume(p.projectId, job) }
                 }
+                // 라이브 진행(prog) 이 있거나, 영속화된 분리 실패(separationStatus=FAILED) 면 "준비중".
+                // 후자는 앱 재시작 후 in-memory prog 가 비어도 실패 영상이 drafts 로 새지 않게 하기 위함 —
+                // 영속 FAILED 로 카드를 합성하고 Retry 를 노출한다.
                 val preparing = projects
-                    .filter { prog[it.projectId] != null }
+                    .filter { prog[it.projectId] != null || it.separationStatus == AutoJobStatus.FAILED }
                     .sortedByDescending { it.createdAt }
-                    .mapNotNull { p ->
-                        val jp = prog[p.projectId] ?: return@mapNotNull null
+                    .map { p ->
+                        val jp = prog[p.projectId]
                         PreparingSummary(
                             projectId = p.projectId,
                             title = p.title,
                             createdAt = p.createdAt,
                             thumbnailPath = thumbs[p.projectId],
-                            progress = jp.progress,
-                            progressReason = jp.reason,
-                            failed = jp.failed,
-                            insufficientCredits = jp.insufficientCredits,
+                            progress = jp?.progress ?: 0,
+                            progressReason = jp?.reason ?: p.separationError,
+                            failed = jp?.failed ?: (p.separationStatus == AutoJobStatus.FAILED),
+                            insufficientCredits = jp?.insufficientCredits ?: false,
                         )
                     }
                 val drafts = projects
-                    .filter { prog[it.projectId] == null }
+                    .filter { prog[it.projectId] == null && it.separationStatus != AutoJobStatus.FAILED }
                     .map { it.toDraftSummary(thumbs[it.projectId]) }
                 _uiState.update { it.copy(preparing = preparing, drafts = drafts) }
                 ensureThumbnails(projects)
@@ -203,7 +211,13 @@ class InputViewModel constructor(
                 isExtracting = false
             )
             if (result is ValidationResult.Valid) {
-                onContinue()
+                // 분리 지원 플랫폼(iOS)은 크레딧 1개를 소모하므로 바로 시작하지 않고 확인 팝업을 띄운다.
+                // 미지원 플랫폼(Android)은 분리 없이 곧장 타임라인 진입이라 확인 불필요.
+                if (audioExtractor.isSupported) {
+                    _uiState.value = _uiState.value.copy(awaitingSeparationConfirm = true)
+                } else {
+                    onContinue()
+                }
             }
         }
     }
@@ -213,7 +227,19 @@ class InputViewModel constructor(
             selectedVideo = null,
             validationResult = null,
             isExtracting = false,
+            awaitingSeparationConfirm = false,
         )
+    }
+
+    /** 분리 시작 확인 팝업 "시작" — 크레딧 1개 소모하고 백그라운드 전체영상 분리를 시작. */
+    fun onConfirmStartSeparation() {
+        _uiState.value = _uiState.value.copy(awaitingSeparationConfirm = false)
+        onContinue()
+    }
+
+    /** 분리 시작 확인 팝업 "취소" — 선택 해제(분리 미시작, 크레딧 미소모). */
+    fun onCancelStartSeparation() {
+        onResetSelection()
     }
 
     fun onContinue() {
@@ -278,6 +304,13 @@ class InputViewModel constructor(
                 .getOrNull()?.firstOrNull()
             if (segment == null) {
                 setProgress(projectId, SepProgress(0, null, failed = true))
+                // FAILED 영속화 — 재시작 후에도 drafts 로 새지 않고 준비중(Retry) 에 남도록.
+                editProjectRepository.getProject(projectId)?.let { p ->
+                    editProjectRepository.updateProject(
+                        p.copy(separationStatus = AutoJobStatus.FAILED),
+                        touchActivity = false,
+                    )
+                }
                 return@launch
             }
             val startResult = startAudioSeparation(
