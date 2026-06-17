@@ -2765,6 +2765,15 @@ class TimelineViewModel constructor(
     }
 
     /**
+     * 분리 stem 볼륨 슬라이더 드래그 종료(SoundDeck 카드 onValueChangeFinished) 직후 호출.
+     * [onSetStemVolumeForDirective] 는 BGM 볼륨과 동일하게 드래그마다 DB 만 갱신하므로, undo snapshot
+     * 은 본 함수가 종료 시점에 1 회만 push (드래그 한 번 = undo entry 1 개). [commitBgmEditUndo] 와 동일 패턴.
+     */
+    fun commitStemEditUndo() {
+        pushUndoState()
+    }
+
+    /**
      * 음원·녹음 카드 이름 변경 (카드 연필 탭). blank 면 customName=null 로 되돌려 자동 라벨
      * (파일명 / "Recording N") 복귀. 길이 상한으로 비정상 입력 차단. undo entry 1 개 push.
      */

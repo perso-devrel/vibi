@@ -58,6 +58,8 @@ fun SoundDeck(
     onUpdateBgmVolume: (clipId: String, volume: Float) -> Unit,
     /** BGM 슬라이더 드래그 종료 / 1-shot mute 토글 직후 호출 — undo entry 1 회 push. */
     onCommitBgmEditUndo: () -> Unit,
+    /** 분리 stem 볼륨 슬라이더 드래그 종료 직후 호출 — undo entry 1 회 push. */
+    onCommitStemEditUndo: () -> Unit,
     onApplyBgmSpeed: (clipId: String, value: Float) -> Unit,
     onRemoveBgmBackground: (clipId: String) -> Unit,
     onDeleteBgm: (clipId: String) -> Unit,
@@ -102,7 +104,7 @@ fun SoundDeck(
         },
         onUpdateVolumeFinished = when (card.source) {
             is SoundCardSource.Bgm -> onCommitBgmEditUndo
-            is SoundCardSource.SeparationStem -> null
+            is SoundCardSource.SeparationStem -> onCommitStemEditUndo
         },
         onTogglePreview = {
             val url = card.audioUrl

@@ -1045,6 +1045,7 @@ fun TimelineScreen(
                         },
                         onUpdateBgmVolume = { clipId, v -> viewModel.onUpdateBgmVolume(clipId, v) },
                         onCommitBgmEditUndo = { viewModel.commitBgmEditUndo() },
+                        onCommitStemEditUndo = { viewModel.commitStemEditUndo() },
                         onApplyBgmSpeed = { clipId, v -> viewModel.onApplyBgmClipSpeed(clipId, v) },
                         // BGM 분리 trigger — Android stub 환경에서는 ViewModel 진입부의 isSupported
                         // 가드가 silent return 처리 (3단 방어 중 2단).
