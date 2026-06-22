@@ -2,7 +2,9 @@ package com.vibi.shared.data.remote
 
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
+import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.logging.LogLevel
@@ -11,8 +13,10 @@ import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.request.header
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 
 expect fun createPlatformHttpClient(block: HttpClientConfig<*>.() -> Unit): HttpClient
@@ -47,6 +51,23 @@ fun createBffHttpClient(
             // stale IP 라 닿지 않는 케이스를 5초 안에 명확히 깨도록 짧게 잡는다.
             connectTimeoutMillis = 5_000L
             socketTimeoutMillis = 300_000L
+        }
+
+        // 멱등 GET(상태 폴링·잔액·견적 등)만 일시적 실패에 자동 재시도. 비멱등 POST(렌더/분리
+        // 제출, auth 교환)는 중복 잡/중복 과금/중복 로그인 위험이라 제외 — GET 만 retry.
+        // GCP cold-start 5xx·일시 끊김 대비. 폴링 루프의 연속실패 허용과 2중으로 견고화.
+        install(HttpRequestRetry) {
+            maxRetries = 3
+            retryIf { request, response ->
+                request.method == HttpMethod.Get && response.status.value in 500..599
+            }
+            retryOnExceptionIf { request, cause ->
+                request.method == HttpMethod.Get &&
+                    cause !is CancellationException &&
+                    // 응답 상태(4xx/5xx) 예외는 retryIf 가 status 로 처리 — 여기선 연결성 예외만.
+                    cause !is ResponseException
+            }
+            exponentialDelay()
         }
 
         if (enableLogging) {

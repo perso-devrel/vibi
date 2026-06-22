@@ -1,6 +1,9 @@
 package com.vibi.shared.data.repository
 
+import com.vibi.shared.data.remote.MAX_CONSECUTIVE_POLL_FAILURES
+import com.vibi.shared.data.remote.SessionExpiredException
 import com.vibi.shared.data.remote.api.BffApi
+import com.vibi.shared.data.remote.isUnauthorized
 import com.vibi.shared.platform.currentTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -26,11 +29,25 @@ internal suspend fun pollRenderJobUntilDone(
 ) {
     val startTime = currentTimeMillis()
     var pollDelayMs = INITIAL_POLL_MS
+    var consecutiveFailures = 0
     while (currentCoroutineContext().isActive) {
         if (currentTimeMillis() - startTime > MAX_POLL_TOTAL_MS) {
             throw RuntimeException("Render timed out (15 min)")
         }
-        val status = api.getRenderStatus(jobId)
+        val status = try {
+            api.getRenderStatus(jobId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // 401 은 재인증 외 복구 불가 → 즉시 종료. 그 외 일시 오류는 연속 실패 한계까지
+            // 백오프하며 폴링 지속 — 15분 렌더 도중 단발 5xx/끊김으로 잡을 날리지 않는다.
+            if (e.isUnauthorized()) throw SessionExpiredException()
+            if (++consecutiveFailures > MAX_CONSECUTIVE_POLL_FAILURES) throw e
+            delay(pollDelayMs)
+            pollDelayMs = (pollDelayMs * 3 / 2).coerceAtMost(MAX_POLL_MS)
+            continue
+        }
+        consecutiveFailures = 0
         when (status.status) {
             "COMPLETED" -> { onCompleted(); return }
             "FAILED" -> throw RuntimeException(status.error ?: "Server render failed")
