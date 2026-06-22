@@ -14,7 +14,8 @@ import com.vibi.shared.domain.usecase.export.FfmpegExecutor
 import com.vibi.shared.domain.usecase.export.FrameInput
 import com.vibi.shared.domain.usecase.export.SegmentInput
 import com.vibi.shared.domain.usecase.export.SeparationDirectiveInput
-import com.vibi.shared.platform.saveBytesToCache
+import com.vibi.shared.platform.cacheDirPath
+import com.vibi.shared.platform.writeChannelToFile
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -142,8 +143,8 @@ class V3RenderExecutor(
                 onCompleted = { onProgress(90) },
             )
 
-            val bytes = api.downloadRenderResult(jobId)
-            val outPath = saveBytesToCache(outputPath.substringAfterLast('/'), bytes)
+            val outPath = "${cacheDirPath()}/${outputPath.substringAfterLast('/')}"
+            api.downloadRenderResult(jobId) { writeChannelToFile(it, outPath) }
             onProgress(100)
             Result.success(outPath)
         } catch (e: CancellationException) {

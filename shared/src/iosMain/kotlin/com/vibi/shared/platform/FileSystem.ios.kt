@@ -43,7 +43,7 @@ actual fun writeTextToFile(path: String, content: String) {
     )
 }
 
-private fun cacheDirectory(): String {
+internal fun cacheDirectory(): String {
     val paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, true)
     return requireNotNull(paths.firstOrNull() as? String) { "Could not resolve iOS cache dir." }
 }
@@ -58,7 +58,7 @@ actual fun saveBytesToCache(fileName: String, bytes: ByteArray): String {
 }
 
 /** Application Support/stems — OS 가 storage 압박에도 evict 하지 않음 (Caches 와 대비). */
-private fun persistentStemsDirectory(): String {
+internal fun persistentStemsDirectory(): String {
     val paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, true)
     val base = requireNotNull(paths.firstOrNull() as? String) { "Could not resolve iOS Application Support dir." }
     val dir = "$base/stems"

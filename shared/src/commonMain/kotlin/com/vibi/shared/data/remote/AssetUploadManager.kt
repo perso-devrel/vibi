@@ -4,7 +4,7 @@ import com.russhwolf.settings.Settings
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.data.remote.dto.AssetUploadUrlRequest
 import com.vibi.shared.platform.FileStat
-import com.vibi.shared.platform.readFileBytes
+import com.vibi.shared.platform.fileUploadBody
 import com.vibi.shared.platform.sha256HexOfFile
 import com.vibi.shared.platform.statFile
 
@@ -76,8 +76,8 @@ class AssetUploadManager(
             val url = requireNotNull(resp.uploadUrl) {
                 "BFF returned alreadyExists=false but uploadUrl=null"
             }
-            val bytes = readFileBytes(localPath)
-            val ok = api.putAssetToR2(url, bytes, contentType)
+            // 스트리밍 업로드 — 영상 전체를 ByteArray 로 적재하지 않고 청크 전송(OOM 방지).
+            val ok = api.putAssetToR2(url, fileUploadBody(localPath, contentType))
             require(ok) { "R2 PUT failed for $localPath (key=${resp.assetKey})" }
         }
         cache.put(localPath, meta, resp.assetKey)

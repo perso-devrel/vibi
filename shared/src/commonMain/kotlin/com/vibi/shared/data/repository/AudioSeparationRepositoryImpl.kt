@@ -15,8 +15,9 @@ import com.vibi.shared.domain.repository.SeparationStatus
 import com.vibi.shared.platform.AudioExtractException
 import com.vibi.shared.platform.AudioExtractor
 import com.vibi.shared.platform.AudioSourceKind
+import com.vibi.shared.platform.persistentStemsDirPath
 import com.vibi.shared.platform.readFileBytes
-import com.vibi.shared.platform.saveBytesToPersistentFile
+import com.vibi.shared.platform.writeChannelToFile
 import io.ktor.client.call.body
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.http.HttpStatusCode
@@ -143,9 +144,11 @@ class AudioSeparationRepositoryImpl(
 
     override suspend fun downloadStem(stemUrl: String, outputFileName: String): Result<String> =
         runCatching {
-            val bytes = api.downloadStem(stemUrl)
-            // 영구 디렉터리에 저장 — 서버 연결이 끊겨도 오프라인 재생/편집 가능.
-            saveBytesToPersistentFile(outputFileName, bytes)
+            // 영구 디렉터리에 스트리밍 저장 — 전체 적재 없이 청크 기록. 서버가 끊겨도 오프라인
+            // 재생/편집이 가능하도록 evict 안 되는 stem 디렉터리에 둔다.
+            val destPath = "${persistentStemsDirPath()}/$outputFileName"
+            api.downloadStem(stemUrl) { writeChannelToFile(it, destPath) }
+            destPath
         }
 
     private companion object {

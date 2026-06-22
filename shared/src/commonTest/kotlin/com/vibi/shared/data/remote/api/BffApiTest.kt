@@ -18,6 +18,7 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
@@ -114,7 +115,7 @@ class BffApiTest {
             )
         }
 
-        val bytes = api.downloadRenderResult("render-123")
+        val bytes = api.downloadRenderResult("render-123") { it.collectAll() }
 
         assertEquals("api/v2/render/render-123/download", captured[0].url.encodedPath.trimStart('/'))
         assertEquals(256, bytes.size)
@@ -197,10 +198,21 @@ class BffApiTest {
                 headers = headersOf(HttpHeaders.ContentType, "audio/mpeg")
             )
         }
-        val bytes = api.downloadStem("https://bff.example/files/sep/abc?token=xyz")
+        val bytes = api.downloadStem("https://bff.example/files/sep/abc?token=xyz") { it.collectAll() }
         assertEquals(payload.size, bytes.size)
         assertContains(captured[0].url.toString(), "token=xyz")
     }
 
+    /** 스트리밍 다운로드(consume 람다)를 인메모리 ByteArray 로 모아 단언 — 프로덕션은 파일로 스트리밍. */
+    private suspend fun ByteReadChannel.collectAll(): ByteArray {
+        val acc = mutableListOf<Byte>()
+        val buf = ByteArray(4096)
+        while (true) {
+            val n = readAvailable(buf, 0, buf.size)
+            if (n == -1) break
+            for (i in 0 until n) acc.add(buf[i])
+        }
+        return acc.toByteArray()
+    }
 }
 

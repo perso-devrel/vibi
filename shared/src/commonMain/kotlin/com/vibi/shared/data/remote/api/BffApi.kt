@@ -26,13 +26,16 @@ import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.readRawBytes
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
+import io.ktor.utils.io.ByteReadChannel
 import kotlinx.serialization.json.Json
 
 // `data class` 대신 일반 class — 자동 생성된 equals/hashCode 가 큰 ByteArray 를 deep 비교하면
@@ -147,8 +150,15 @@ class BffApi(
     suspend fun getRenderStatus(jobId: String): RenderStatusResponse =
         client.get("api/v2/render/$jobId/status").body()
 
-    suspend fun downloadRenderResult(jobId: String): ByteArray =
-        client.get("api/v2/render/$jobId/download").readRawBytes()
+    /**
+     * 렌더 결과를 스트리밍으로 소비 — 응답 전체를 ByteArray 로 적재하지 않고 [consume] 에 응답
+     * 채널을 넘긴다. 호출자는 보통 [com.vibi.shared.platform.writeChannelToFile] 로 파일에 직접
+     * 기록(피크 메모리 ~청크 1개). 100MB대 mp4 다운로드의 OOM/피크2배 방지.
+     */
+    suspend fun <T> downloadRenderResult(jobId: String, consume: suspend (ByteReadChannel) -> T): T =
+        client.prepareGet("api/v2/render/$jobId/download").execute { resp ->
+            consume(resp.bodyAsChannel())
+        }
 
     // --- v3 asset-by-reference 흐름 (모바일이 R2 직접 PUT, RenderConfig 에는 키만 담음) ---
 
@@ -170,15 +180,11 @@ class BffApi(
      * @return PUT 성공 (2xx) 여부. expectSuccess=true 라 실패 시 throw 가 우선이지만, 명시적으로
      *   bool 반환해 호출자가 follow-up 처리 가능.
      */
-    suspend fun putAssetToR2(
-        presignedUrl: String,
-        bytes: ByteArray,
-        contentType: String,
-    ): Boolean {
-        val resp = r2Client.put(presignedUrl) {
-            contentType(ContentType.parse(contentType))
-            setBody(bytes)
-        }
+    suspend fun putAssetToR2(presignedUrl: String, body: OutgoingContent): Boolean {
+        // body 는 스트리밍 OutgoingContent([com.vibi.shared.platform.fileUploadBody]) — 대용량
+        // 영상을 ByteArray 로 통째 적재하지 않고 청크 전송. SigV4 가 contentType + Content-Length
+        // 를 sign 하므로 body 가 둘 다 정확히 제공해야 하며, fileUploadBody 가 이를 보장한다.
+        val resp = r2Client.put(presignedUrl) { setBody(body) }
         return resp.status.value in 200..299
     }
 
@@ -215,8 +221,11 @@ class BffApi(
     suspend fun getSeparationStatus(jobId: String): SeparationStatusResponse =
         client.get("api/v2/separate/$jobId").body()
 
-    suspend fun downloadStem(tokenizedUrl: String): ByteArray =
-        client.get(tokenizedUrl).readRawBytes()
+    /** 토큰화 stem URL 을 verbatim GET 후 스트리밍 소비 — 전체 적재 없이 [consume] 에 채널 전달. */
+    suspend fun <T> downloadStem(tokenizedUrl: String, consume: suspend (ByteReadChannel) -> T): T =
+        client.prepareGet(tokenizedUrl).execute { resp ->
+            consume(resp.bodyAsChannel())
+        }
 }
 
 private fun io.ktor.client.request.forms.FormBuilder.append(part: BinaryPart) {
