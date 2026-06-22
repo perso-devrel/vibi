@@ -39,17 +39,16 @@ class IosExportPlatformAdapter(
         request: ExportRequest,
         onProgress: (percent: Int) -> Unit
     ): Result<String> {
+        // cacheDir 충돌 (같은 ms 내 동시 export) 방지 위해 UUID 포함.
+        val tmpRoot = NSTemporaryDirectory()
+        val cacheDir = "$tmpRoot/vibi_export_${Uuid.random()}"
+        NSFileManager.defaultManager.createDirectoryAtPath(
+            path = cacheDir,
+            withIntermediateDirectories = true,
+            attributes = null,
+            error = null
+        )
         return try {
-            // cacheDir 충돌 (같은 ms 내 동시 export) 방지 위해 UUID 포함.
-            val tmpRoot = NSTemporaryDirectory()
-            val cacheDir = "$tmpRoot/vibi_export_${Uuid.random()}"
-            NSFileManager.defaultManager.createDirectoryAtPath(
-                path = cacheDir,
-                withIntermediateDirectories = true,
-                attributes = null,
-                error = null
-            )
-
             val segmentInputs = request.segments.map { segment ->
                 val localPath = resolveSegmentSource(segment, cacheDir)
                     ?: error("Segment source unreadable: ${segment.sourceUri.fileNameOnly()}")
@@ -110,6 +109,11 @@ class IosExportPlatformAdapter(
             throw e
         } catch (e: Throwable) {
             Result.failure(e)
+        } finally {
+            // 작업 디렉터리(복사된 원본/BGM 입력본)는 export 산출물(Caches 에 별도 저장)과 무관하므로
+            // 성공/실패/취소 모두 정리. NSTemporaryDirectory 는 OS 가 즉시 비우지 않아 풀사이즈 영상
+            // 사본이 반복 저장마다 누적 → 디스크가 차면 이후 export 가 ENOSPC 로 실패.
+            NSFileManager.defaultManager.removeItemAtPath(cacheDir, null)
         }
     }
 
