@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import platform.Foundation.NSItemProvider
 import platform.Foundation.NSURL
 import platform.PhotosUI.PHPickerConfiguration
+import platform.PhotosUI.PHPickerConfigurationAssetRepresentationModeCurrent
 import platform.PhotosUI.PHPickerFilter
 import platform.PhotosUI.PHPickerResult
 import platform.PhotosUI.PHPickerViewController
@@ -78,6 +79,12 @@ private fun presentPhPicker(
     val config = PHPickerConfiguration().apply {
         selectionLimit = 1L
         filter = PHPickerFilter.videosFilter
+        // 기본값 .automatic 은 호환성 위해 HEVC→H.264 트랜스코딩(영상 길이 비례, loadFileRepresentation
+        // 콜백이 끝날 때까지 블록)을 허용 → 긴 영상에서 분리 확인 팝업까지 지연의 주원인. .current 로
+        // 원본 바이트를 그대로 받아 트랜스코딩을 건너뛴다. 분리 업로드는 어차피 AAC m4a 로 재인코딩
+        // (IosAudioExtractor), 재생/파형은 AVFoundation 이 HEVC 를 native 디코딩하므로 원본 코덱 무관.
+        // (iCloud-only 자산의 다운로드 지연은 .current 로도 줄지 않음 — 트랜스코딩 비용만 제거.)
+        preferredAssetRepresentationMode = PHPickerConfigurationAssetRepresentationModeCurrent
     }
     val picker = PHPickerViewController(configuration = config)
 

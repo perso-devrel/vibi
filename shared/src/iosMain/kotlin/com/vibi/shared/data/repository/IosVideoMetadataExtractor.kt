@@ -32,9 +32,13 @@ class IosVideoMetadataExtractor : VideoMetadataExtractor {
             println("[Extractor] resolver returned null for uri=$uri")
             return@withContext null
         }
+        // precise timing 은 sample/timing 테이블 전체 스캔(O(샘플수)=영상 길이 비례)을 강제해 긴 영상에서
+        // 분리 확인 팝업이 뜨기까지 지연을 키운다. 여기 추출 결과는 (1) 검증(durationMs>300s, dim>1920 —
+        // 초/정수픽셀 단위 coarse 게이트)과 (2) yes/no 팝업에만 쓰여 frame-accurate 가 필요 없고, 분리 range
+        // 는 서버 actualDurationMs 를 우선하므로 container 의 mvhd duration(O(1))으로 충분하다. false.
         val asset = AVURLAsset(
             uRL = url,
-            options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to true)
+            options = mapOf(AVURLAssetPreferPreciseDurationAndTimingKey to false)
         )
 
         // iCloud-only / 대용량 영상은 async load 가 수백 ms 걸릴 수 있어 너무 짧으면 incomplete
