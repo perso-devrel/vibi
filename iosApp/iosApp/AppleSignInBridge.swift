@@ -78,11 +78,10 @@ final class AppleSignInBridgeImpl: NSObject, AppleSignInBridge,
         topWindow() ?? ASPresentationAnchor()
     }
 
+    // presenter 조회는 GoogleSignInBridge 의 UIApplication.activeKeyWindow 폴백 체인을 공유 —
+    // iPad 호환 모드에서 foregroundActive scene 부재로 anchor 가 nil 이 되면 Apple 로그인
+    // 시트도 동일하게 무한 로딩에 빠지므로 같은 견고한 조회를 쓴다.
     private func topWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?
-            .windows
-            .first(where: { $0.isKeyWindow })
+        UIApplication.shared.activeKeyWindow
     }
 }

@@ -10,6 +10,14 @@ import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * 네이티브 sign-in(Google/Apple) 시트가 [AuthRepository.NATIVE_SIGN_IN_TIMEOUT_MS] 안에
+ * 콜백하지 않을 때 던진다. iPad 호환 모드 등에서 OAuth 시트가 present 되지 않거나 redirect
+ * 콜백이 끝내 오지 않아 로그인 스피너가 영원히 도는(App Store 리젝 사유) 것을 방지하는 backstop.
+ */
+class SignInTimeoutException : Exception("sign_in_timed_out")
 
 /**
  * Google / Apple OAuth → BFF JWT 교환 + 로컬 토큰 캐시 + 계정별 로컬 데이터 스코핑.
@@ -31,18 +39,28 @@ class AuthRepository(
     private val userSession: UserSession,
 ) {
     suspend fun signInWithGoogle(): Result<AuthUser> = runCatching {
-        val idToken = googleSignInClient.signIn().getOrThrow()
+        val idToken = awaitNativeSignIn { googleSignInClient.signIn() }
         val resp = bffApi.exchangeGoogleIdToken(idToken)
         finalizeSession(resp)
         resp.user.toDomain().also { tokenStore.saveUser(it) }
     }
 
     suspend fun signInWithApple(): Result<AuthUser> = runCatching {
-        val payload = appleSignInClient.signIn().getOrThrow()
+        val payload = awaitNativeSignIn { appleSignInClient.signIn() }
         val resp = bffApi.exchangeAppleIdToken(payload.idToken, payload.fullName)
         finalizeSession(resp)
         resp.user.toDomain().also { tokenStore.saveUser(it) }
     }
+
+    /**
+     * 네이티브 sign-in 콜백을 [NATIVE_SIGN_IN_TIMEOUT_MS] backstop 으로 감싼다. 시한 내
+     * 콜백이 오지 않으면(시트 present 실패·redirect 미복귀 등) [SignInTimeoutException] 을
+     * 던져 무한 로딩 대신 명확한 실패로 떨어뜨린다. BFF 교환은 Ktor 자체 timeout 이 있어
+     * 여기서 감싸지 않는다 — 네이티브 단계만 보호.
+     */
+    private suspend fun <T> awaitNativeSignIn(block: suspend () -> Result<T>): T =
+        (withTimeoutOrNull(NATIVE_SIGN_IN_TIMEOUT_MS) { block() } ?: throw SignInTimeoutException())
+            .getOrThrow()
 
     fun hasValidSession(): Boolean = tokenStore.getValidToken() != null
 
@@ -92,5 +110,11 @@ class AuthRepository(
         // wipe 없음 — A→B→A 왕복 시 각자 작업 누적 유지. UI 격리는 user-scoped query 가 처리.
         tokenStore.saveLastUserId(newUserId)
         userSession.set(newUserId)
+    }
+
+    private companion object {
+        // 네이티브 OAuth 시트는 사용자 입력(이메일/비밀번호/2FA)을 포함해 수십 초 걸릴 수 있어
+        // 넉넉히 잡되, 콜백이 끝내 오지 않는 케이스(iPad 호환 모드 hang)를 끊는 backstop 값.
+        const val NATIVE_SIGN_IN_TIMEOUT_MS = 60_000L
     }
 }
