@@ -145,8 +145,11 @@ fun UserMenuSheet(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete account?") },
             text = {
+                // 실제 동작과 일치시킨 고지(App Store 5.1.1 투명성): BFF 가 서버 계정을 영구
+                // 삭제하고 이 기기 세션을 종료한다. 로컬 프로젝트 row 는 userId 격리로 더는
+                // 접근 불가(같은 계정 재로그인 불가)하므로 "기기에서 삭제"로 단정하지 않는다.
                 Text(
-                    "Your account and all projects on this device will be permanently deleted. This can't be undone."
+                    "Your account will be permanently deleted and you'll be signed out. This can't be undone."
                 )
             },
             confirmButton = {
