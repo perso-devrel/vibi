@@ -15,6 +15,11 @@ actual fun createPlatformHttpClient(block: HttpClientConfig<*>.() -> Unit): Http
             // Darwin 엔진이 적용하지 않아 이 설정이 실질적 fail-fast 스위치.)
             configureSession {
                 setWaitsForConnectivity(false)
+                // Darwin 은 HttpTimeout.connectTimeoutMillis 를 적용하지 않아, '서버 도달하나
+                // 무응답'(과부하·LAN 전환) 시 requestTimeout(5분)까지 hang. 요청 비활동 타임아웃을
+                // 60s 로 박아 fail-fast — 활성 전송(대용량 업/다운로드)은 데이터 수신마다 리셋되어
+                // 끊기지 않고, 무응답만 60s 안에 깬다.
+                setTimeoutIntervalForRequest(60.0)
             }
         }
     }
