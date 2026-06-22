@@ -26,23 +26,29 @@ class AuthTokenStore(
     val cachedUser: StateFlow<AuthUser?> = _cachedUser.asStateFlow()
 
     fun saveToken(jwt: String, expiresAt: Long) {
-        secureSettings.putString(KEY_TOKEN, jwt)
-        secureSettings.putLong(KEY_EXP, expiresAt)
+        // Keychain 접근이 실패해도(미서명 빌드·entitlement 부재·기기 잠금 등) 앱이 죽지 않도록 보호.
+        // 실패 시 토큰 미영속 → 다음 실행에 재로그인. 서명된 출시 빌드에선 정상 영속.
+        runCatching {
+            secureSettings.putString(KEY_TOKEN, jwt)
+            secureSettings.putLong(KEY_EXP, expiresAt)
+        }
     }
 
-    /** 만료된 토큰은 자동 폐기 후 null. */
-    fun getValidToken(): String? {
-        val exp = secureSettings.getLongOrNull(KEY_EXP) ?: return null
+    /** 만료된 토큰은 자동 폐기 후 null. Keychain 접근 실패 시에도 null(→ 로그인)로 안전 degrade. */
+    fun getValidToken(): String? = runCatching {
+        val exp = secureSettings.getLongOrNull(KEY_EXP) ?: return@runCatching null
         if (exp <= currentTimeMillis()) {
             clear()
-            return null
+            return@runCatching null
         }
-        return secureSettings.getStringOrNull(KEY_TOKEN)
-    }
+        secureSettings.getStringOrNull(KEY_TOKEN)
+    }.getOrNull()
 
     fun clear() {
-        secureSettings.remove(KEY_TOKEN)
-        secureSettings.remove(KEY_EXP)
+        runCatching {
+            secureSettings.remove(KEY_TOKEN)
+            secureSettings.remove(KEY_EXP)
+        }
         USER_KEYS.forEach(settings::remove)
         _cachedUser.value = null
     }
