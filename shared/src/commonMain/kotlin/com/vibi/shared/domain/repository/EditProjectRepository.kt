@@ -17,6 +17,14 @@ interface EditProjectRepository {
     suspend fun updateProject(project: EditProject, touchActivity: Boolean = true)
     suspend fun deleteProject(projectId: String)
 
+    /**
+     * [block] 안의 여러 repository/DAO 쓰기를 단일 writer 트랜잭션으로 묶어 all-or-nothing 보장.
+     * undo/redo 복원처럼 segment/bgm/directive 를 통째 delete+insert 할 때, 중간 취소·프로세스
+     * 종료로 일부만 반영돼 프로젝트가 부분 손상(클립 소실 등)되는 것을 방지. 같은 [VibiDatabase]
+     * 의 DAO 호출은 트랜잭션에 합류한다.
+     */
+    suspend fun <T> runInTransaction(block: suspend () -> T): T
+
     /** 메인 화면 "이어서 작업" 섹션 source — 최근 updatedAt desc. */
     fun observeAllProjects(): Flow<List<EditProject>>
 

@@ -67,6 +67,11 @@ class EditProjectRepositoryImpl constructor(
         cascadeDeleteProject(projectId)
     }
 
+    override suspend fun <T> runInTransaction(block: suspend () -> T): T =
+        database.useWriterConnection { conn ->
+            conn.immediateTransaction { block() }
+        }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeAllProjects(): Flow<List<EditProject>> =
         userSession.userId.flatMapLatest { uid ->

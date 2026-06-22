@@ -821,14 +821,18 @@ class TimelineViewModel constructor(
     }
 
     private suspend fun restoreSnapshot(snapshot: TimelineSnapshot) {
-        // N+1 insert 회피 — DAO insertAll 한 번 IPC.
-        segmentRepository.deleteAllByProjectId(projectId)
-        segmentRepository.addSegments(snapshot.segments)
-        bgmClipRepository.deleteAllByProjectId(projectId)
-        bgmClipRepository.addClips(snapshot.bgmClips)
-        separationDirectiveRepository.deleteByProject(projectId)
-        if (snapshot.separationDirectives.isNotEmpty()) {
-            separationDirectiveRepository.addAll(snapshot.separationDirectives)
+        // 단일 writer 트랜잭션 — delete+insert 6개가 all-or-nothing. 복원 도중 취소/프로세스
+        // 종료가 겹쳐도 segment 만 지워진 빈 타임라인 등 부분 손상 프로젝트가 저장되지 않는다.
+        editProjectRepository.runInTransaction {
+            // N+1 insert 회피 — DAO insertAll 한 번 IPC.
+            segmentRepository.deleteAllByProjectId(projectId)
+            segmentRepository.addSegments(snapshot.segments)
+            bgmClipRepository.deleteAllByProjectId(projectId)
+            bgmClipRepository.addClips(snapshot.bgmClips)
+            separationDirectiveRepository.deleteByProject(projectId)
+            if (snapshot.separationDirectives.isNotEmpty()) {
+                separationDirectiveRepository.addAll(snapshot.separationDirectives)
+            }
         }
     }
 

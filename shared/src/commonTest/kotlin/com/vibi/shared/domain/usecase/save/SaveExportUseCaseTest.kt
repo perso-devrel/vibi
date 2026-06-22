@@ -286,6 +286,7 @@ class SaveExportUseCaseTest {
         override suspend fun deleteProject(projectId: String) {}
         override fun observeAllProjects(): Flow<List<EditProject>> = flowOf(listOf(project))
         override suspend fun expireOldDrafts(thresholdMs: Long) {}
+        override suspend fun <T> runInTransaction(block: suspend () -> T): T = block()
     }
 
     private class FakeSegmentRepo(private val segments: List<Segment>) : SegmentRepository {
