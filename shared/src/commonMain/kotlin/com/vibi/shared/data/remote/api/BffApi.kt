@@ -89,7 +89,7 @@ class BffApi(
 
     /**
      * 음원 분리 비용 견적 — "이 구간 X 크레딧 사용, 진행할까요?" 확인 팝업 표시 전 호출.
-     * BFF 가 비용 (분당 1, 올림, 최소 1) + 잔액 + 충분 여부를 한 번에 반환.
+     * BFF 가 비용 (시작된 5분당 1, 올림, 최소 1) + 잔액 + 충분 여부를 한 번에 반환.
      */
     suspend fun getCreditCost(durationMs: Long): CreditCostResponse =
         client.get("api/v2/credits/cost") {

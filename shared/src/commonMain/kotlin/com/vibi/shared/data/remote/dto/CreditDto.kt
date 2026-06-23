@@ -12,8 +12,8 @@ data class CreditBalanceResponse(
  * GET /api/v2/credits/cost?durationMs=N 응답.
  *
  * 음원 분리 시작 전 "이 구간 X 크레딧 사용, 잔액 Y. 진행할까요?" 팝업 표시용. BFF 공식:
- * `ceil(durationMs / 60000)` 분당 1 크레딧, 최소 1 — 모바일이 동일 공식으로 fallback 추정도
- * 가능하지만 BFF 응답이 정식 source (network 무료 / 인증 잔액 동기화).
+ * 시작된 5분당 1 크레딧 (`ceil(durationMs / 5분)`, 최소 1, block 경계 ~1초 grace). 모바일은
+ * 로컬 추정 안 하고 BFF 응답을 단일 source 로 표시만 한다 (network 무료 / 인증 잔액 동기화).
  *
  * - [durationMs] — 요청 echo back.
  * - [credits]    — 실제 차감될 크레딧 수.
