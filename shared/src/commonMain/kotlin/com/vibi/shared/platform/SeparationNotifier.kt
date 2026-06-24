@@ -4,10 +4,12 @@ package com.vibi.shared.platform
  * 음원분리 완료/실패 시 디바이스(로컬) 알림 게시. 갤러리에서 영상을 고르면 분리가 백그라운드로
  * 돌기 때문에, 사용자가 앱을 벗어난 사이 끝나면 디바이스 알림으로 알린다.
  *
- * - 앱이 **포그라운드**면 OS 가 배너를 표시하지 않는다(iOS 기본 동작 — willPresent delegate 미설정).
- *   화면 UI 가 이미 "이어서 작업" 카드로 바뀌므로 중복 알림을 띄우지 않기 위함.
- * - iOS = `UNUserNotificationCenter`. Android = no-op — 분리 자동실행이 iOS 한정
- *   ([AudioExtractor.isSupported]=false) 이라 현재 Android 엔 트리거 지점이 없다.
+ * - iOS = `UNUserNotificationCenter`. [IosSeparationNotifier] 가 willPresent delegate 를 설정해
+ *   앱이 **포그라운드**일 때도 배너+사운드를 표시한다(미설정 시 OS 가 보류 → 전혀 안 울림).
+ *   분리 완료가 포그라운드이거나 백그라운드 완료 후 재진입 시 post() 가 포그라운드에서 도는
+ *   흔한 경로를 모두 커버. (완전 백그라운드 장기 잡은 폴링 suspend 로 post() 미실행 → APNs 필요.)
+ * - Android = no-op — 분리 자동실행이 iOS 한정 ([AudioExtractor.isSupported]=false) 이라 현재
+ *   Android 엔 트리거 지점이 없다.
  */
 interface SeparationNotifier {
     /** 분리 시작 시 호출 — 알림 권한을 미리 요청해 완료 시점엔 허용 상태가 되도록. 멱등. */
