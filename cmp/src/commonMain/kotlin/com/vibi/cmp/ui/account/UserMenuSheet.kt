@@ -90,6 +90,8 @@ fun UserMenuSheet(
 
             if (RuntimeFlags.iapEnabled) {
                 BuyCreditsRow(onClick = { purchaseOpen = true })
+            } else {
+                ResearchPreviewNote()
             }
 
             Row(
@@ -226,6 +228,54 @@ private fun ProfileHeader(user: AuthUser?, credits: Int, showCredits: Boolean) {
                     )
                 )
             }
+        }
+    }
+}
+
+/**
+ * IAP 미오픈([RuntimeFlags.iapEnabled]=false) 기간, [BuyCreditsRow] 자리를 대체하는 상시 안내.
+ *
+ * 결제가 없는 이유(리서치 프리뷰)와 무료 체험량(가입 시 10분 = [CreditRepository.SIGNUP_BONUS_CREDITS]
+ * 크레딧, 1크레딧=1분)을 알려 잔액 칩의 맥락을 보강한다. 비클릭 정보 카드 — "coming soon/구매" 같이
+ * 아직 없는 유료 기능을 암시하는 표현은 App Store 2.3.1 회피 위해 배제.
+ *
+ * 무료 체험 분량이 [CreditRepository.SIGNUP_BONUS_CREDITS] 와 어긋나지 않게, 값 변경 시 함께 갱신.
+ */
+@Composable
+private fun ResearchPreviewNote() {
+    val tokens = LocalVibiColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(tokens.chipBg)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(tokens.accent),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Research preview",
+                style = TextStyle(
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Enjoy 10 minutes of audio separation, free while we're in preview.",
+                style = TextStyle(
+                    fontSize = 12.sp,
+                    color = tokens.mutedText,
+                )
+            )
         }
     }
 }

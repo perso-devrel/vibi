@@ -19,12 +19,12 @@ object RuntimeFlags {
     /**
      * 인앱 크레딧 구매 (IAP) 진입점 노출.
      *
-     * **현재 true — 결제 오픈.** BFF 비용 재산정 완료 후 인앱결제 활성화. true 면 모든 IAP
-     * 진입점(InputScreen 크레딧 칩, UserMenu 크레딧/구매, 잔액부족 "Buy credits")이 노출되고,
-     * `PurchaseLauncher` 가 StoreKit2(iOS) / Play Billing 7.x(Android) 실연동으로 동작한다.
+     * **현재 false — 무료 선출시 모드.** IAP 진입점(InputScreen 크레딧 칩, UserMenu 크레딧/구매,
+     * 잔액부족 "Buy credits")이 숨겨지고, 잔액 소진 화면은 "I want this" 수요표현 탭
+     * (→ 컨페티 + `BffApi.recordPaidCreditIntent`)으로 대체된다.
      *
-     * false 로 되돌리면 무료 선출시 모드 — IAP 진입점이 숨겨지고 잔액 소진 화면은 "I want this"
-     * 수요표현 탭(→ 컨페티 + `BffApi.recordPaidCreditIntent`)으로 대체된다.
+     * true 로 켜면 결제 오픈 — 모든 IAP 진입점이 노출되고 `PurchaseLauncher` 가
+     * StoreKit2(iOS) / Play Billing 7.x(Android) 실연동으로 동작한다.
      */
-    const val iapEnabled: Boolean = true
+    const val iapEnabled: Boolean = false
 }
