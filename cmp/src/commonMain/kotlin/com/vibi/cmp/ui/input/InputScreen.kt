@@ -329,13 +329,23 @@ fun InputScreen(
         )
     }
 
-    // 분리 시작 확인 — 영상 선택 직후 바로 분리하지 않고, 크레딧 1개 소모를 고지한 뒤 시작.
+    // 분리 시작 확인 — 영상 선택 직후 바로 분리하지 않고, 영상 길이만큼의 크레딧 소모를 고지한 뒤 시작.
+    // 차감량(분당 1크레딧, 올림)은 BFF 가 단일 source 로 state.separationCreditCost 에 담긴다.
     // 취소하면 선택만 해제(크레딧 미소모). 잔액 부족 시엔 시작 후 "준비중" 카드가 실패로 안내.
     if (state.awaitingSeparationConfirm) {
+        val credits = state.separationCreditCost ?: 1
         AlertDialog(
             onDismissRequest = { viewModel.onCancelStartSeparation() },
             title = { Text("Start audio separation?") },
-            text = { Text("This will use 1 credit to separate the audio from your video.") },
+            text = {
+                Text(
+                    if (credits == 1) {
+                        "This will use 1 credit to separate the audio from your video."
+                    } else {
+                        "This will use $credits credits to separate the audio from your video."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { viewModel.onConfirmStartSeparation() }) { Text("Start") }
             },

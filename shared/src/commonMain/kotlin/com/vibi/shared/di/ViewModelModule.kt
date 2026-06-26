@@ -21,6 +21,7 @@ val viewModelModule = module {
             pollSeparation = get(),
             separationDirectiveRepository = get(),
             audioExtractor = get(),
+            audioSeparationRepository = get(),
             separationNotifier = get(),
             bffBaseUrl = getProperty<String>("bffBaseUrl"),
             separationCancelWarningStore = get(),

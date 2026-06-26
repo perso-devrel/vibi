@@ -56,10 +56,16 @@ data class InputUiState(
     val validationResult: ValidationResult? = null,
     val isExtracting: Boolean = false,
     /**
-     * 분리 시작 확인 팝업 노출 여부. 분리는 영상 1개당 크레딧 1개를 소모하므로, 영상 선택 직후
-     * 바로 시작하지 않고 사용자 확인을 받는다. 분리 지원 플랫폼(iOS)에서만 true 가 된다.
+     * 분리 시작 확인 팝업 노출 여부. 분리는 영상 길이(분 올림, 분당 1크레딧, 최소 1)만큼 크레딧을
+     * 소모하므로, 영상 선택 직후 바로 시작하지 않고 정확한 차감량을 고지하며 확인을 받는다.
+     * 분리 지원 플랫폼(iOS)에서만 true 가 된다.
      */
     val awaitingSeparationConfirm: Boolean = false,
+    /**
+     * 확인 팝업에 표시할 차감 예정 크레딧 수. BFF `/credits/cost` 가 단일 source —
+     * [awaitingSeparationConfirm] 과 함께 채워지고, fetch 실패 시 동일 공식(분 올림)으로 로컬 폴백.
+     */
+    val separationCreditCost: Int? = null,
     /**
      * "작업 준비중" 섹션 — 영상 선택 직후 백그라운드로 전체 음원분리가 도는 프로젝트들. drafts 보다
      * 위에 노출되며, 분리가 완료되면 해당 프로젝트가 여기서 빠지고 [drafts] 로 내려간다.
@@ -113,6 +119,7 @@ class InputViewModel constructor(
     private val pollSeparation: PollSeparationUseCase,
     private val separationDirectiveRepository: SeparationDirectiveRepository,
     private val audioExtractor: AudioExtractor,
+    private val audioSeparationRepository: AudioSeparationRepository,
     private val separationNotifier: SeparationNotifier,
     private val bffBaseUrl: String,
     /** "준비중 취소 시 크레딧 환불 불가" 경고 "다시 보지 않기" 영속 — 타임라인 취소 경로와 공유 (계정별). */
@@ -214,10 +221,18 @@ class InputViewModel constructor(
                 isExtracting = false
             )
             if (result is ValidationResult.Valid) {
-                // 분리 지원 플랫폼(iOS)은 크레딧 1개를 소모하므로 바로 시작하지 않고 확인 팝업을 띄운다.
+                // 분리 지원 플랫폼(iOS)은 영상 길이만큼 크레딧을 소모하므로 바로 시작하지 않고
+                // 정확한 차감량을 고지하는 확인 팝업을 띄운다. 차감량은 BFF 가 단일 source —
+                // /credits/cost 로 받아오고, 실패 시 동일 공식(분 올림, 최소 1)으로 로컬 폴백.
                 // 미지원 플랫폼(Android)은 분리 없이 곧장 타임라인 진입이라 확인 불필요.
                 if (audioExtractor.isSupported) {
-                    _uiState.value = _uiState.value.copy(awaitingSeparationConfirm = true)
+                    val credits = audioSeparationRepository.getCost(videoInfo.durationMs)
+                        .map { it.credits }
+                        .getOrDefault(creditsByMinute(videoInfo.durationMs))
+                    _uiState.value = _uiState.value.copy(
+                        awaitingSeparationConfirm = true,
+                        separationCreditCost = credits,
+                    )
                 } else {
                     onContinue()
                 }
@@ -231,10 +246,11 @@ class InputViewModel constructor(
             validationResult = null,
             isExtracting = false,
             awaitingSeparationConfirm = false,
+            separationCreditCost = null,
         )
     }
 
-    /** 분리 시작 확인 팝업 "시작" — 크레딧 1개 소모하고 백그라운드 전체영상 분리를 시작. */
+    /** 분리 시작 확인 팝업 "시작" — 영상 길이만큼 크레딧을 소모하고 백그라운드 전체영상 분리를 시작. */
     fun onConfirmStartSeparation() {
         _uiState.value = _uiState.value.copy(awaitingSeparationConfirm = false)
         onContinue()
@@ -556,3 +572,11 @@ class InputViewModel constructor(
         )
     }
 }
+
+/**
+ * BFF `/credits/cost` 가 실패했을 때만 쓰는 로컬 폴백 — BFF 와 동일 공식(시작된 1분당 1 크레딧,
+ * 올림, 최소 1). 권위 값은 항상 BFF 응답이고, 이건 네트워크 오류 시 0/공백 대신 합리적 추정을
+ * 보여주기 위한 보조다.
+ */
+private fun creditsByMinute(durationMs: Long): Int =
+    ((durationMs + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
