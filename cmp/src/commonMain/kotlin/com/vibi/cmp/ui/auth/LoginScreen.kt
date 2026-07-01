@@ -3,20 +3,14 @@ package com.vibi.cmp.ui.auth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,7 +20,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -61,13 +54,26 @@ fun LoginScreen(
     ) {
         // 이전 레이아웃 (Column verticalArrangement.Center 안 logo + 48dp + 버튼들) 에서 로고는
         // 컬럼 상단에 있어 실제 위치는 화면 위쪽 ~1/3. BiasAlignment(-0.3) 로 그 위치 복원.
-        Text(
-            text = "vibi",
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = 56.sp,
-            fontWeight = FontWeight.Bold,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.align(BiasAlignment(0f, -0.3f)),
-        )
+        ) {
+            Text(
+                text = "VIBI",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 56.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 4.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "AI Sound Eraser",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 1.sp,
+            )
+        }
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -88,50 +94,23 @@ fun LoginScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            Button(
+            GoogleSignInButton(
                 onClick = viewModel::signInWithGoogle,
                 enabled = !anyLoading,
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
-            ) {
-                if (loadingProvider == LoginViewModel.Provider.Google) {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp),
-                    )
-                } else {
-                    Text("Sign in with Google")
-                }
-            }
+                loading = loadingProvider == LoginViewModel.Provider.Google,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             // Apple 로그인은 iOS 한정 — Android 엔 Apple 네이티브 SDK 가 없어 버튼 자체를 숨긴다.
             if (isIosPlatform) {
                 Spacer(Modifier.height(12.dp))
 
-                // Apple Human Interface Guidelines — 검정 배경 + 흰색 텍스트, 최소 44pt 높이.
-                Button(
+                AppleSignInButton(
                     onClick = viewModel::signInWithApple,
                     enabled = !anyLoading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.Black,
-                        contentColor = Color.White,
-                        disabledContainerColor = Color.Black.copy(alpha = 0.5f),
-                        disabledContentColor = Color.White.copy(alpha = 0.7f),
-                    ),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
-                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 44.dp),
-                ) {
-                    if (loadingProvider == LoginViewModel.Provider.Apple) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    } else {
-                        Text("Sign in with Apple")
-                    }
-                }
+                    loading = loadingProvider == LoginViewModel.Provider.Apple,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             Spacer(Modifier.height(20.dp))
