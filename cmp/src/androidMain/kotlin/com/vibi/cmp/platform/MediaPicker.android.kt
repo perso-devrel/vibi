@@ -5,8 +5,6 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -16,17 +14,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
-
-@Composable
-actual fun MediaPicker(
-    label: String,
-    onPicked: (uri: String) -> Unit
-) {
-    val launch = rememberMediaPickerLauncher(onPicked)
-    Button(onClick = { launch() }) {
-        Text(label)
-    }
-}
 
 @Composable
 actual fun rememberMediaPickerLauncher(

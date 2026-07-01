@@ -48,24 +48,23 @@ cmp/
     │   ├── ui/share/ShareScreen.kt
     │   ├── ui/account/                             # UserMenuSheet (프로필 + 크레딧 잔액) · CreditPurchaseSheet (인앱결제)
     │   ├── ui/components/VibiCards.kt
-    │   ├── ui/cupertino/Cupertino.kt               # iOS-look 위젯 (스위치 등)
+    │   ├── ui/cupertino/Cupertino.kt               # iOS-look 위젯 (commonMain 단일 구현, Android/iOS 동일 렌더)
     │   └── platform/                               # VideoPlayer / MediaPicker / AudioPicker /
     │                                               # AudioRecorder / AudioPreviewer /
     │                                               # WaveformExtractor / StemMixer /
     │                                               # BgmPlaybackSync / RuntimeFlags expect
     ├── androidMain/kotlin/com/vibi/cmp/
     │   ├── VibiApplication.kt + MainActivity.kt
-    │   ├── platform/                               # Media3 VideoPlayer, PickVisualMedia MediaPicker,
+    │   └── platform/                               # Media3 VideoPlayer, PickVisualMedia MediaPicker,
     │                                               # Android AudioPicker/AudioRecorder, StemMixer,
     │                                               # WaveformExtractor, BgmPlaybackSync, AudioPreviewer
-    │   └── ui/cupertino/Cupertino.android.kt
     └── iosMain/kotlin/com/vibi/cmp/
         ├── MainViewController.kt                   # UIKit entry → ComposeUIViewController
         ├── platform/                               # AVPlayer VideoPlayer, PHPicker MediaPicker,
         │                                            # iOS AudioPicker/AudioRecorder, AVAudioEngine StemMixer,
         │                                            # IosAudioCache, IosPickerSupport,
         │                                            # WaveformExtractor, BgmPlaybackSync, AudioPreviewer
-        └── ui/cupertino/Cupertino.ios.kt
+        └── (ui 없음 — Cupertino 위젯은 commonMain 단일 구현)
 ```
 
 화면 흐름: **Splash → (signedIn?) Input ↔ Timeline / (signedOut) Login → Input**. 타임라인 sheet 군은 `TimelineScreen` 안에서 `ModalBottomSheet` 로 호출.
