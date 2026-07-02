@@ -18,6 +18,11 @@ replay_pid*.log
 local.properties
 **/local.properties
 
+# 서명 keystore (절대 커밋 금지 — 분실/유출 시 앱 업데이트 영구 불가)
+*.jks
+*.keystore
+keystore.properties
+
 # Auth.xcconfig (Debug) 만 ignore — BFF_BASE_URL 이 개발자별 LAN IP 라 커밋 시 충돌.
 # Auth.release.xcconfig (Release) 의 값들은 모두 빌드 산출물에 박혀 배포되는 public
 # 정보 (Google iOS OAuth client id = public client, api.vibi.fm = 트래픽으로 노출,

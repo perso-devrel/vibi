@@ -82,7 +82,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.vibi.cmp"
+        applicationId = "com.vibi.app"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -98,9 +98,28 @@ android {
     sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/androidMain/res")
 
+    // 업로드 키 서명. 비밀 값은 git 미추적 local.properties 에서 읽는다 (BFF_BASE_URL 과 동일 패턴).
+    // 값이 없으면 (예: CI 없이 debug 만 빌드) signingConfig 를 비워 둬 debug 빌드가 안 깨지게 함.
+    signingConfigs {
+        create("release") {
+            val storeFilePath = localProperties.getProperty("RELEASE_STORE_FILE")
+            if (storeFilePath != null) {
+                storeFile = file(storeFilePath)
+                storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
+                keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
+                keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // R8 최소화는 첫 출시 안정성 우선으로 꺼 둠. 안정화 후 keep 규칙 정비하며 켤 것.
             isMinifyEnabled = false
+            // local.properties 에 서명 정보가 있을 때만 release signingConfig 연결.
+            if (localProperties.getProperty("RELEASE_STORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
