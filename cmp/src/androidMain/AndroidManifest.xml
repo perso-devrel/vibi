@@ -26,11 +26,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Vibi"
         android:usesCleartextTraffic="true">
-        <!-- AdMob 앱 ID. TODO(AdMob): 실제 Android 앱 ID 로 교체 — 현재는 Google 공식 테스트 ID
-             (테스트 광고만, 실수익 0). 누락 시 Ads SDK init 이 크래시하므로 반드시 존재해야 함. -->
+        <!-- AdMob 앱 ID (프로덕션). 누락/오형식이면 Ads SDK init 이 크래시하므로 반드시 존재해야 함. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-4825847811436125~6888367190" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

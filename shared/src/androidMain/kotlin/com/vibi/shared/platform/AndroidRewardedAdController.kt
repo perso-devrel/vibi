@@ -87,8 +87,7 @@ class AndroidRewardedAdController(
     }
 
     private companion object {
-        // TODO(AdMob): 실제 Android 보상형 광고 단위 ID 로 교체. 현재는 Google 공식 테스트 ID —
-        // 테스트 광고만 노출되며 실수익 0. 프로덕션 출시 전 반드시 교체.
-        const val REWARDED_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
+        // AdMob Android 보상형 광고 단위 ID (프로덕션).
+        const val REWARDED_AD_UNIT_ID = "ca-app-pub-4825847811436125/4262203856"
     }
 }

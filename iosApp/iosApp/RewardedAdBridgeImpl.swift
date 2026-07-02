@@ -21,9 +21,8 @@ final class RewardedAdBridgeImpl: NSObject, RewardedAdBridge, GADFullScreenConte
         static let unavailable = "unavailable"
     }
 
-    // TODO(AdMob): 실제 iOS 보상형 광고 단위 ID 로 교체. 현재는 Google 공식 테스트 ID —
-    // 테스트 광고만 노출되며 실수익 0. 프로덕션 출시 전 반드시 교체.
-    private let adUnitID = "ca-app-pub-3940256099942544/1712485313"
+    // AdMob iOS 보상형 광고 단위 ID (프로덕션).
+    private let adUnitID = "ca-app-pub-4825847811436125/3906980637"
 
     private var rewardedAd: GADRewardedAd?
     private var callback: ((String) -> Void)?

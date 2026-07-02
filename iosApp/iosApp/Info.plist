@@ -34,7 +34,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<string>ca-app-pub-4825847811436125~2921202023</string>
 	<key>GIDClientID</key>
 	<string>$(GOOGLE_OAUTH_IOS_CLIENT_ID)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
