@@ -70,9 +70,6 @@ class AuthRepository(
      * 첫 frame block. Dispatchers.Default 로 분리.
      */
     suspend fun restoreSession() = withContext(Dispatchers.Default) {
-        // 포그라운드 시작(잠금 해제 상태)에서 구버전 WhenUnlocked 토큰을 새 accessibility 로 1회 이관 —
-        // 이후 잠금 상태 백그라운드 폴링에서도 토큰이 읽혀 401 로 잡이 끊기지 않게 한다. 멱등.
-        tokenStore.migrateSecureAccessibilityOnce()
         val sub = tokenStore.getValidToken()?.let(::extractJwtSubject)
         val resolved = sub ?: tokenStore.lastUserId() ?: UserSession.ANONYMOUS_USER_ID
         userSession.set(resolved)

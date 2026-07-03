@@ -1,8 +1,4 @@
-@file:OptIn(
-    com.russhwolf.settings.ExperimentalSettingsImplementation::class,
-    com.russhwolf.settings.ExperimentalSettingsApi::class,
-    kotlinx.cinterop.ExperimentalForeignApi::class,
-)
+@file:OptIn(com.russhwolf.settings.ExperimentalSettingsImplementation::class)
 
 package com.vibi.shared.di
 
@@ -33,12 +29,7 @@ import com.russhwolf.settings.KeychainSettings
 import com.russhwolf.settings.NSUserDefaultsSettings
 import com.russhwolf.settings.Settings
 import org.koin.core.qualifier.named
-import platform.Foundation.CFBridgingRetain
-import platform.Foundation.NSString
 import platform.Foundation.NSUserDefaults
-import platform.Security.kSecAttrAccessible
-import platform.Security.kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-import platform.Security.kSecAttrService
 import com.vibi.shared.domain.usecase.input.AudioMetadataExtractor
 import com.vibi.shared.domain.usecase.input.VideoMetadataExtractor
 import com.vibi.shared.domain.usecase.share.GallerySaver
@@ -80,21 +71,12 @@ val iosPlatformModule = module {
     // 인증 — GoogleSignInBridge / AppleSignInBridge 는 Swift 가 KoinHelper.initKoinIos
     // 호출 시 별도 module 로 주입.
     single<Settings> { NSUserDefaultsSettings(NSUserDefaults.standardUserDefaults) }
-    // 토큰 전용 보안 저장소 — Keychain. NSUserDefaults(평문 plist) 대비 암호화 저장.
-    // accessibility 를 지정하지 않으면 iOS 기본값 kSecAttrAccessibleWhenUnlocked 가 적용돼 기기가
-    // 잠긴 동안 토큰 읽기가 거부된다(errSecInteractionNotAllowed → getValidToken()=null → 헤더 누락
-    // → BFF 401 missing_token). 그러면 백그라운드 분리/렌더 상태 폴링이 인증 없이 나가 잡이 끊긴다.
-    // AfterFirstUnlockThisDeviceOnly 로 지정: 부팅 후 최초 1회 잠금 해제 이후에는 잠금 상태에서도
-    // 토큰을 읽을 수 있고(폴링 안 깨짐), ThisDeviceOnly 라 iCloud Keychain 백업/기기 이전에서 제외된다
-    // (액세스 토큰은 기기 밖으로 나갈 이유가 없음). accessibility 는 SecItemAdd 시점에만 적용되고
-    // SecItemUpdate 는 값만 바꾸므로, 기존(구버전 WhenUnlocked) 토큰은 자동 재기록되지 않는다 —
-    // AuthTokenStore.saveToken 의 remove→put(=delete+add) 와 migrateSecureAccessibilityOnce 로 이관.
-    single<Settings>(named(SECURE_SETTINGS)) {
-        KeychainSettings(
-            kSecAttrService to CFBridgingRetain("vibi.auth" as NSString),
-            kSecAttrAccessible to kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        )
-    }
+    // 토큰 전용 보안 저장소 — Keychain(암호화). accessibility 는 지정하지 않는다(기본 WhenUnlocked).
+    // ⚠️ kSecAttrAccessible 을 vararg 로 넘기면 multiplatform-settings 가 그 값을 read/update/delete
+    // 쿼리에까지 매칭 제약(pdmn)으로 섞어, 기존(다른 accessibility) 토큰의 판독·재기록이 깨진다 —
+    // 로그인 직후 getValidToken()=null → Authorization 헤더 누락 → BFF 401 missing_token 회귀.
+    // 잠금 중 백그라운드 폴링용 토큰 접근은 AuthTokenStore 의 인메모리 캐시가 담당한다(프로세스 생존 중).
+    single<Settings>(named(SECURE_SETTINGS)) { KeychainSettings(service = "vibi.auth") }
     single<GoogleSignInClient> { IosGoogleSignInClient(bridge = get()) }
     single<AppleSignInClient> { IosAppleSignInClient(bridge = get()) }
     single { IosIapClient(bridge = get()) }

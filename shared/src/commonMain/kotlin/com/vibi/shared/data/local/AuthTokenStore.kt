@@ -25,14 +25,21 @@ class AuthTokenStore(
     /** 마지막 로그인 응답의 user. 로그아웃 시 null. */
     val cachedUser: StateFlow<AuthUser?> = _cachedUser.asStateFlow()
 
+    // BFF 발급 직후의 토큰을 프로세스 메모리에 보관 — Keychain 쓰기/읽기가 실패하거나(iOS 잠금·keychain
+    // 특이동작·미서명 빌드) 지연돼도 현재 세션의 모든 요청이 방금 받은 토큰을 헤더에 싣게 한다. durable
+    // 영속은 [secureSettings] 가 담당하고 이 캐시는 그 위의 안전망 — 프로세스 종료 시 사라지며 재시작
+    // 시 secureSettings 에서 복원된다. (로그인 200 직후 401 missing_token 회귀의 정공법 방어.)
+    private var memToken: String? = null
+    private var memExpiresAt: Long = 0L
+
     fun saveToken(jwt: String, expiresAt: Long) {
+        // 인메모리 먼저 — 동기적으로, Keychain 결과와 무관하게 현재 세션에서 즉시 읽히도록.
+        memToken = jwt
+        memExpiresAt = expiresAt
         // Keychain 접근이 실패해도(미서명 빌드·entitlement 부재·기기 잠금 등) 앱이 죽지 않도록 보호.
-        // 실패 시 토큰 미영속 → 다음 실행에 재로그인. 서명된 출시 빌드에선 정상 영속.
+        // 실패 시 durable 영속만 누락(인메모리 캐시로 현재 세션은 유지) → 다음 실행에 재로그인.
+        // remove(→SecItemDelete) 후 put(→SecItemAdd) — 기존 항목을 지우고 새로 써 항상 최신값 보장.
         runCatching {
-            // 기존 항목이 있으면 putString 은 SecItemUpdate(값만 교체)로 떨어져, KeychainSettings 에
-            // 지정한 accessibility(AfterFirstUnlockThisDeviceOnly)가 재적용되지 않는다(accessibility 는
-            // SecItemAdd 시점에만 적용). 항상 SecItemAdd 경로를 타도록 remove(→SecItemDelete) 후
-            // put(→SecItemAdd) — 매 저장이 올바른 accessibility 로 기록되게 한다.
             secureSettings.remove(KEY_TOKEN)
             secureSettings.remove(KEY_EXP)
             secureSettings.putString(KEY_TOKEN, jwt)
@@ -41,40 +48,30 @@ class AuthTokenStore(
     }
 
     /**
-     * 구버전(accessibility 미지정 = 기본 WhenUnlocked)으로 저장된 토큰을 현재 accessibility
-     * (AfterFirstUnlockThisDeviceOnly)로 1회 이관. SecItemUpdate 는 accessibility 를 바꾸지 않으므로
-     * remove+put(=delete+add)로 강제 재생성한다. 앱 시작(포그라운드=잠금 해제) 시 [restoreSession]
-     * 에서 호출 — 그 시점엔 Keychain 읽기가 되므로 정상 이관. [settings] 플래그로 멱등(1회만).
-     * 잠금/접근 실패로 읽지 못하면 flag 를 세우지 않아 다음 부팅에 재시도한다.
+     * 만료된 토큰은 자동 폐기 후 null. 인메모리 캐시 우선 → durable([secureSettings]) 폴백.
+     * Keychain 접근 실패 시에도 null(→ 로그인)로 안전 degrade.
      */
-    fun migrateSecureAccessibilityOnce() {
-        if (settings.getBoolean(KEY_ACCESSIBILITY_MIGRATED, false)) return
-        runCatching {
-            val token = secureSettings.getStringOrNull(KEY_TOKEN)
-            val exp = secureSettings.getLongOrNull(KEY_EXP)
-            if (token != null && exp != null) {
-                secureSettings.remove(KEY_TOKEN)
-                secureSettings.remove(KEY_EXP)
-                secureSettings.putString(KEY_TOKEN, token)
-                secureSettings.putLong(KEY_EXP, exp)
+    fun getValidToken(): String? {
+        val now = currentTimeMillis()
+        // 1) 인메모리 우선 — 방금 로그인/이전 읽기로 확보한 토큰. Keychain 히컵·잠금과 무관.
+        memToken?.let { if (memExpiresAt > now) return it }
+        // 2) durable 폴백 — 프로세스 재시작 후 첫 접근 등. 읽히면 메모리로 승격, 만료면 폐기.
+        return runCatching {
+            val exp = secureSettings.getLongOrNull(KEY_EXP) ?: return@runCatching null
+            if (exp <= now) {
+                clear()
+                return@runCatching null
             }
-            // 이 지점 도달 = 읽기/재기록 성공(또는 토큰 부재). 부재 시 다음 로그인의 saveToken 이
-            // 올바른 accessibility 로 쓰므로 flag 를 세워도 안전.
-            settings.putBoolean(KEY_ACCESSIBILITY_MIGRATED, true)
-        }
+            secureSettings.getStringOrNull(KEY_TOKEN)?.also {
+                memToken = it
+                memExpiresAt = exp
+            }
+        }.getOrNull()
     }
 
-    /** 만료된 토큰은 자동 폐기 후 null. Keychain 접근 실패 시에도 null(→ 로그인)로 안전 degrade. */
-    fun getValidToken(): String? = runCatching {
-        val exp = secureSettings.getLongOrNull(KEY_EXP) ?: return@runCatching null
-        if (exp <= currentTimeMillis()) {
-            clear()
-            return@runCatching null
-        }
-        secureSettings.getStringOrNull(KEY_TOKEN)
-    }.getOrNull()
-
     fun clear() {
+        memToken = null
+        memExpiresAt = 0L
         runCatching {
             secureSettings.remove(KEY_TOKEN)
             secureSettings.remove(KEY_EXP)
@@ -118,8 +115,6 @@ class AuthTokenStore(
     companion object {
         private const val KEY_TOKEN = "auth.jwt"
         private const val KEY_EXP = "auth.exp"
-        // 비민감 플래그(일반 settings). Keychain accessibility 이관 1회 수행 여부.
-        private const val KEY_ACCESSIBILITY_MIGRATED = "auth.accessibilityMigrated"
         private const val KEY_LAST_USER_ID = "auth.lastUserId"
         private const val KEY_USER_SUB = "auth.user.sub"
         private const val KEY_USER_EMAIL = "auth.user.email"
