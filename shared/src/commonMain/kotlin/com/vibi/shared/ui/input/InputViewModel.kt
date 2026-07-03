@@ -54,7 +54,12 @@ import kotlinx.coroutines.launch
 data class InputUiState(
     val selectedVideo: VideoInfo? = null,
     val validationResult: ValidationResult? = null,
-    val isExtracting: Boolean = false,
+    /**
+     * 영상 선택 흐름 진행 중 — 메타데이터 추출부터 분리 비용(BFF /credits/cost) 조회까지, "Start audio
+     * separation?" 확인 팝업(또는 Timeline)이 뜨기 전까지 true. 이 구간 동안 화면 로딩바를 노출하고
+     * 히어로 카드 재탭을 막는다.
+     */
+    val isPreparing: Boolean = false,
     /**
      * 분리 시작 확인 팝업 노출 여부. 분리는 영상 길이(분 올림, 분당 1크레딧, 최소 1)만큼 크레딧을
      * 소모하므로, 영상 선택 직후 바로 시작하지 않고 정확한 차감량을 고지하며 확인을 받는다.
@@ -202,40 +207,43 @@ class InputViewModel constructor(
 
     fun onVideoPicked(uri: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isExtracting = true)
+            _uiState.value = _uiState.value.copy(isPreparing = true)
 
             val videoInfo = extractor.extract(uri)
             if (videoInfo == null) {
                 _uiState.value = _uiState.value.copy(
                     selectedVideo = null,
                     validationResult = ValidationResult.Invalid(ValidationError.METADATA_UNREADABLE),
-                    isExtracting = false
+                    isPreparing = false
                 )
                 return@launch
             }
 
             val result = validateVideo(videoInfo)
-            _uiState.value = _uiState.value.copy(
-                selectedVideo = videoInfo,
-                validationResult = result,
-                isExtracting = false
-            )
-            if (result is ValidationResult.Valid) {
+            if (result is ValidationResult.Valid && audioExtractor.isSupported) {
                 // 분리 지원 플랫폼(iOS)은 영상 길이만큼 크레딧을 소모하므로 바로 시작하지 않고
                 // 정확한 차감량을 고지하는 확인 팝업을 띄운다. 차감량은 BFF 가 단일 source —
                 // /credits/cost 로 받아오고, 실패 시 동일 공식(분 올림, 최소 1)으로 로컬 폴백.
-                // 미지원 플랫폼(Android)은 분리 없이 곧장 타임라인 진입이라 확인 불필요.
-                if (audioExtractor.isSupported) {
-                    val credits = audioSeparationRepository.getCost(videoInfo.durationMs)
-                        .map { it.credits }
-                        .getOrDefault(creditsByMinute(videoInfo.durationMs))
-                    _uiState.value = _uiState.value.copy(
-                        awaitingSeparationConfirm = true,
-                        separationCreditCost = credits,
-                    )
-                } else {
-                    onContinue()
-                }
+                // 비용 조회(네트워크) 동안 isPreparing 이 유지돼 로딩바가 계속 뜬다 — selectedVideo/결과는
+                // 이 구간에 UI 가 읽지 않으므로 팝업을 띄우는 이 단일 emit 으로 한 번에 반영한다.
+                val credits = audioSeparationRepository.getCost(videoInfo.durationMs)
+                    .map { it.credits }
+                    .getOrDefault(creditsByMinute(videoInfo.durationMs))
+                _uiState.value = _uiState.value.copy(
+                    selectedVideo = videoInfo,
+                    validationResult = result,
+                    isPreparing = false,
+                    awaitingSeparationConfirm = true,
+                    separationCreditCost = credits,
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    selectedVideo = videoInfo,
+                    validationResult = result,
+                    isPreparing = false
+                )
+                // 분리 미지원 플랫폼(Android)은 분리 없이 곧장 타임라인 진입.
+                if (result is ValidationResult.Valid) onContinue()
             }
         }
     }
@@ -244,7 +252,7 @@ class InputViewModel constructor(
         _uiState.value = _uiState.value.copy(
             selectedVideo = null,
             validationResult = null,
-            isExtracting = false,
+            isPreparing = false,
             awaitingSeparationConfirm = false,
             separationCreditCost = null,
         )

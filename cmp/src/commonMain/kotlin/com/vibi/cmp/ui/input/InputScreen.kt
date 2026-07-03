@@ -2,6 +2,7 @@ package com.vibi.cmp.ui.input
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -127,23 +128,19 @@ fun InputScreen(
             )
 
             // Hero CTA — 화면에 들어오자마자 가장 큰 element 가 "갤러리에서 영상 선택".
-            // 카드 전체가 클릭 가능. selectedVideo 없으면 강조 그라디언트 + 큰 갤러리 글리프 + CTA 텍스트,
-            // 있으면 같은 카드가 "다른 영상 선택" 으로 변환되며 작은 메타 표시.
+            // 카드 전체가 클릭 가능. 영상 선택 후에도 홈 화면을 그대로 유지 — "다른 영상 선택" 으로
+            // 변환하지 않는다 (선택 직후엔 로딩 오버레이 → 분리 확인 팝업으로 흐름이 이어짐).
             Spacer(Modifier.height(16.dp))
-            val isFirstPick = state.selectedVideo == null
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (isFirstPick) 240.dp else 180.dp)
+                    .height(240.dp)
                     .clip(RoundedCornerShape(24.dp))
                     .background(
                         Brush.linearGradient(
-                            colors = if (isFirstPick) listOf(
+                            colors = listOf(
                                 Color(0xFF6E45E2),
                                 Color(0xFF88D3CE)
-                            ) else listOf(
-                                Color(0xFF1F2024),
-                                Color(0xFF2A2C32)
                             )
                         )
                     )
@@ -172,26 +169,23 @@ fun InputScreen(
                             )
                         )
                     }
-                    Spacer(Modifier.height(if (isFirstPick) 18.dp else 12.dp))
+                    Spacer(Modifier.height(18.dp))
                     Text(
-                        text = if (isFirstPick) "Choose a video"
-                               else "Pick another video",
+                        text = "Choose a video",
                         style = TextStyle(
-                            fontSize = if (isFirstPick) 22.sp else 18.sp,
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                         )
                     )
-                    if (isFirstPick) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = "Keep the video. Remove the noise.",
-                            style = TextStyle(
-                                fontSize = 13.sp,
-                                color = Color(0xCCFFFFFF),
-                            )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Keep the video. Remove the noise.",
+                        style = TextStyle(
+                            fontSize = 13.sp,
+                            color = Color(0xCCFFFFFF),
                         )
-                    }
+                    )
                 }
             }
 
@@ -295,6 +289,32 @@ fun InputScreen(
             Spacer(Modifier.height(24.dp))
         }
       }
+    }
+
+    // 영상 선택 직후 대기 오버레이 — 메타데이터 추출 + 검증 + 분리 비용(BFF /credits/cost) 조회가
+    // 끝나 "Start audio separation?" 팝업이 뜰 때까지 화면 전체를 덮는 로딩바. 그 사이 카드 재탭을
+    // 막기 위해 scrim 이 입력을 소비한다(ripple 없이).
+    if (state.isPreparing) {
+        val tokens = LocalVibiColors.current
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(tokens.backgroundPrimary.copy(alpha = 0.55f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {},
+            contentAlignment = Alignment.Center,
+        ) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = tokens.accent,
+                trackColor = tokens.onBackgroundPrimary.copy(alpha = 0.22f),
+            )
+        }
     }
 
     if (menuOpen) {
