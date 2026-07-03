@@ -195,43 +195,19 @@ fun InputScreen(
                 }
             }
 
-            // 선택된 영상 메타·검증 결과 — hero 아래 평범한 Section.
-            if (state.selectedVideo != null || state.isExtracting || state.validationResult != null) {
-                Section(header = "Selected video") {
-                    state.selectedVideo?.let { info ->
-                        SectionRow {
-                            Column {
-                                BodyText("${info.durationMs / 1000}s")
-                                Spacer(Modifier.height(2.dp))
-                                SecondaryText("${info.width}×${info.height}")
-                            }
-                        }
-                    }
-                    if (state.isExtracting) {
-                        SectionRow { SecondaryText("Analyzing…") }
-                    }
-                    when (val v = state.validationResult) {
-                        ValidationResult.Valid -> SectionRow {
-                            Text(
-                                "Ready to import",
-                                style = TextStyle(
-                                    fontSize = 17.sp,
-                                    color = Color(0xFF30D158),
-                                    fontWeight = FontWeight.Medium
-                                )
+            // 선택된 영상 메타·검증 결과 박스는 노출하지 않는다.
+            // Invalid 인 경우에만 사용자에게 사유를 알려준다.
+            (state.validationResult as? ValidationResult.Invalid)?.let { v ->
+                Section {
+                    SectionRow {
+                        Text(
+                            v.reason.userMessage(),
+                            style = TextStyle(
+                                fontSize = 17.sp,
+                                color = Color(0xFFFF453A),
+                                fontWeight = FontWeight.Medium
                             )
-                        }
-                        is ValidationResult.Invalid -> SectionRow {
-                            Text(
-                                v.reason.userMessage(),
-                                style = TextStyle(
-                                    fontSize = 17.sp,
-                                    color = Color(0xFFFF453A),
-                                    fontWeight = FontWeight.Medium
-                                )
-                            )
-                        }
-                        null -> Unit
+                        )
                     }
                 }
             }
