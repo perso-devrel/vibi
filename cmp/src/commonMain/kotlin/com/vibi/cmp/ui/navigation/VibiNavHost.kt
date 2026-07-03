@@ -1,6 +1,7 @@
 package com.vibi.cmp.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -9,6 +10,8 @@ import com.vibi.cmp.ui.auth.LoginScreen
 import com.vibi.cmp.ui.input.InputScreen
 import com.vibi.cmp.ui.splash.SplashScreen
 import com.vibi.cmp.ui.timeline.TimelineScreen
+import com.vibi.shared.data.local.AuthEventBus
+import org.koin.compose.koinInject
 
 /**
  * 단순 sealed-class 기반 navigation. JetBrains multiplatform navigation-compose 의 안정 버전이
@@ -25,7 +28,17 @@ sealed interface Screen {
 
 @Composable
 fun VibiNavHost() {
+    val authEventBus = koinInject<AuthEventBus>()
     var stack by remember { mutableStateOf<List<Screen>>(listOf(Screen.Splash)) }
+
+    // 세션 만료(401 → 재인증 필요)를 어느 화면에서 받든 로그인으로 리셋. 토큰은 HTTP 레이어가 이미
+    // 폐기했으므로 재로그인만 남는다. Splash/Login 에서 발생해도 stack 재설정이라 멱등.
+    LaunchedEffect(authEventBus) {
+        authEventBus.sessionExpired.collect {
+            stack = listOf(Screen.Login)
+        }
+    }
+
     val pop: () -> Unit = {
         if (stack.size > 1) stack = stack.dropLast(1)
     }

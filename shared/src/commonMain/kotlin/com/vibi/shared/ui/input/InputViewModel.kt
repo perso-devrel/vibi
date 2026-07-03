@@ -17,6 +17,7 @@ import com.vibi.shared.domain.model.addProcessingSeparation
 import com.vibi.shared.domain.model.clearSeparation
 import com.vibi.shared.domain.model.removeProcessingSeparation
 import com.vibi.shared.domain.util.withAbsoluteUrl
+import com.vibi.shared.data.remote.SessionExpiredException
 import com.vibi.shared.data.repository.AuthRepository
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.EditProjectRepository
@@ -400,6 +401,9 @@ class InputViewModel constructor(
     private fun maybeResume(projectId: String, persisted: PersistedSeparationJob) {
         if (!audioExtractor.isSupported) return
         if (separationJobs[projectId]?.isActive == true) return
+        // 유효 세션 없으면(만료/로그아웃) 재개하지 않는다 — 무토큰 폴링이 401-루프를 돌며 재로그인
+        // 이벤트를 반복 발화하는 것을 막는다. 다음 성공 로그인 후 combine 재방출 시 재무장된다.
+        if (!authRepository.hasValidSession()) return
         // 앱 재실행 후 재개 — 완료/실패 알림을 위해 권한 보장(멱등).
         separationNotifier.requestPermission()
         setProgress(projectId, SepProgress(progress = 0, reason = null))
@@ -433,6 +437,10 @@ class InputViewModel constructor(
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SessionExpiredException) {
+            // 세션 만료(401)는 복구 가능 — 잡은 서버에서 계속 진행 중일 수 있다. FAILED 로 굳히거나 실패
+            // 알림을 쏘지 않고 RUNNING/processingSeparations(영속)와 진행 카드를 그대로 보존한다. 전역
+            // 401 핸들러가 이미 로그인으로 라우팅했고, 재로그인 후 maybeResume 가 같은 jobId 를 이어 폴링한다.
         } catch (e: Exception) {
             setProgress(projectId, SepProgress(0, null, failed = true))
             markProjectFailed(projectId, jobId, segment.sourceUri)

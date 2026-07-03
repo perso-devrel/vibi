@@ -3,6 +3,7 @@ package com.vibi.shared.data.remote
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.plugins.HttpRequestRetry
+import io.ktor.client.plugins.HttpResponseValidator
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -23,7 +24,7 @@ expect fun createPlatformHttpClient(block: HttpClientConfig<*>.() -> Unit): Http
 
 /**
  * @param tokenProvider 매 요청 시 호출되어 Authorization 헤더에 박을 JWT 를 반환. null 이면 헤더 생략.
- *   v1 은 보호된 라우트가 없어 effectively no-op 이지만 향후 확장 대비 hook 을 미리 박아둠.
+ * @param onUnauthorized 인증 요청(auth 엔드포인트 제외)의 401 시 1회 호출 — 세션 만료 신호(상세는 아래 구현 주석).
  */
 fun createBffHttpClient(
     baseUrl: String,
@@ -31,9 +32,21 @@ fun createBffHttpClient(
     // dev 시 트래픽 검증 필요한 호출자만 명시적으로 true.
     enableLogging: Boolean = false,
     tokenProvider: () -> String? = { null },
+    onUnauthorized: () -> Unit = {},
 ): HttpClient =
     createPlatformHttpClient {
         expectSuccess = true
+
+        // 인증 요청의 401 을 전역 포착 → 세션 만료 신호. auth 엔드포인트(로그인 교환·탈퇴) 자체의
+        // 401 은 기존 세션 만료가 아니라 로그인 실패이므로 제외. Ktor 는 이 핸들러 실행 후 원본
+        // ClientRequestException 을 그대로 rethrow 하므로 각 호출자의 에러 처리는 그대로 유지된다.
+        HttpResponseValidator {
+            handleResponseExceptionWithRequest { cause, request ->
+                if (cause.isUnauthorized() && !request.url.encodedPath.contains("/auth/")) {
+                    onUnauthorized()
+                }
+            }
+        }
 
         install(ContentNegotiation) {
             json(

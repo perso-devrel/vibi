@@ -29,13 +29,12 @@ class AuthTokenStore(
     // 특이동작·미서명 빌드) 지연돼도 현재 세션의 모든 요청이 방금 받은 토큰을 헤더에 싣게 한다. durable
     // 영속은 [secureSettings] 가 담당하고 이 캐시는 그 위의 안전망 — 프로세스 종료 시 사라지며 재시작
     // 시 secureSettings 에서 복원된다. (로그인 200 직후 401 missing_token 회귀의 정공법 방어.)
-    private var memToken: String? = null
-    private var memExpiresAt: Long = 0L
+    private data class CachedToken(val jwt: String, val expiresAt: Long)
+    private var mem: CachedToken? = null
 
     fun saveToken(jwt: String, expiresAt: Long) {
         // 인메모리 먼저 — 동기적으로, Keychain 결과와 무관하게 현재 세션에서 즉시 읽히도록.
-        memToken = jwt
-        memExpiresAt = expiresAt
+        mem = CachedToken(jwt, expiresAt)
         // Keychain 접근이 실패해도(미서명 빌드·entitlement 부재·기기 잠금 등) 앱이 죽지 않도록 보호.
         // 실패 시 durable 영속만 누락(인메모리 캐시로 현재 세션은 유지) → 다음 실행에 재로그인.
         // remove(→SecItemDelete) 후 put(→SecItemAdd) — 기존 항목을 지우고 새로 써 항상 최신값 보장.
@@ -54,7 +53,7 @@ class AuthTokenStore(
     fun getValidToken(): String? {
         val now = currentTimeMillis()
         // 1) 인메모리 우선 — 방금 로그인/이전 읽기로 확보한 토큰. Keychain 히컵·잠금과 무관.
-        memToken?.let { if (memExpiresAt > now) return it }
+        mem?.let { if (it.expiresAt > now) return it.jwt }
         // 2) durable 폴백 — 프로세스 재시작 후 첫 접근 등. 읽히면 메모리로 승격, 만료면 폐기.
         return runCatching {
             val exp = secureSettings.getLongOrNull(KEY_EXP) ?: return@runCatching null
@@ -62,16 +61,12 @@ class AuthTokenStore(
                 clear()
                 return@runCatching null
             }
-            secureSettings.getStringOrNull(KEY_TOKEN)?.also {
-                memToken = it
-                memExpiresAt = exp
-            }
+            secureSettings.getStringOrNull(KEY_TOKEN)?.also { mem = CachedToken(it, exp) }
         }.getOrNull()
     }
 
     fun clear() {
-        memToken = null
-        memExpiresAt = 0L
+        mem = null
         runCatching {
             secureSettings.remove(KEY_TOKEN)
             secureSettings.remove(KEY_EXP)

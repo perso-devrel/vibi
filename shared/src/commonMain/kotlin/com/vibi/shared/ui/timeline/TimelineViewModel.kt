@@ -29,6 +29,7 @@ import com.vibi.shared.domain.model.BgmClip
 import com.vibi.shared.platform.fileExists
 import com.vibi.shared.platform.generateId
 import com.vibi.shared.domain.model.clearSeparation
+import com.vibi.shared.data.remote.SessionExpiredException
 import com.vibi.shared.data.remote.api.BffApi
 import com.vibi.shared.domain.repository.AudioSeparationRepository
 import com.vibi.shared.domain.repository.BgmClipRepository
@@ -3677,6 +3678,10 @@ class TimelineViewModel constructor(
             // 사용자 취소 (onCancelProcessingSeparation) 로 코루틴이 cancel 된 경우 — 실패가 아니므로
             // 에러 시트를 띄우지 않고 그대로 전파. entry 정리는 취소 호출부가 이미 처리.
             throw e
+        } catch (e: SessionExpiredException) {
+            // 세션 만료(401)는 복구 가능 — 잡은 서버에서 계속 진행 중일 수 있다. FAILED 시트/영속으로
+            // 굳히지 않고 processingSeparation(영속)을 보존한다. 전역 401 핸들러가 로그인으로 라우팅했고,
+            // 재로그인 후 프로젝트 타임라인 재진입 시 resumeSeparationPolling 이 같은 jobId 를 이어 폴링한다.
         } catch (e: Exception) {
             handleSeparationFailure(clientToken, ERROR_SEPARATION_GENERIC)
         }
