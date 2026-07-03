@@ -39,10 +39,15 @@ internal suspend fun pollRenderJobUntilDone(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            // 401 은 재인증 외 복구 불가 → 즉시 종료. 그 외 일시 오류는 연속 실패 한계까지
-            // 백오프하며 폴링 지속 — 15분 렌더 도중 단발 5xx/끊김으로 잡을 날리지 않는다.
-            if (e.isUnauthorized()) throw SessionExpiredException()
-            if (++consecutiveFailures > MAX_CONSECUTIVE_POLL_FAILURES) throw e
+            // 401 도 즉시 종료하지 않는다 — 기기 잠금 중 Keychain 읽기 실패로 Authorization 헤더가
+            // 잠깐 빠지면 BFF 가 401 을 주는데, 잠금 해제 후 회복되는 일시 오류이고 렌더 잡은 서버에서
+            // 계속 진행된다(단발 401로 15분 렌더를 날리면 서버 완료 결과를 못 받는다). 연속 실패
+            // 한계까지 백오프 재시도하고, 그 뒤에도 401 이 지속되면(진짜 세션 만료) SessionExpiredException
+            // 으로 재로그인 유도. 분리 폴러(JobPolling.pollUntilReady)와 동일 정책.
+            if (++consecutiveFailures > MAX_CONSECUTIVE_POLL_FAILURES) {
+                if (e.isUnauthorized()) throw SessionExpiredException()
+                throw e
+            }
             delay(pollDelayMs)
             pollDelayMs = (pollDelayMs * 3 / 2).coerceAtMost(MAX_POLL_MS)
             continue

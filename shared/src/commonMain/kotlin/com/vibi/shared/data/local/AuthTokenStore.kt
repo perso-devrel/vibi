@@ -29,8 +29,38 @@ class AuthTokenStore(
         // Keychain 접근이 실패해도(미서명 빌드·entitlement 부재·기기 잠금 등) 앱이 죽지 않도록 보호.
         // 실패 시 토큰 미영속 → 다음 실행에 재로그인. 서명된 출시 빌드에선 정상 영속.
         runCatching {
+            // 기존 항목이 있으면 putString 은 SecItemUpdate(값만 교체)로 떨어져, KeychainSettings 에
+            // 지정한 accessibility(AfterFirstUnlockThisDeviceOnly)가 재적용되지 않는다(accessibility 는
+            // SecItemAdd 시점에만 적용). 항상 SecItemAdd 경로를 타도록 remove(→SecItemDelete) 후
+            // put(→SecItemAdd) — 매 저장이 올바른 accessibility 로 기록되게 한다.
+            secureSettings.remove(KEY_TOKEN)
+            secureSettings.remove(KEY_EXP)
             secureSettings.putString(KEY_TOKEN, jwt)
             secureSettings.putLong(KEY_EXP, expiresAt)
+        }
+    }
+
+    /**
+     * 구버전(accessibility 미지정 = 기본 WhenUnlocked)으로 저장된 토큰을 현재 accessibility
+     * (AfterFirstUnlockThisDeviceOnly)로 1회 이관. SecItemUpdate 는 accessibility 를 바꾸지 않으므로
+     * remove+put(=delete+add)로 강제 재생성한다. 앱 시작(포그라운드=잠금 해제) 시 [restoreSession]
+     * 에서 호출 — 그 시점엔 Keychain 읽기가 되므로 정상 이관. [settings] 플래그로 멱등(1회만).
+     * 잠금/접근 실패로 읽지 못하면 flag 를 세우지 않아 다음 부팅에 재시도한다.
+     */
+    fun migrateSecureAccessibilityOnce() {
+        if (settings.getBoolean(KEY_ACCESSIBILITY_MIGRATED, false)) return
+        runCatching {
+            val token = secureSettings.getStringOrNull(KEY_TOKEN)
+            val exp = secureSettings.getLongOrNull(KEY_EXP)
+            if (token != null && exp != null) {
+                secureSettings.remove(KEY_TOKEN)
+                secureSettings.remove(KEY_EXP)
+                secureSettings.putString(KEY_TOKEN, token)
+                secureSettings.putLong(KEY_EXP, exp)
+            }
+            // 이 지점 도달 = 읽기/재기록 성공(또는 토큰 부재). 부재 시 다음 로그인의 saveToken 이
+            // 올바른 accessibility 로 쓰므로 flag 를 세워도 안전.
+            settings.putBoolean(KEY_ACCESSIBILITY_MIGRATED, true)
         }
     }
 
@@ -88,6 +118,8 @@ class AuthTokenStore(
     companion object {
         private const val KEY_TOKEN = "auth.jwt"
         private const val KEY_EXP = "auth.exp"
+        // 비민감 플래그(일반 settings). Keychain accessibility 이관 1회 수행 여부.
+        private const val KEY_ACCESSIBILITY_MIGRATED = "auth.accessibilityMigrated"
         private const val KEY_LAST_USER_ID = "auth.lastUserId"
         private const val KEY_USER_SUB = "auth.user.sub"
         private const val KEY_USER_EMAIL = "auth.user.email"
