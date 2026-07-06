@@ -80,14 +80,18 @@ private class AndroidStemMixerHandle(
                     .build()
             }
         }
-        // CONTENT_TYPE_MUSIC / USAGE_MEDIA + handleAudioFocus=true: 전화/타 앱 재생 등 interruption 시
-        // ExoPlayer 가 audio focus 를 자동 관리(일시정지/감쇠). iOS AVAudioSession interruption 대응.
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .setUsage(C.USAGE_MEDIA)
             .build()
+        // handleAudioFocus=false 필수. stem 믹서는 여러 player(스템별) + 영상 player 가 동시에
+        // 함께 울려야 하는 한 묶음인데, 각 player 가 handleAudioFocus=true 로 AUDIOFOCUS_GAIN(배타적)
+        // 을 요청하면 마지막 요청자만 포커스를 쥐고 나머지는 onAudioFocusChange(-1)=LOSS 를 받아
+        // 자동 pause 된다. directive 구간에선 영상이 포커스를 쥔 채 mute(vol 0) 라서 결과가 완전 무음.
+        // 앱 전체의 audio focus 는 영상 VideoPlayer(단일 owner, handleAudioFocus=true)가 관리하고,
+        // stem player 들은 포커스 경합 없이 렌더만 한다. (iOS 는 공유 AVAudioSession 이라 무관.)
         val player = ExoPlayer.Builder(context, renderersFactory)
-            .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
+            .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ false)
             // 이어폰 분리 등 audio output 이 speaker 로 강제 전환되기 직전 자동 pause
             // (ACTION_AUDIO_BECOMING_NOISY). iOS AVAudioSession route-change 대응.
             .setHandleAudioBecomingNoisy(true)

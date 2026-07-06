@@ -1,13 +1,17 @@
 package com.vibi.cmp.platform
 
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,6 +29,16 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import java.io.File
+
+/** seekTo 직후 이 시간(ms) 동안 위치 폴링 보고를 봉인 — ExoPlayer 가 seek 를 적용하기 전
+ *  currentPosition 이 pre-seek 값을 잠깐 보고해 ViewModel state 를 stale 로 덮는 race 차단.
+ *  iOS SEEK_GUARD_MS 동등. */
+private const val SEEK_GUARD_MS = 500L
+
+/** 목표 seekToMs 가 현재 글로벌 위치와 이 거리(ms) 이내면 실제 seekTo 를 생략 — 폴링→ViewModel
+ *  state→seekToMs 미세 변동이 매 tick seekTo 를 유발해 디코더 버퍼가 flush 되며 "제자리 버벅"
+ *  으로 보이는 self-echo 루프 차단. iOS 의 0.5s abs 가드 동등. */
+private const val SEEK_TOLERANCE_MS = 500L
 
 @Composable
 actual fun VideoPlayer(
@@ -74,6 +88,9 @@ actual fun VideoPlayer(
                 prepare()
             }
     }
+
+    // seekTo 직후 폴링 보고를 잠시 봉인하는 가드 타임스탬프 (elapsedRealtime 기준). iOS 동등.
+    var seekGuardUntilMs by remember(exoPlayer) { mutableStateOf(0L) }
 
     DisposableEffect(exoPlayer) {
         // segment 전환 시 per-item speed/volume 재적용.
@@ -131,6 +148,20 @@ actual fun VideoPlayer(
     // global seekToMs 를 (item index, item-local ms) 로 변환해서 seek.
     LaunchedEffect(seekToMs) {
         if (seekToMs == null) return@LaunchedEffect
+        // self-echo 가드: 현재 글로벌 위치와 목표가 SEEK_TOLERANCE_MS 이내면 실제 시킹 skip.
+        // 폴링(onPositionChanged)→ViewModel state→seekToMs 미세 변동이 매 tick seekTo 를
+        // 유발해 디코더가 계속 flush → "제자리 버벅" 되는 것 차단. 현재 위치 산정은 아래
+        // 폴링 루프와 동일 공식 (앞 item 누적 dur + clip-local currentPosition).
+        val curGlobalMs = run {
+            var acc = 0L
+            for (i in 0 until exoPlayer.currentMediaItemIndex) {
+                val item = items.getOrNull(i) ?: break
+                acc += if (item.trimEndMs > 0L) item.trimEndMs - item.trimStartMs else 0L
+            }
+            acc + exoPlayer.currentPosition
+        }
+        if (kotlin.math.abs(seekToMs - curGlobalMs) <= SEEK_TOLERANCE_MS) return@LaunchedEffect
+
         var acc = 0L
         for ((idx, item) in items.withIndex()) {
             val itemDur = (item.trimEndMs.takeIf { it > 0L } ?: Long.MAX_VALUE)
@@ -138,6 +169,8 @@ actual fun VideoPlayer(
             val itemEnd = if (itemDur == Long.MAX_VALUE) Long.MAX_VALUE else acc + itemDur
             if (seekToMs < itemEnd) {
                 val localMs = (seekToMs - acc).coerceAtLeast(0L)
+                // seek 적용 완료 전 폴링이 pre-seek 위치를 재보고하는 race 봉인.
+                seekGuardUntilMs = SystemClock.elapsedRealtime() + SEEK_GUARD_MS
                 exoPlayer.seekTo(idx, localMs)
                 return@LaunchedEffect
             }
@@ -149,6 +182,12 @@ actual fun VideoPlayer(
     LaunchedEffect(exoPlayer) {
         var lastReportedMs = -1L
         while (true) {
+            // seek 진행 중이면 폴링 보고 skip — pre-seek currentPosition 을 재보고해 seekToMs
+            // 를 도로 되돌려 self-echo 를 재점화하는 것 차단. 짧은 sleep 으로 가드 만료 폴.
+            if (SystemClock.elapsedRealtime() < seekGuardUntilMs) {
+                delay(50)
+                continue
+            }
             var acc = 0L
             for (i in 0 until exoPlayer.currentMediaItemIndex) {
                 val item = items.getOrNull(i) ?: break
