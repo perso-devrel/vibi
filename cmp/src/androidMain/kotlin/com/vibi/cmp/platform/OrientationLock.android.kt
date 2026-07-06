@@ -11,9 +11,11 @@ actual fun LockLandscape(enabled: Boolean) {
     DisposableEffect(enabled) {
         val previous = activity.requestedOrientation
         if (enabled) {
-            // SENSOR_LANDSCAPE — 디바이스 가속도계 기준 좌/우 양방향 자동 선택. 단방향 LANDSCAPE 보다
-            // 자연스럽다 (사용자가 어느 쪽으로 들어도 영상이 똑바로 보임).
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            // USER — 강제 회전 안 함. 기본 세로 잠금만 풀어 "사용자가 기기를 직접 돌리면" 가로가
+            // 되도록 허용하고, 전체화면 진입 즉시 landscape 로 auto-rotate 하지는 않는다. 기기의
+            // auto-rotate(회전 잠금) 설정도 존중 — 잠겨 있으면 세로 유지. iOS(supportedInterface
+            // Orientations 플래그만 flip, force-rotate 없음)와 동등한 체감.
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER
         }
         onDispose {
             activity.requestedOrientation = previous

@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -668,20 +669,33 @@ fun TimelineScreen(
         // 행 자체는 항상 렌더하고, 전체화면·재생만 영상이 있을 때로 가둔다.
         run {
             val btnSize = VibiSpacing.touchMin
+            // side 버튼(전체화면·분할·undo·redo)은 중앙 재생 버튼(44dp)보다 작게 — 그룹 내 두 버튼을
+            // 겹침 없이 바짝 붙이기 위해 박스 자체를 줄인다. (사용자 요청: 그룹 내 버튼 간격 축소.)
+            val sideBtnSize = 36.dp
             val iconSize = 20.dp
-            Box(modifier = Modifier.fillMaxWidth().height(btnSize)) {
+            // 재생 버튼을 화면 정중앙에 절대 고정하려면 (버튼+시간텍스트)를 함께 center 정렬하면 안 된다
+            // — 텍스트 폭(예: "9s/9s" vs "120s/120s")이 바뀌면 그 합산폭 중심이 이동해 버튼이 밀린다.
+            // 버튼만 align(Center) 로 단독 고정하고, 시간 텍스트는 버튼 오른쪽 가장자리에서 시작하도록
+            // 부모폭 기준 고정 offset 으로 배치 — 텍스트가 늘어도 버튼 위치에 영향 없음.
+            var controlRowWidthPx by remember { mutableIntStateOf(0) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(btnSize)
+                    .onSizeChanged { controlRowWidthPx = it.width },
+            ) {
                 if (state.videoUri.isNotEmpty()) {
                     // Left — 전체화면 + 그 오른쪽에 '][' 구간 분리(재생헤드 컷).
                     Row(
                         modifier = Modifier.align(Alignment.CenterStart),
-                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                        // 그룹 내 두 버튼(전체화면·분할) 간격 0 — side 버튼 박스를 36dp 로 줄여 겹침 없이 붙임.
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(btnSize)
+                                .size(sideBtnSize)
                                 .clip(CircleShape)
-                                .background(tokens.chipBg)
                                 .clickable { fullscreenOpen = true },
                             contentAlignment = Alignment.Center
                         ) {
@@ -695,9 +709,8 @@ fun TimelineScreen(
                         // '][' 구간 분리 — 재생헤드가 놓인 영상 세그먼트를 그 지점에서 둘로 나눈다.
                         Box(
                             modifier = Modifier
-                                .size(btnSize)
+                                .size(sideBtnSize)
                                 .clip(CircleShape)
-                                .background(tokens.chipBg)
                                 .clickable { viewModel.onSplitAtPlayhead() },
                             contentAlignment = Alignment.Center
                         ) {
@@ -710,49 +723,57 @@ fun TimelineScreen(
                             )
                         }
                     }
-                    // Center — 재생/정지 + 현재s/전체s 라벨. Row 로 묶어 align(Center) 하면 (버튼+텍스트)
-                    // 두 자식의 합산 폭이 화면 중앙에 위치 — 버튼만 정중앙에 두고 텍스트를 오른쪽에 띄우는
-                    // 절대 offset 보다 자연스럽고 너비 변동(예: 999s vs 9s) 에 안전.
-                    Row(
-                        modifier = Modifier.align(Alignment.Center),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    // Center — 재생/정지 버튼만 정중앙 고정. 시간 라벨은 아래에서 별도 배치.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(btnSize)
+                            .clip(CircleShape)
+                            .background(tokens.onBackgroundPrimary)
+                            .clickable { viewModel.onTogglePlayback() },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(btnSize)
-                                .clip(CircleShape)
-                                .background(tokens.onBackgroundPrimary)
-                                .clickable { viewModel.onTogglePlayback() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = if (state.isPlaying) "Pause" else "Play",
-                                tint = tokens.backgroundPrimary,
-                                modifier = Modifier.size(iconSize),
-                            )
-                        }
-                        Text(
-                            // ms→s 는 올림 — 4.87s 영상이 라벨에서 "4s" 로 잘려 보이지 않도록.
-                            // (ms + 999) / 1000 = ceil(ms/1000). ms ≥ 0 보장 컨텍스트.
-                            text = "${(state.playbackPositionMs + 999) / 1000}s/${(state.videoDurationMs + 999) / 1000}s",
-                            style = typo.bodySm,
-                            color = tokens.mutedText,
+                        Icon(
+                            imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (state.isPlaying) "Pause" else "Play",
+                            tint = tokens.backgroundPrimary,
+                            modifier = Modifier.size(iconSize),
                         )
                     }
+                    // 시간 라벨 — 중앙 버튼 오른쪽 가장자리에서 시작해 오른쪽으로만 확장. 부모폭 기준
+                    // 고정 x offset 이라 텍스트 폭이 바뀌어도 버튼(정중앙)은 불변. monoTime(13sp mono)
+                    // 은 다른 버튼보다 작고 숫자 폭이 일정해 텍스트 자체 흔들림도 최소. "현재\n/전체" 2줄로
+                    // 표기해 폭을 좁게 유지 → 길어져도 우측 undo/redo 버튼과 겹치지 않는다.
+                    Text(
+                        // ms→s 는 올림 — 4.87s 영상이 라벨에서 "4s" 로 잘려 보이지 않도록.
+                        // (ms + 999) / 1000 = ceil(ms/1000). ms ≥ 0 보장 컨텍스트.
+                        text = "${(state.playbackPositionMs + 999) / 1000}s\n/${(state.videoDurationMs + 999) / 1000}s",
+                        style = typo.monoTime.copy(fontSize = 11.sp),
+                        color = tokens.mutedText,
+                        maxLines = 2,
+                        lineHeight = 12.sp,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .offset {
+                                IntOffset(
+                                    x = controlRowWidthPx / 2 + (btnSize / 2 + VibiSpacing.xs).roundToPx(),
+                                    // 라벨을 버튼 세로 중앙보다 6dp 아래로 — 재생 버튼 하단쪽에 자연스럽게 붙임.
+                                    y = 6.dp.roundToPx(),
+                                )
+                            },
+                    )
                 }
                 // Right — undo / redo. 영상 유무와 무관하게 항상 노출.
                 Row(
                     modifier = Modifier.align(Alignment.CenterEnd),
-                    horizontalArrangement = Arrangement.spacedBy(VibiSpacing.xs),
+                    // 그룹 내 두 버튼(undo·redo) 간격 0 — side 버튼 박스 36dp 로 겹침 없이 붙임.
+                    horizontalArrangement = Arrangement.spacedBy(0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(btnSize)
+                            .size(sideBtnSize)
                             .clip(CircleShape)
-                            .background(if (state.canUndo) tokens.chipBg else tokens.chipBgDisabled)
                             .clickable(enabled = state.canUndo) { viewModel.onUndo() },
                         contentAlignment = Alignment.Center
                     ) {
@@ -765,9 +786,8 @@ fun TimelineScreen(
                     }
                     Box(
                         modifier = Modifier
-                            .size(btnSize)
+                            .size(sideBtnSize)
                             .clip(CircleShape)
-                            .background(if (state.canRedo) tokens.chipBg else tokens.chipBgDisabled)
                             .clickable(enabled = state.canRedo) { viewModel.onRedo() },
                         contentAlignment = Alignment.Center
                     ) {

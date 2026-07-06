@@ -4,6 +4,8 @@ import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import com.vibi.cmp.BuildConfig
+import com.vibi.shared.platform.cacheDirPath
 import com.vibi.shared.platform.firstAudioTrackIndex
 import com.vibi.shared.platform.optInt
 import com.vibi.shared.platform.optLong
@@ -12,8 +14,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.UUID
 import kotlin.math.sqrt
 
 /**
@@ -37,11 +42,30 @@ actual suspend fun extractAudioPeaks(localPath: String, samples: Int): List<Floa
         val cacheKey = "$localPath#$samples"
         peaksCacheLock.withLock { peaksCache[cacheKey] }?.let { return@withContext it }
 
-        val peaks = runCatching { decodePeaks(localPath, samples) }
-            .getOrElse {
-                println("[WaveformExtractor] decode failed for $localPath: ${it.message}")
-                emptyList()
+        // 원격(BFF) stem/오디오 URL 을 MediaExtractor 로 직접 스트리밍하면 HTTP 왕복과 프레임 디코드가
+        // 뒤섞여 매우 느리다 — Android 파형 로딩 지연의 주원인 (iOS 는 downloadAudioToCache 로 파일
+        // 전체를 먼저 받아 로컬 디코드). iOS 와 동일하게 원격이면 cacheDir 로 벌크 다운로드 후 로컬
+        // 파일을 디코드한다. content:// · file:// · 로컬 절대경로는 그대로 로컬 디코드(다운로드 없음).
+        val absolute = resolveAbsoluteAudioUrl(localPath)
+        val isRemote = absolute.startsWith("http://") || absolute.startsWith("https://")
+        val tempFile: File? = if (isRemote) {
+            downloadToCache(absolute) ?: run {
+                println("[WaveformExtractor] remote download failed: $absolute")
+                return@withContext emptyList()
             }
+        } else null
+        val decodePath = tempFile?.absolutePath ?: absolute
+
+        val peaks = try {
+            runCatching { decodePeaks(decodePath, samples) }
+                .getOrElse {
+                    println("[WaveformExtractor] decode failed for $decodePath: ${it.message}")
+                    emptyList()
+                }
+        } finally {
+            // 파형 추출 후 임시 파일 즉시 회수 — cacheDir 누적 방지 (재생용 stem 캐시와 별개).
+            tempFile?.let { runCatching { it.delete() } }
+        }
         if (peaks.isNotEmpty()) {
             peaksCacheLock.withLock {
                 if (peaksCache.size >= PEAKS_CACHE_MAX) {
@@ -52,6 +76,30 @@ actual suspend fun extractAudioPeaks(localPath: String, samples: Int): List<Floa
         }
         peaks
     }
+
+/**
+ * `/api/` 로 시작하는 BFF 서버 절대경로만 BFF base 를 prepend 해 절대 URL 로 보정 (iOS
+ * [resolveAbsoluteAudioUrl] 과 동일 규칙). http(s) 는 그대로, content:// · file:// · 로컬 절대경로
+ * (`/data`,`/storage`) 등은 미변경 → 로컬 디코드 경로로 흐른다.
+ */
+private fun resolveAbsoluteAudioUrl(url: String): String {
+    if (url.startsWith("http://") || url.startsWith("https://")) return url
+    if (!url.startsWith("/api/")) return url
+    val base = BuildConfig.BFF_BASE_URL.takeIf { it.isNotEmpty() } ?: return url
+    return "${base.trimEnd('/')}/${url.trimStart('/')}"
+}
+
+/**
+ * 원격 오디오를 cacheDir 임시 파일로 통째로 받아 File 반환 (iOS [downloadAudioToCache] 등가).
+ * stem URL 은 인증 헤더가 필요 없어(iOS 도 plain download) 단순 스트림 복사. 실패 시 null.
+ * Dispatchers.Default 워커에서 호출되므로 메인스레드 네트워크 예외 없음.
+ */
+private fun downloadToCache(url: String): File? = runCatching {
+    val ext = url.substringAfterLast('.', "").substringBefore('?').lowercase().ifEmpty { "audio" }
+    val dest = File(cacheDirPath(), "waveform_${UUID.randomUUID()}.$ext")
+    URL(url).openStream().use { input -> dest.outputStream().use { out -> input.copyTo(out) } }
+    dest
+}.getOrNull()
 
 private fun decodePeaks(localPath: String, samples: Int): List<Float> {
     val extractor = MediaExtractor()

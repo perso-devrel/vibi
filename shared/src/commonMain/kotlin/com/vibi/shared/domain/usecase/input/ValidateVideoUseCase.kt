@@ -13,7 +13,6 @@ class ValidateVideoUseCase constructor() {
             "video/webm"
         )
         private const val MAX_DURATION_MS = 300_000L
-        private const val MAX_DIMENSION = 1920
     }
 
     operator fun invoke(videoInfo: VideoInfo): ValidationResult {
@@ -23,9 +22,8 @@ class ValidateVideoUseCase constructor() {
         if (videoInfo.durationMs > MAX_DURATION_MS) {
             return ValidationResult.Invalid(ValidationError.DURATION_EXCEEDS_LIMIT)
         }
-        if (maxOf(videoInfo.width, videoInfo.height) > MAX_DIMENSION) {
-            return ValidationResult.Invalid(ValidationError.RESOLUTION_EXCEEDS_LIMIT)
-        }
+        // 해상도 상한 없음 — 어떤 크기의 영상이든 허용하고, 프리뷰(PlayerView RESIZE_MODE_FIT)가
+        // 고정 미리보기 박스에 맞춰 자동 축소해 렌더한다. (기존 1920px longest-side 제한 제거.)
         return ValidationResult.Valid
     }
 }
