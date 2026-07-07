@@ -85,7 +85,7 @@ android {
         applicationId = "com.vibi.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
+        versionCode = 5
         versionName = "1.0.1"
 
         buildConfigField(
@@ -94,6 +94,10 @@ android {
             "\"${localProperties.getProperty("BFF_BASE_URL", "https://api.vibi.example.com/")}\""
         )
     }
+
+    // AGP 기본 NDK 버전이 SDK 에 없으면 strip/objcopy 를 조용히 건너뛰어 (1) .so 가
+    // unstripped 로 패키징되고 (2) 네이티브 심볼 추출도 no-op 이 된다. 설치된 버전 고정.
+    ndkVersion = "27.1.12297006"
 
     sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/androidMain/res")
@@ -119,6 +123,11 @@ android {
             // local.properties 에 서명 정보가 있을 때만 release signingConfig 연결.
             if (localProperties.getProperty("RELEASE_STORE_FILE") != null) {
                 signingConfig = signingConfigs.getByName("release")
+            }
+            // 의존 라이브러리의 .so 네이티브 심볼을 AAB 에 포함 — Play Console
+            // "디버그 기호 미업로드" 경고 해소 + 네이티브 crash/ANR 심볼화.
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
             }
         }
     }
