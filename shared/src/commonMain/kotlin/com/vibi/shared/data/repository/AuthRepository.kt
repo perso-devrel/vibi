@@ -8,7 +8,10 @@ import com.vibi.shared.data.remote.dto.AuthResponseDto
 import com.vibi.shared.domain.model.AuthUser
 import com.vibi.shared.platform.AppleSignInClient
 import com.vibi.shared.platform.GoogleSignInClient
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -38,6 +41,11 @@ class AuthRepository(
     private val tokenStore: AuthTokenStore,
     private val userSession: UserSession,
 ) {
+    // native SDK signOut fire-and-forget 용 — 호출자(ViewModel scope)가 로그인 화면 전환으로
+    // clear 돼도 정리 작업이 취소되지 않도록 리포지토리 수명의 별도 scope 를 쓴다.
+    // Main 인 이유: iOS GIDSignIn.signOut() 이 UIKit 계열이라 main thread 가 안전.
+    private val nativeCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     suspend fun signInWithGoogle(): Result<AuthUser> = runCatching {
         val idToken = awaitNativeSignIn { googleSignInClient.signIn() }
         val resp = bffApi.exchangeGoogleIdToken(idToken)
@@ -81,8 +89,13 @@ class AuthRepository(
         // 토큰 먼저 삭제 — native SDK signOut 이 throw 해도 로컬 세션은 끊긴 상태로 남도록.
         tokenStore.clear()
         userSession.reset()
-        runCatching { googleSignInClient.signOut() }
-        runCatching { appleSignInClient.signOut() }
+        // native SDK 정리는 대기하지 않는다 — Android Credential Manager 의 clearCredentialState
+        // 가 Play Services IPC 로 수 초 걸려 로그인 화면 전환을 지연시켰다. 로컬 세션은 이미
+        // 끊겼으므로 정리 실패/지연이 앱 상태에 영향 없음 (signIn 은 항상 계정 선택을 띄운다).
+        nativeCleanupScope.launch {
+            runCatching { googleSignInClient.signOut() }
+            runCatching { appleSignInClient.signOut() }
+        }
     }
 
     /**
