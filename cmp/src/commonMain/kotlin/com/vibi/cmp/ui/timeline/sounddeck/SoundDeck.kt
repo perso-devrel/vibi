@@ -315,18 +315,65 @@ private fun CollapsibleSeparationCard(
                 }
             }
             AnimatedVisibility(visible = expanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
-                    group.cards.forEach { card ->
-                        key(card.key) {
-                            SoundCardRow(
-                                card = card,
-                                disabled = disabled,
-                                isPreviewing = previewingKey == card.key,
-                                callbacks = callbacksFor(card),
-                            )
-                        }
-                    }
+                // 화자(Voices)와 배경음(Background)을 하위 섹션으로 나눠 어느 stem 이 무엇인지
+                // 한눈에 구분되게 한다. 카드는 이미 kindOrder(화자→배경) 로 정렬돼 들어오므로
+                // kind 로 partition 만 하면 순서는 보존된다.
+                val voiceCards = group.cards.filter {
+                    it.kind == SoundCardKind.SPEAKER ||
+                        it.kind == SoundCardKind.VOICE_ALL ||
+                        it.kind == SoundCardKind.OTHER_STEM
                 }
+                val backgroundCards = group.cards.filter { it.kind == SoundCardKind.BACKGROUND }
+                Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.sm)) {
+                    StemSubsection(
+                        title = "Voices",
+                        cards = voiceCards,
+                        disabled = disabled,
+                        previewingKey = previewingKey,
+                        callbacksFor = callbacksFor,
+                    )
+                    StemSubsection(
+                        title = "Background",
+                        cards = backgroundCards,
+                        disabled = disabled,
+                        previewingKey = previewingKey,
+                        callbacksFor = callbacksFor,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 분리 구간 내부의 하위 섹션 — "Voices" / "Background" 로 stem 카드를 묶는다.
+ * 해당 kind 의 카드가 없으면 헤더째 렌더하지 않아 빈 라벨이 남지 않게 한다.
+ */
+@Composable
+private fun StemSubsection(
+    title: String,
+    cards: List<SoundCardModel>,
+    disabled: Boolean,
+    previewingKey: String?,
+    callbacksFor: (SoundCardModel) -> SoundCardCallbacks,
+) {
+    if (cards.isEmpty()) return
+    val tokens = LocalVibiColors.current
+    val typo = LocalVibiTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(VibiSpacing.xs)) {
+        Text(
+            title,
+            style = typo.bodySm,
+            color = tokens.mutedText,
+        )
+        cards.forEach { card ->
+            key(card.key) {
+                SoundCardRow(
+                    card = card,
+                    disabled = disabled,
+                    isPreviewing = previewingKey == card.key,
+                    callbacks = callbacksFor(card),
+                )
             }
         }
     }
